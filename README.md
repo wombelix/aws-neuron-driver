@@ -23,6 +23,7 @@ supporting the AWS Neuron SDK.
 
 * [Why?](#why)
 * [How?](#how)
+* [Usage](#usage)
 * [Source](#source)
 * [Contribute](#contribute)
 * [License](#license)
@@ -46,6 +47,11 @@ and wasn't altered.
 
 There is no independent development done in this repository.
 It is basically a mirror of the source code as it is released by AWS.
+
+## Usage
+
+Please refer to [src/README.md](src/README.md) for technical details about the driver,
+as well as usage and build instructions.
 
 ## Source
 
