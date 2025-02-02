@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Dominik Wombacher <dominik@wombacher.cc>
+#
+# SPDX-License-Identifier: CC0-1.0
+
 version = 1
 
 [[annotations]]
@@ -5,3 +9,14 @@ path = "src/**"
 precedence = "override"
 SPDX-FileCopyrightText = "Amazon.com, Inc. or its affiliates."
 SPDX-License-Identifier = "GPL-2.0-only"  # Replaced old short identifier 'GPL-2.0', see https://spdx.org/licenses/GPL-2.0.html
+
+[[annotations]]
+path = "archive/rpm/**"
+SPDX-FileCopyrightText = "Amazon.com, Inc. or its affiliates."
+SPDX-License-Identifier = "GPL-2.0-only"  # Replaced old short identifier 'GPL-2.0', see https://spdx.org/licenses/GPL-2.0.html
+
+# computer-generated files.
+[[annotations]]
+path = "archive/*"
+SPDX-FileCopyrightText = "NONE"
+SPDX-License-Identifier = "MIT-0"
