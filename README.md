@@ -33,7 +33,8 @@ supporting the AWS Neuron SDK.
 The [official repository](https://github.com/aws-neuron/aws-neuron-driver)
 doesn't contain recent versions of the driver source code. It is still under
 `GPL-2.0-only` but only distributed as rpm package with a DKMS wrapper.
-Releases since October 2020 are not available as archive or in a public git repository.
+Releases since [October 2020](https://github.com/aws-neuron/aws-neuron-driver/commits/master/)
+are not available as archive or in a public git repository.
 
 ## How
 
