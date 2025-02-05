@@ -80,7 +80,7 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_NERR_RT_ERR = 218,
 	NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR = 219, // generic notification error
 	                                          // for reference look at "INFER_SUBTYPE_NONE" in
-	                                          // KaenaRuntime repo "tdrv/infer_error_subtype_int.c"
+	                                          // Runtime repo "tdrv/infer_error_subtype_int.c"
 
 	NMETRIC_CW_ID_FEATURE_BITMAP = 250,
 	NMETRIC_CW_ID_SYSFS_METRIC_BITMAP = 251,
@@ -248,7 +248,7 @@ static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct 
 							  &nd->metrics.component_versions[curr_metric->index]);
 		break;
 		case NMETRIC_TYPE_COUNTER:
-			for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+			for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
 				dest_buf[curr_metric->index] += NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[curr_metric->ds_id];
 			}
 		break;

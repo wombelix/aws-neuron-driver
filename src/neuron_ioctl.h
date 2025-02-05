@@ -411,6 +411,12 @@ struct neuron_ioctl_mem_get_mc_mmap_info {
 	__u64 size;          // [out] size of memory allocated for this mc
 };
 
+struct neuron_ioctl_printk {
+	void *buffer; // [in] the error buffer in user space
+	__u32 size;   // [in] size of the error buffer including null terminator
+	__u32 action; // [in] additional action to perform
+};
+
 #define NEURON_IOCTL_BASE 'N'
 
 /* Deprecated reset related IOCTLs. Now it would always return success. */
@@ -438,7 +444,7 @@ struct neuron_ioctl_mem_get_mc_mmap_info {
 
 /** Allocated memory and return a memory_handle. */
 #define NEURON_IOCTL_MEM_ALLOC _IOR(NEURON_IOCTL_BASE, 21, struct neuron_ioctl_mem_alloc *)
-#define NEURON_IOCTL_MEM_ALLOC_V2 _IOR(NEURON_IOCTL_BASE, 102, struct neuron_ioctl_mem_alloc_v2 *)
+#define NEURON_IOCTL_MEM_ALLOC_V2 _IOR(NEURON_IOCTL_BASE, 102, struct neuron_ioctl_mem_alloc_v2 *) // V2 here refers to neuron 2.x, not arch type
 
 /** Free given memory_handle. */
 #define NEURON_IOCTL_MEM_FREE _IOR(NEURON_IOCTL_BASE, 22, struct neuron_ioctl_mem_free *)
@@ -497,6 +503,7 @@ struct neuron_ioctl_mem_get_mc_mmap_info {
 #define NEURON_IOCTL_EVENT_GET _IOWR(NEURON_IOCTL_BASE, 46, struct neuron_ioctl_semaphore *)
 
 /** Initializes notification queues in the neuron core. */
+// V1 refers to neuron 1.x and V2 refers to neuron 2.x. They don't refer to arch type here
 #define NEURON_IOCTL_NOTIFICATIONS_INIT_V1 _IOR(NEURON_IOCTL_BASE, 51, struct neuron_ioctl_notifications_init_v1 *)
 #define NEURON_IOCTL_NOTIFICATIONS_DESTROY_V1 _IOR(NEURON_IOCTL_BASE, 52, struct neuron_ioctl_notifications_destroy *)
 #define NEURON_IOCTL_NOTIFICATIONS_INIT_V2 _IOR(NEURON_IOCTL_BASE, 53, struct neuron_ioctl_notifications_init_v2 *)
@@ -565,7 +572,10 @@ struct neuron_ioctl_mem_get_mc_mmap_info {
 /** request mmap info for a given resource  */
 #define NEURON_IOCTL_RESOURCE_MMAP_INFO _IOWR(NEURON_IOCTL_BASE, 112, struct neuron_ioctl_resource_mmap_info)
 
+/** Logs an error message to kernel logs/serial console  */
+#define NEURON_IOCTL_PRINTK _IOW(NEURON_IOCTL_BASE, 113, struct neuron_ioctl_printk)
+
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
-#define NEURON_IOCTL_MAX 113
+#define NEURON_IOCTL_MAX 114
 
 #endif

@@ -18,13 +18,11 @@
 #include "neuron_dma.h"
 #include "neuron_mempool.h"
 #include "neuron_dhal.h"
+#include "neuron_ring.h"
 
 int nc_per_dev_param = 1;
 module_param(nc_per_dev_param, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nc_per_dev_param, "Number of neuron cores");
-
-extern int v1_dma_init(void __iomem *bar0, struct udma *udma, int eng_id);
-extern int v2_dma_init(void __iomem *bar0, struct udma *udma, int eng_id);
 
 struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id)
 {
@@ -65,29 +63,6 @@ u32 ndmar_ring_get_desc_count(u32 v)
 	return v;
 }
 
-// TODO: add to ndhal when refactor dma code
-void ndmar_set_model_started_v1(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc)
-{
-	// For v1, the first model started state needs to be set. Determine the nc
-	// that has the pr iram instr descriptor and when the copy start comes
-	// for that queue it would imply that the model is started
-
-	int nc_id;
-	u64 tpb_addr = pa & ~P_1_BASE; //for v1 axi port is used
-
-	for (nc_id = 0; nc_id < V1_NC_PER_DEVICE; nc_id++) {
-		u64 iram_offset = V1_MMAP_TPB_OFFSET + (nc_id * V1_MMAP_NC_SIZE) +
-				  V1_MMAP_PE_IRAM_FIFO_OFFSET;
-		if ((tpb_addr >= iram_offset) &&
-		    (tpb_addr < (iram_offset + V1_MMAP_PE_IRAM_SIZE))) {
-			mc->model_start_tracker.has_pe_iram_inst = true;
-			mc->model_start_tracker.nc_id = nc_id;
-			break;
-		}
-	}
-	return;
-}
-
 /**
  * ndmar_ring_set_mem_chunk() - Set memory chunk backing the queue's physical memory(descriptor ring buffer)
  * @eng: dma engine
@@ -107,7 +82,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->tx_mc = mc;
 		ring->tx.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->tx.addr = virt_to_phys(ring->tx.ptr) | ndhal->address_map.pci_host_base;
+			ring->tx.addr = virt_to_phys(ring->tx.ptr) | ndhal->ndhal_address_map.pci_host_base;
 		} else {
 			ring->tx.addr = mc->pa;
 			if (port) {
@@ -119,7 +94,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->rx_mc = mc;
 		ring->rx.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->rx.addr = virt_to_phys(ring->rx.ptr) | ndhal->address_map.pci_host_base;
+			ring->rx.addr = virt_to_phys(ring->rx.ptr) | ndhal->ndhal_address_map.pci_host_base;
 		} else {
 			ring->rx.addr = mc->pa;
 			if (port) {
@@ -132,7 +107,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->rxc_mc = mc;
 		ring->rxc.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->rxc.addr = virt_to_phys(ring->rxc.ptr) | ndhal->address_map.pci_host_base;
+			ring->rxc.addr = virt_to_phys(ring->rxc.ptr) | ndhal->ndhal_address_map.pci_host_base;
 		} else {
 			ring->rxc.addr = mc->pa;
 			if (port) {
@@ -190,7 +165,7 @@ void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 
 	struct mem_chunk *mc = nd->ndma_q_dummy_mc;
 	const int desc_count = NDMA_QUEUE_DUMMY_RING_DESC_COUNT;
-	for (eng_id = 0; eng_id < ndhal->ndmar_funcs.dma_eng_per_nd; eng_id++) {
+	for (eng_id = 0; eng_id < ndhal->ndhal_address_map.dma_eng_per_nd; eng_id++) {
 		for (qid = 0; qid < DMA_MAX_Q_MAX; qid++) {
 			if (nd->ndma_engine[eng_id].queues[qid].owner != pid) {
 				continue;
@@ -199,12 +174,12 @@ void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 			// h2t rings are maintained by the driver so dont reset.
 			// there cant be any outstanding DMA transaction in h2t since it is a
 			// synchronous system call(which will block till finished when a process crashes).
-			if (nd->ndma_engine[eng_id].used_for_h2t && qid == ndhal->ndmar_funcs.h2t_qid)
+			if (nd->ndma_engine[eng_id].used_for_h2t && qid == ndhal->ndhal_address_map.h2t_qid)
 				continue;
 
 			// rings owned by the nx should not be reset by us
 			// ok since they should never be interacting with host mem
-			if (ndhal->ndmar_funcs.ndmar_is_nx_ring(eng_id, qid)) {
+			if (ndhal->ndhal_ndmar.ndmar_is_nx_ring(eng_id, qid)) {
 				continue;
 			}
 
@@ -278,10 +253,10 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 	int ret = 0;
 	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL, *h2t_completion_mc = NULL;
 
-	const int eng_id = ndhal->ndmar_funcs.ndmar_get_h2t_eng_id(nd, nc_id);
+	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
 	const int ndesc = DMA_H2T_DESC_COUNT;
 	const u32 ring_size = ndmar_ring_get_desc_count(ndesc) * sizeof(union udma_desc);
-	const int qid = ndhal->ndmar_funcs.h2t_qid;
+	const int qid = ndhal->ndhal_address_map.h2t_qid;
 
 	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
@@ -319,7 +294,7 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 
 	ring->h2t_completion_mc = h2t_completion_mc;
 	ring->h2t_completion.ptr = h2t_completion_mc->va;
-	ring->h2t_completion.addr = virt_to_phys(ring->h2t_completion.ptr) | ndhal->address_map.pci_host_base;
+	ring->h2t_completion.addr = virt_to_phys(ring->h2t_completion.ptr) | ndhal->ndhal_address_map.pci_host_base;
 
 	mutex_init(&eng->h2t_ring_lock);
 
@@ -423,11 +398,7 @@ int ndmar_eng_init(struct neuron_device *nd, int eng_id)
 
 	trace_dma_engine_init(nd, eng_id);
 
-	if (narch_get_arch() == NEURON_ARCH_V1)
-		ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id); // TODO: add to ndhal when refactor dma code
-	else
-		ret = v2_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
-
+	ret = ndhal->ndhal_ndma.ndma_init(nd->npdev.bar0, &eng->udma, eng_id);
 	if (ret)
 		goto done;
 
@@ -460,8 +431,8 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 
 	// init all seng DMA engines in the NC
 	int eng_id;
-	int start_eng = nc_idx * ndhal->ndmar_funcs.dma_eng_per_nc;
-	int end_eng = (nc_idx + 1) * ndhal->ndmar_funcs.dma_eng_per_nc - 1;
+	int start_eng = nc_idx * ndhal->ndhal_address_map.dma_eng_per_nc;
+	int end_eng = (nc_idx + 1) * ndhal->ndhal_address_map.dma_eng_per_nc - 1;
 	for (eng_id = start_eng; eng_id <= end_eng; eng_id++) {
 		ret = ndmar_eng_init(nd, eng_id);
 		if (ret) {
@@ -471,7 +442,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 	}
 
 	// allocate H2T engines and rings
-	eng_id = ndhal->ndmar_funcs.ndmar_get_h2t_eng_id(nd, nc_idx);
+	eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_idx);
 	if (eng_id < start_eng || eng_id > end_eng) {
 		ret = ndmar_eng_init(nd, eng_id);
 		if (ret) {
@@ -489,7 +460,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 	struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
 		return -EINVAL;
-	const int qid = ndhal->ndmar_funcs.h2t_qid;
+	const int qid = ndhal->ndhal_address_map.h2t_qid;
 	ret = ndmar_h2t_ring_init(eng, qid);
 	ndmar_release_engine(eng);
 	if (ret) {
@@ -506,7 +477,7 @@ int ndmar_init_ncs(struct neuron_device *nd, uint32_t nc_map) {
 	int ret = 0;
 	int nc_idx;
 
-	for (nc_idx = 0; nc_idx < ndhal->address_map.nc_per_device; nc_idx++) {
+	for (nc_idx = 0; nc_idx < ndhal->ndhal_address_map.nc_per_device; nc_idx++) {
 		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
 			ret = ndmar_init_nc(nd, nc_idx);
 			if (ret) {
@@ -525,7 +496,7 @@ int ndmar_init(struct neuron_device *nd)
 
 static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
 {
-	const int qid = ndhal->ndmar_funcs.h2t_qid;
+	const int qid = ndhal->ndhal_address_map.h2t_qid;
 	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	BUG_ON(eng == NULL);
 	struct ndma_queue *queue = &eng->queues[qid];
@@ -548,7 +519,7 @@ static void ndmar_close_nc(struct neuron_device *nd, int nc_idx)
 	if (!nd->dmar_init_done[nc_idx]) {
 		return;
 	}
-	const int eng_id = ndhal->ndmar_funcs.ndmar_get_h2t_eng_id(nd, nc_idx);
+	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_idx);
 	ndmar_h2t_ring_free(nd, eng_id);
 	nd->dmar_init_done[nc_idx] = false;
 }
@@ -556,7 +527,7 @@ static void ndmar_close_nc(struct neuron_device *nd, int nc_idx)
 void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map)
 {
 	int nc_idx;
-	for (nc_idx = 0; nc_idx < ndhal->address_map.nc_per_device; nc_idx++) {
+	for (nc_idx = 0; nc_idx < ndhal->ndhal_address_map.nc_per_device; nc_idx++) {
 		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
 			ndmar_close_nc(nd, nc_idx);
 		}

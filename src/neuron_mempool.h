@@ -26,6 +26,8 @@
 
 struct neuron_device;
 
+extern int mempool_min_alloc_size;
+
 enum mem_location {
 	MEM_LOC_INVALID = 0, // Invalid type
 	MEM_LOC_HOST = 1, // Memory chunk is from Host DRAM

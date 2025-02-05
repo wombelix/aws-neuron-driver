@@ -68,7 +68,6 @@
 // relative to bar0
 #define V1_MMAP_BAR0_APB_MISC_RAM_OFFSET 0x0000000078e000ull
 
-
 #define V1_MMAP_NC_SIZE 0x00000004000000ull
 
 // Number of Neuron Core per device

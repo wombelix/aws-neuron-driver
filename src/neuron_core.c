@@ -54,23 +54,23 @@ int nc_semaphore_read(struct neuron_device *nd, u8 nc_id, u16 semaphore_index, u
 {
 	void *addr;
 
-	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
+	if (semaphore_index >= ndhal->ndhal_address_map.semaphore_count)
 		return -EINVAL;
 
-	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
-	addr += ndhal->nc_funcs.mmap_nc_sema_read_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
-	return reg_read32_array((void **)&addr, result, 1);
+	addr = ndhal->ndhal_nc.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->ndhal_address_map.mmap_nc_sema_read_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
+	return ndhal->ndhal_reg_access.reg_read32_array((void **)&addr, result, 1);
 }
 
 int nc_semaphore_write(struct neuron_device *nd, u8 nc_id, u16 semaphore_index, u32 value)
 {
 	void *addr;
 
-	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
+	if (semaphore_index >= ndhal->ndhal_address_map.semaphore_count)
 		return -EINVAL;
 
-	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
-	addr += ndhal->nc_funcs.mmap_nc_sema_set_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->ndhal_nc.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->ndhal_address_map.mmap_nc_sema_set_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	writel(value, addr);
 	return 0;
 }
@@ -79,11 +79,11 @@ int nc_semaphore_increment(struct neuron_device *nd, u8 nc_id, u16 semaphore_ind
 {
 	void *addr;
 
-	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
+	if (semaphore_index >= ndhal->ndhal_address_map.semaphore_count)
 		return -EINVAL;
 
-	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
-	addr += ndhal->nc_funcs.mmap_nc_sema_incr_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->ndhal_nc.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->ndhal_address_map.mmap_nc_sema_incr_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	writel(value, addr);
 	return 0;
 }
@@ -92,11 +92,11 @@ int nc_semaphore_decrement(struct neuron_device *nd, u8 nc_id, u16 semaphore_ind
 {
 	void *addr;
 
-	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
+	if (semaphore_index >= ndhal->ndhal_address_map.semaphore_count)
 		return -EINVAL;
 
-	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
-	addr += ndhal->nc_funcs.mmap_nc_sema_decr_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->ndhal_nc.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->ndhal_address_map.mmap_nc_sema_decr_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	writel(value, addr);
 	return 0;
 }
@@ -105,21 +105,21 @@ int nc_event_get(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 *resul
 {
 	void *addr;
 
-	if (event_index > ndhal->nc_funcs.event_count)
+	if (event_index > ndhal->ndhal_address_map.event_count)
 		return -EINVAL;
 
-	addr = ndhal->nc_funcs.nc_get_event_addr(nd, nc_id, event_index);
-	return reg_read32_array(&addr, result, 1);
+	addr = ndhal->ndhal_nc.nc_get_event_addr(nd, nc_id, event_index);
+	return ndhal->ndhal_reg_access.reg_read32_array(&addr, result, 1);
 }
 
 int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 {
 	u32 *addr;
 
-	if (event_index > ndhal->nc_funcs.event_count)
+	if (event_index > ndhal->ndhal_address_map.event_count)
 		return -EINVAL;
 
-	addr = ndhal->nc_funcs.nc_get_event_addr(nd, nc_id, event_index);
+	addr = ndhal->ndhal_nc.nc_get_event_addr(nd, nc_id, event_index);
 	writel(value, addr);
 	return 0;
 }

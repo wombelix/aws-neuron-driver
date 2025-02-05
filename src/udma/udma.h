@@ -190,6 +190,12 @@ struct udma {
 	bool reserve_max_read_axi_id; // a V2 configuration workaround
 };
 
+enum {
+	UDMA_M2M_BARRIER_NONE = 0,
+	UDMA_M2M_BARRIER_DMB = 1,
+	UDMA_M2M_BARRIER_WRITE_BARRIER = 2
+};
+
 /**
  * udma_init() - Initialize udma engine.
  *
@@ -456,14 +462,16 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
  * @s_addr: Source physical address.
  * @d_addr: Destination physical address.
  * @size: - Size of the transfer(max 64K).
- * @set_dmb: Set memory barrier bit. This would make sure all previous transfer are done before starting this.
- * @set_dmb: If set dmb is set for trn chip this will use the write barrier
+ * @barrier_type:
+ *     0. no barrier is used
+ *     1. set memory barrier bit (DMB): this would make sure all previous transfers are done before starting this.
+ *     2. use write barrier: if set dmb is set for trn chip, this will use the write barrier
  * @param en_int[in] - Enable interrupt bit.
  *
  * Return: 0 if successful, a negative error code otherwise.
  */
 int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma_addr_t d_addr,
-			      u32 size, bool set_dmb, bool use_write_barrier, bool en_int);
+			      u32 size, int barrier_type, bool en_int);
 
 /**
  * udma_m2m_copy_start() - Start DMA transfer or prefetch s2m descriptors

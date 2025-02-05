@@ -33,6 +33,22 @@ struct nmmap_node {
 };
 
 /**
+ * mapping table of resources that can be mapped into user space.
+ * Used by EFA.
+ */
+struct neuron_dm_special_mmap_ent {
+	enum neuron_dm_block_type block;
+	int  block_id;
+	enum neuron_dm_resource_type resource;
+	u64  offset;
+	u64  size;
+	u64  bar0_offset;
+};
+
+#define DM_SPECIAL_MM_ENT(blk, blk_id, res, blk_mmoff, blk_baroff, blk_sz, res_off, res_sz)  \
+						{blk, blk_id, res, (blk_mmoff) + (blk_sz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
+
+/**
  * nmmap_create_node - Creates a memory map node that can be used by external drivers
  * like EFA
  *

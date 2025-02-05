@@ -11,55 +11,10 @@
 #include "neuron_device.h"
 #include "neuron_dhal.h"
 
-/**
- * mapping table of resources that can be mapped into user space.
- * Used by EFA.
- * 
- */
-struct neuron_dm_special_mmap_ent {
-	enum neuron_dm_block_type block;
-	int  block_id;
-	enum neuron_dm_resource_type resource;
-	u64  offset;
-	u64  size;
-	u64  bar0_offset;
-};
-
-
-#define DM_SPECIAL_MM_ENT(blk, blk_id, res, blk_mmoff, blk_baroff, blk_sz, res_off, res_sz)  \
-						{blk, blk_id, res, (blk_mmoff) + (blk_sz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
-
-// FIXME move this to ptr ref from dhal.
-static struct neuron_dm_special_mmap_ent dm_mmap_special_v2[] = {
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, V2_MMAP_TPB_OFFSET, V2_PCIE_BAR0_TPB_0_OFFSET,   V2_MMAP_TPB_SIZE, V2_MMAP_NC_EVENT_OFFSET, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TPB,   1, NEURON_DM_RESOURCE_SEMAPHORE, V2_MMAP_TPB_OFFSET, V2_PCIE_BAR0_TPB_0_OFFSET,   V2_MMAP_TPB_SIZE, V2_MMAP_NC_EVENT_OFFSET, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
-};
-
-static struct neuron_dm_special_mmap_ent dm_mmap_special_v1[] = {
-	{NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
-	{NEURON_DM_BLOCK_TPB,   1, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
-	{NEURON_DM_BLOCK_TPB,   2, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
-	{NEURON_DM_BLOCK_TPB,   3, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
-	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
-};
 
 int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 block_id,  enum neuron_dm_resource_type resource, u64 *offset, u64 *size)
 {
-	struct neuron_dm_special_mmap_ent * ent;
-
-	if (narch_get_arch() == NEURON_ARCH_V2)
-		ent = dm_mmap_special_v2;
-	else if (narch_get_arch() == NEURON_ARCH_V1)
-		ent = dm_mmap_special_v1;
-	else 
-		return -EINVAL;
+	struct neuron_dm_special_mmap_ent * ent = ndhal->ndhal_mmap.dm_mmap_special;
 
 	while (ent->block != NEURON_DM_BLOCK_INVALID) {
 		if ((ent->block == block) &&(ent->block_id == block_id) && (ent->resource == resource)) { 
@@ -74,14 +29,7 @@ int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 block_id,
 
 int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset)
 {
-	struct neuron_dm_special_mmap_ent * ent;
-
-	if (narch_get_arch() == NEURON_ARCH_V2)
-		ent = dm_mmap_special_v2;
-	else if (narch_get_arch() == NEURON_ARCH_V1)
-		ent = dm_mmap_special_v1;
-	else
-		return -EINVAL;
+	struct neuron_dm_special_mmap_ent *ent = ndhal->ndhal_mmap.dm_mmap_special;
 
 	while (ent->block != NEURON_DM_BLOCK_INVALID) {
 		if ((ent->offset == offset) && (ent->size == size)) { 
@@ -339,30 +287,7 @@ static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma, u64 *b
 
 	start = vma->vm_pgoff << PAGE_SHIFT;
 	size = vma->vm_end - vma->vm_start;
-
-	if (narch_get_arch() == NEURON_ARCH_V2) {
-		if (start >= V2_HBM_0_BASE && start + size < V2_HBM_0_BASE + V2_HBM_0_SIZE)
-			offset = start;
-		else if (start >= V2_HBM_1_BASE && start + size < V2_HBM_1_BASE + V2_HBM_1_SIZE)
-			// The 64GB - 80GB range is mapped to 16GB - 32GB on bar4
-			offset = start - V2_HBM_1_BASE + V2_HBM_0_SIZE;
-		else
-			return -EINVAL;
-	} else if (narch_get_arch() == NEURON_ARCH_V1) {
-		// Note: 1) we mapped the address to get VA but R/W access to the BAR
-		// from the instance might still be blocked.
-		// 2) in the new future Neuron software will not request the mapping when running on INF
-		if (start >= P_0_DRAM_0_BASE && start + size < P_0_DRAM_0_BASE + P_0_DRAM_0_SIZE)
-			offset = start;
-		else if (start >= P_0_DRAM_1_BASE && start + size < P_0_DRAM_1_BASE + P_0_DRAM_1_SIZE)
-			// The BAR is squashed, 4GB+4GB are mapped consecutively but they are apart
-			// in the actual address space
-			offset = start - P_0_DRAM_1_BASE + P_0_DRAM_0_SIZE;
-		else
-			return -EINVAL;
-	} else {
-		return -EINVAL;
-	}
+	ndhal->ndhal_mmap.mmap_get_bar4_offset(start, size, &offset);
 
 	if (bar4_offset)
 		*bar4_offset = offset;
@@ -478,7 +403,7 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma)
 	if (should_fail(&neuron_fail_nc_mmap, 1))
 		return -ENOSPC;
 #endif
-	ret = remap_pfn_range(vma, vma->vm_start, PHYS_PFN(mc->pa & ~ndhal->address_map.pci_host_base), mc->size,
+	ret = remap_pfn_range(vma, vma->vm_start, PHYS_PFN(mc->pa & ~ndhal->ndhal_address_map.pci_host_base), mc->size,
 			      vma->vm_page_prot);
 	if (ret != 0)
 		return ret;

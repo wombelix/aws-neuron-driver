@@ -109,7 +109,7 @@ int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check);
 bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd);
 
 /**
- * nr_initiate_reset_via_fw() - Initiate a reset request to pacific and retry until pacific respond
+ * nr_initiate_reset_via_fw() - Initiate a reset request to the device and retry until the device respond
  * 
  */
 int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map);

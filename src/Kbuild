@@ -1,6 +1,7 @@
 obj-m += neuron.o
 
 neuron-objs := neuron_arch.o neuron_dhal.o
+neuron-objs += neuron_reg_access.o
 neuron-objs += neuron_module.o neuron_pci.o neuron_mempool.o neuron_dma.o neuron_ring.o neuron_ds.o
 neuron-objs += neuron_core.o neuron_crwl.o neuron_cdev.o neuron_topsp.o neuron_pid.o
 neuron-objs += neuron_reset.o neuron_cinit.o neuron_mmap.o neuron_p2p.o
@@ -12,9 +13,6 @@ neuron-objs += neuron_dmabuf.o
 neuron-objs += v1/fw_io.o
 neuron-objs += v1/putils.o
 neuron-objs += v2/notific.o
-neuron-objs += v1/dma.o
-neuron-objs += v1/dma_blocked.o
-neuron-objs += v2/dma.o
 neuron-objs += v1/neuron_dhal_v1.o v2/neuron_dhal_v2.o 
 
 ccflags-y += -O3 -Wall -Werror -Wno-declaration-after-statement -Wunused-macros -Wunused-local-typedefs

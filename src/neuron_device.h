@@ -59,8 +59,6 @@ enum neuron_device_state {
 	NEURON_DEVICE_STATE_INVALID = 2
 };
 
-extern int total_neuron_devices;
-
 struct neuron_device {
 	struct pci_dev *pdev;
 	int device_index;
@@ -104,14 +102,5 @@ struct neuron_device {
 
 	struct nsysfsmetric_metrics sysfs_metrics;
 };
-
-/**
- * neuron_pci_get_device() - Returns devices associated with given index.
- *
- * @device_index: device index
- *
- * Return: NULL if device does not exists, neuron_device otherwise.
- */
-struct neuron_device *neuron_pci_get_device(u8 device_index);
 
 #endif

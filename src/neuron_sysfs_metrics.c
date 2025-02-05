@@ -19,11 +19,6 @@
 #define SYSFS_METRIC_ID_TO_NDS_NC_COUNTER_ID(metric_id) (metric_id)
 #define SYSFS_METRIC_ID_TO_NDS_ND_COUNTER_ID(metric_id) (metric_id - NDS_NC_COUNTER_COUNT)
 
-#define ATTR_INFO(_attr_name, _metric_id, _attr_type) { \
-    .attr_name = _attr_name,                            \
-    .metric_id = _metric_id,                            \
-    .attr_type = _attr_type                             \
-}
 #define TOTAL_ATTR_INFO(_metric_id)                     \
     ATTR_INFO(__stringify(total), _metric_id, TOTAL)
 #define PRESENT_ATTR_INFO(_metric_id)                   \
@@ -118,12 +113,6 @@ const static nsysfsmetric_attr_info_t ecc_attrs_info_tbl[] = {
 };
 const static int ecc_attrs_info_tbl_cnt = sizeof(ecc_attrs_info_tbl) / sizeof(nsysfsmetric_attr_info_t);
 
-// Root node's attrs and its child nodes' attrs
-const static nsysfsmetric_attr_info_t root_info_node_attrs_info_tbl[] = {
-    ATTR_INFO("notify_delay", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NOTIFY_DELAY), OTHER),
-};
-const static int root_info_node_attrs_info_tbl_cnt = sizeof(root_info_node_attrs_info_tbl) / sizeof(nsysfsmetric_attr_info_t);
-
 const static nsysfsmetric_attr_info_t root_arch_node_attrs_info_tbl[] = {
     ATTR_INFO("arch_type", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_ARCH_TYPE), OTHER),
     ATTR_INFO("instance_type", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_INSTANCE_TYPE), OTHER),
@@ -201,8 +190,6 @@ static struct kobj_type nsysfsmetric_node_ktype = {
 
 static void nsysfsmetric_get_neuron_architecture(struct nsysfsmetric_metrics *sysfs_metrics, struct metric_attribute *attr, int metric_id, char *arch)
 {
-    struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
-    unsigned short device = nd->pdev->device;
     char *arch_prefix = "";
     char *arch_suffix = "";
 
@@ -210,44 +197,15 @@ static void nsysfsmetric_get_neuron_architecture(struct nsysfsmetric_metrics *sy
         int nc_id = attr->nc_id;
         if (nc_id >= 0) {
             arch_prefix = "NC";
+            arch_suffix = ndhal->ndhal_sysfs_metrics.arch_nc_type_suffix;
         } else {
             arch_prefix = "ND";
+            arch_suffix = ndhal->ndhal_sysfs_metrics.arch_nd_type_suffix;
         }
-    }
-
-    switch (device) {
-        case INF1_DEVICE_ID0:
-        case INF1_DEVICE_ID1:
-        case INF1_DEVICE_ID2:
-        case INF1_DEVICE_ID3:
-            if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_ARCH_TYPE)) {
-                arch_suffix = "v1";
-            } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_INSTANCE_TYPE)) {
-                arch_suffix = "Inf1";
-            } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_DEVICE_NAME)) {
-                arch_suffix = "Inferentia";
-            }
-            break;
-        case TRN1_DEVICE_ID0:
-            if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_ARCH_TYPE)) {
-                arch_suffix = "v2";
-            } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_INSTANCE_TYPE)) {
-                arch_suffix = "Trn1";
-            } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_DEVICE_NAME)) {
-                arch_suffix = "Trainium1";
-            }
-            break;
-        case INF2_DEVICE_ID0:
-            if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_ARCH_TYPE)) {
-                arch_suffix = "v3";
-            } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_INSTANCE_TYPE)) {
-                arch_suffix = "Inf2";
-            } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_DEVICE_NAME)) {
-                arch_suffix = "Inferentia2";
-            }
-            break;
-        default:
-            break;
+    } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_INSTANCE_TYPE)) {
+        arch_suffix = ndhal->ndhal_sysfs_metrics.arch_instance_suffix;
+    } else if (metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_DEVICE_NAME)) {
+        arch_suffix = ndhal->ndhal_sysfs_metrics.arch_device_name_suffix;
     }
 
     snprintf(arch, NEURON_ARCH_MAX_LEN, "%s%s", arch_prefix, arch_suffix);
@@ -354,6 +312,19 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
         }
 
         len = sprintf(buf, "%u\n", total_uncorrected_ecc_err_count);
+    } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_SERIAL_NUMBER)) {
+        struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
+        uint64_t serial_number = 0;
+        int ret = fw_io_serial_number_read(nd->npdev.bar0, &serial_number);
+        if (ret
+          || ((serial_number >> 32) & 0xffffffff) == 0xdeadbeef
+          || (serial_number & 0xffffffff) == 0xdeadbeef
+          || (serial_number == 0)) {
+            pr_err("sysfs failed to read serial number from FWIO\n");
+            len = sprintf(buf, "\n");
+        } else {
+            len = sprintf(buf, "%016llx\n", serial_number);
+        }
     } else {
         pr_err("cannot show sysfs metrics for nc_id=%d, metric_id=%d of attr_type OTHER \n", attr->nc_id, attr->metric_id);
     }
@@ -431,7 +402,11 @@ static struct metric_attribute *nsysfsmetric_create_attr(const char *metric_name
     }
 
     metric_attr->attr.name = metric_name;
-    metric_attr->attr.mode = VERIFY_OCTAL_PERMISSIONS(S_IWUSR | S_IRUSR);
+
+    // read permissions for the owner, the group, and others
+    // write permissions for the owner only
+    metric_attr->attr.mode = VERIFY_OCTAL_PERMISSIONS(S_IWUSR | S_IRUGO);
+
     switch (attr_type) {
         case TOTAL:
             metric_attr->show = nsysfsmetric_show_nrt_total_metrics;
@@ -501,13 +476,13 @@ static struct attribute_group *nsysfsmetric_init_attr_group(int attr_info_tbl_cn
     return attr_group;
 }
 
-static struct nsysfsmetric_node *nsysfsmetric_init_and_add_one_node(struct nsysfsmetric_metrics *sysfs_metrics,
-                                                                    struct nsysfsmetric_node *parent_node,
-                                                                    const char *node_name,
-                                                                    bool is_root,
-                                                                    int nc_id,
-                                                                    int attr_info_tbl_cnt,
-                                                                    const nsysfsmetric_attr_info_t *attr_info_tbl)
+struct nsysfsmetric_node *nsysfsmetric_init_and_add_one_node(struct nsysfsmetric_metrics *sysfs_metrics,
+                                                            struct nsysfsmetric_node *parent_node,
+                                                            const char *node_name,
+                                                            bool is_root,
+                                                            int nc_id,
+                                                            int attr_info_tbl_cnt,
+                                                            const nsysfsmetric_attr_info_t *attr_info_tbl)
 {
     int ret;
 
@@ -580,7 +555,7 @@ static int nsysfsmetric_init_and_add_nc_default_nodes(struct neuron_device *nd, 
 
     struct nsysfsmetric_metrics *sysfs_metrics = &nd->sysfs_metrics;
 
-    for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+    for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
         // add the neuron_core{0,1, ...} node
         char nc_name[32];
         snprintf(nc_name, sizeof(nc_name), "neuron_core%d", nc_id);
@@ -835,7 +810,7 @@ static void nsysfsmetric_fetch_mem_from_nds(struct neuron_device *nd, struct neu
     u64 val;
     void *ds_base_ptr = entry->mc->va;
 
-    for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+    for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
         // read device_mem category counters from nds
         for (i = 0; i < device_mem_category_counter_nodes_info_tbl_cnt; i++) {
             metric_id = device_mem_category_counter_nodes_info_tbl[i].metric_id;
@@ -914,7 +889,7 @@ int nsysfsmetric_register(struct neuron_device *nd, struct kobject *neuron_devic
     }
 
     // neuron{0, 1, ...}/info/
-    struct nsysfsmetric_node *info_node = nsysfsmetric_init_and_add_one_node(metrics, &metrics->root, "info", false, -1, root_info_node_attrs_info_tbl_cnt, root_info_node_attrs_info_tbl);
+    struct nsysfsmetric_node *info_node = nsysfsmetric_init_and_add_one_node(metrics, &metrics->root, "info", false, -1, ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt, ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl);
     if (!info_node) {
         pr_err("failed to add info node under sysfs metric root\n");
         return -1;
@@ -951,12 +926,9 @@ int nsysfsmetric_register(struct neuron_device *nd, struct kobject *neuron_devic
         return ret;
     }
     // neuron{0, 1, ...}/stats/hardware/{sram_ecc_uncorrected, mem_ecc_uncorrected}
-    if (narch_get_arch() == NEURON_ARCH_V2) { // TODO: will add V1 support soon
-        struct nsysfsmetric_node *hardware_node = nsysfsmetric_init_and_add_one_node(metrics, stats_node, "hardware", false, -1, ecc_attrs_info_tbl_cnt, ecc_attrs_info_tbl);
-        if (!hardware_node) {
-            pr_err("failed to add hardware node its attributes under stats\n");
-            return -1;
-        }
+    ret = ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_ecc_nodes(metrics, stats_node, ecc_attrs_info_tbl_cnt, ecc_attrs_info_tbl);
+    if (ret) {
+        return ret;
     }
 
     // neuron{0, 1, ...}/neuron_core{0, 1, ...}/
@@ -992,7 +964,7 @@ int nsysfsmetric_init_and_add_dynamic_counter_nodes(struct neuron_device *nd, ui
 
     while (metrics->bitmap != 0) {
         if (metrics->bitmap & 1) {
-            for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+            for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
                 ret = nsysfsmetric_init_and_add_one_dynamic_counter_node(metrics, metrics->dynamic_metrics_dirs[nc_id], metric_id, nc_id);
                 if (ret) {
                     pr_err("failed to add a new dynamic metric, where metric_id=%d, nd=%d, nc=%d\n", metric_id, nd->device_index, nc_id);
@@ -1071,7 +1043,7 @@ static void nsysfsmetric_update_counter(struct neuron_device *nd, int metric_id_
         return;
     }
 
-    for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+    for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
         if (delta > 0)
             nsysfsmetric_inc_counter(nd, metric_id_category, id, nc_id, delta);
         else
@@ -1105,7 +1077,7 @@ void nsysfsmetric_nds_aggregate(struct neuron_device *nd, struct neuron_datastor
         nsysfsmetric_init_and_add_dynamic_counter_nodes(nd, NDS_ND_COUNTERS(ds_base_ptr)[ds_id]);
     }
 
-    for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+    for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
         // read status counters from nds
         for (i = 0; i < status_counter_nodes_info_tbl_cnt; i++) {
             metric_id = status_counter_nodes_info_tbl[i].metric_id;

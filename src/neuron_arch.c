@@ -11,8 +11,6 @@
 
 #include "neuron_arch.h"
 
-bool v2_chip = false;
-
 struct neuron_arch_info {
 	enum neuron_arch arch;
 	u32 revision;
@@ -32,7 +30,6 @@ void narch_init(enum neuron_arch arch, u8 revision)
 		return;
 	arch_info.arch = arch;
 	arch_info.revision = revision;
-	v2_chip = (arch == NEURON_ARCH_V2);
 }
 
 enum neuron_arch narch_get_arch(void)

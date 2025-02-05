@@ -309,19 +309,26 @@ static int udma_m2m_build_rx_descriptor(union udma_desc *rx_desc_ptr, u32 rx_rin
  */
 static int udma_m2m_build_descriptor(union udma_desc *rx_desc_ptr, union udma_desc *tx_desc_ptr,
 				     u32 rx_ring_id, u32 tx_ring_id, dma_addr_t s_addr,
-				     dma_addr_t d_addr, u32 size, bool set_dmb,
-				     bool use_write_barrier, bool set_dst_int)
+				     dma_addr_t d_addr, u32 size, int barrier_type, bool set_dst_int)
 {
 	int ret;
 	u32 rx_flags = 0;
 	uint32_t meta_ctrl = tdma_m2s_meta_ctrl_default_value.uint32_data;
 	/* Just one descriptor in packet - set appropriate first/last flags */
 	u32 tx_flags = M2S_DESC_FIRST | M2S_DESC_LAST;
-	if (set_dmb) {
-		if (use_write_barrier)
-			sdma_m2s_set_write_barrier(&meta_ctrl);
-		else
+
+	switch (barrier_type) {
+		case UDMA_M2M_BARRIER_DMB:
 			tx_flags |= M2S_DESC_DMB;
+			break;
+		case UDMA_M2M_BARRIER_WRITE_BARRIER:
+			sdma_m2s_set_write_barrier(&meta_ctrl);
+			break;
+		case UDMA_M2M_BARRIER_NONE:
+			break;
+		default:
+			pr_err("Invalid m2m barrier is given");
+			return -EINVAL;
 	}
 
 	ret = udma_m2m_build_tx_descriptor(tx_desc_ptr, tx_ring_id, s_addr, size,
@@ -340,7 +347,7 @@ static int udma_m2m_build_descriptor(union udma_desc *rx_desc_ptr, union udma_de
  * this is a simple case of one m2s and one s2m descriptor in DMA packet
  */
 int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma_addr_t d_addr,
-			      u32 size, bool set_dmb, bool use_write_barrier, bool set_dst_int)
+			      u32 size, int barrier_type, bool set_dst_int)
 {
 	u32 ndesc;
 	struct udma_q *txq;
@@ -379,8 +386,7 @@ int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma
 	union udma_desc *rx_desc = udma_desc_get(rxq);
 	union udma_desc *tx_desc = udma_desc_get(txq);
 	return udma_m2m_build_descriptor(rx_desc, tx_desc, udma_ring_id_get(rxq),
-					 udma_ring_id_get(txq), s_addr, d_addr, size, set_dmb,
-					 use_write_barrier, set_dst_int);
+					 udma_ring_id_get(txq), s_addr, d_addr, size, barrier_type, set_dst_int);
 }
 
 /* Start DMA data transfer for m2s_count/s2m_count number or descriptors.
@@ -412,7 +418,7 @@ int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count
 	return ret;
 }
 
-// for more info reference https://sim.amazon.com/issues/NRT-315
+// for more info, reference the ticket system NRT-315
 void udma_m2m_set_axi_error_abort(struct udma *udma)
 {
 	unsigned int i, q;

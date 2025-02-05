@@ -10,6 +10,7 @@
 #pragma once
 
 #include "../neuron_reg_access.h"
+#include "address_map.h"
 
 /* sdma_rob_cfg:
  *        0:0 - en

@@ -56,12 +56,12 @@ static int nr_reset_thread_fn(void *arg)
 		enum neuron_reset_state state = NEURON_RESET_STATE_STARTED;
 		nd->nr.reset_start_time = get_jiffies_64();
 		pr_info("nd%d: initiating reset request %u\n", nd->device_index, req->request_id);
-		ret = ndhal->reset_funcs.nr_initiate_reset(nd);
+		ret = ndhal->ndhal_reset.nr_initiate_reset(nd);
 		if (ret) {
 			state = NEURON_RESET_STATE_FAILED;
 			nsysfsmetric_inc_reset_fail_count(nd);
 		} else {
-			ret = ndhal->reset_funcs.nr_wait_for_reset_completion(nd);
+			ret = ndhal->ndhal_reset.nr_wait_for_reset_completion(nd);
 			if (ret) {
 				pr_info("nd%d: device didnt come out reset\n", nd->device_index);
 				state = NEURON_RESET_STATE_FAILED;
@@ -299,11 +299,7 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
         // comes out of reset, so sleep here for sometime
         if (nr_msleep_stoppable(nd, reset_init_retry_wait_time))
             return -1;
-        // Emulator doesn't have readless read support, just return
-        if (narch_is_emu()) {
-            return 0;
-        }
-        for (j = 0; j < ndhal->reset_funcs.retry_count; j++) {
+        for (j = 0; j < ndhal->ndhal_reset.retry_count; j++) {
             if (fw_io_is_reset_initiated(nd->npdev.bar0))
                 return 0;
             if (nd->nr.stop)

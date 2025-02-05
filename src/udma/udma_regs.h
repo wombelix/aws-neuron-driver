@@ -16,8 +16,7 @@ struct udma_axi_m2s {
 	/* [0x18] Data read master configuration */
 	uint32_t data_rd_cfg;
 	uint32_t reserved1[2];
-	/* [0x24] AXI outstanding  configuration */
-	/* [0x24] AXI outstanding  configuration */
+	/* [0x24] AXI outstanding configuration */
 	u32 ostand_cfg;
 	u32 reserved2[54];
 };

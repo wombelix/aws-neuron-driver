@@ -15,6 +15,12 @@
 #define NDS_ND_COUNTER_ID_TO_SYSFS_METRIC_ID(nds_id) (nds_id + NDS_NC_COUNTER_COUNT)
 #define NON_NDS_ID_TO_SYSFS_METRIC_ID(non_nds_id)    (non_nds_id + NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT)
 
+#define ATTR_INFO(_attr_name, _metric_id, _attr_type) { \
+    .attr_name = _attr_name,                            \
+    .metric_id = _metric_id,                            \
+    .attr_type = _attr_type                             \
+}
+
 enum nsysfsmetric_attr_type {
     TOTAL,     // counter value accumulated
     PRESENT,   // counter value at the current window
@@ -40,7 +46,8 @@ enum nsysfsmetric_non_nds_ids {  // The metrics needed by sysfs metrics but not 
     NON_NDS_OTHER_NEURON_ARCH_TYPE,
     NON_NDS_OTHER_NEURON_INSTANCE_TYPE,
     NON_NDS_OTHER_NEURON_DEVICE_NAME,
-    NON_NDS_OTHER_NOTIFY_DELAY
+    NON_NDS_OTHER_NOTIFY_DELAY,
+    NON_NDS_OTHER_SERIAL_NUMBER,
 };
 
 struct neuron_device;
@@ -71,7 +78,7 @@ struct nsysfsmetric_metrics { // per neuron_device
     struct nsysfsmetric_node root; // represent the neuron device
     struct nsysfsmetric_node *dynamic_metrics_dirs[MAX_NC_PER_DEVICE];
     struct nsysfsmetric_counter nrt_metrics[MAX_METRIC_ID][MAX_NC_PER_DEVICE]; // runtime metrics, indiced by metric_id and nc_id
-    struct nsysfsmetric_counter dev_metrics[MAX_METRIC_ID]; // TODO: pacific metrics
+    struct nsysfsmetric_counter dev_metrics[MAX_METRIC_ID]; // TODO: the device metrics
     uint64_t bitmap; // store the dynamic metrics to be added
     struct sysfs_mem_thread mem_thread; // keep fetching memory breakdown from datastore
 };
@@ -103,6 +110,19 @@ int nsysfsmetric_register(struct neuron_device *nd, struct kobject *nd_kobj);
  * @param nd: The pointer to the neuron_device
  */
 void nsysfsmetric_destroy(struct neuron_device *nd);
+
+/**
+ * nsysfsmetric_init_and_add_one_node() - add one node to sysfs
+ * 
+ * @return struct nsysfsmetric_node* the newly created not
+ */
+struct nsysfsmetric_node *nsysfsmetric_init_and_add_one_node(struct nsysfsmetric_metrics *sysfs_metrics,
+                                                            struct nsysfsmetric_node *parent_node,
+                                                            const char *node_name,
+                                                            bool is_root,
+                                                            int nc_id,
+                                                            int attr_info_tbl_cnt,
+                                                            const nsysfsmetric_attr_info_t *attr_info_tbl);
 
 /**
  * nsysfsmetric_init_and_add_dynamic_counter_nodes() - add all new dynamic metrics requested by runtime under each neuron device directory

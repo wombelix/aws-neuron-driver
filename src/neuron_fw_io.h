@@ -7,6 +7,8 @@
 
 #include <linux/types.h>
 
+extern int use_rr;
+
 struct fw_io_request {
 	u8 sequence_number; // sequence number to be copied in the next response.
 	u8 command_id; // command to hw.
@@ -22,17 +24,20 @@ struct fw_io_response {
 	u8 data[0]; // response data if any
 };
 
-enum { FW_IO_CMD_READ = 1, // read a register value
+enum {
+	FW_IO_CMD_READ = 1, // read a register value
 	FW_IO_CMD_POST_TO_CW = 2 // post given blob as metrics to CloudWatch
 };
 
-enum { FW_IO_SUCCESS = 0, // completed successfully
+enum {
+	FW_IO_SUCCESS = 0, // completed successfully
 	FW_IO_FAIL, // request failed, no further information should be returned
 	FW_IO_UNKNOWN_COMMAND // request failed because command is not supported
 };
 
 // Bitmap of PIR reset types to be written to FW_IO_REG_RESET_OFFSET
-enum { FW_IO_RESET_TYPE_DEVICE = 1,
+enum {
+	FW_IO_RESET_TYPE_DEVICE = 1,
 	FW_IO_RESET_TYPE_TPB = 2  // Requires FW_IO_REG_RESET_TPB_MAP_OFFSET to be populated with a tpb map prior to use
 };
 
@@ -40,8 +45,13 @@ enum { FW_IO_RESET_TYPE_DEVICE = 1,
 enum {
 	FW_IO_REG_DEVICE_ID_OFFSET = 0x24,
 
+	// MISC RAM slots for serial number for V2
+	//   - The lower 32 bits and the upper 32 bits together represent the 64-bit serial number.
+	FW_IO_REG_SERIAL_NUMBER_LO_OFFSET = 0x38, // 14 * 4 bytes
+	FW_IO_REG_SERIAL_NUMBER_HI_OFFSET = 0x3c, // 15 * 4 bytes
+
 	// MISC RAM slots for ECC error counters for V2
-	//   - ECC counters for V2 which are currently being placed in MISC RAM register 16, 17 and 18 by Pacific. 
+	//   - ECC counters for V2 which are currently being placed in MISC RAM register 16, 17 and 18 by the device. 
 	//   - The upper 16 bits of each register represent corrected errors, and the lower 16 bits represent uncorrected errors.
 	FW_IO_REG_SRAM_ECC_OFFSET = 0x40, // 16 * 4 bytes
 	FW_IO_REG_HBM0_ECC_OFFSET = 0x44, // 17 * 4 bytes
@@ -71,6 +81,50 @@ struct fw_io_ctx {
 
 #define UINT64_LOW(x) ((u32)(((u64)(x)) & 0xffffffffULL))
 #define UINT64_HIGH(x) ((u32)((x) >> 32))
+
+// Hardware might take up to 15 seconds in worst case.
+#define FW_IO_RD_TIMEOUT (1000 * 1000 * 1)
+#define FW_IO_RD_RETRY   15
+
+// max number of registers can be read in single function call
+#define FW_IO_MAX_READLESS_READ_REGISTER_COUNT 100
+
+
+/**
+ * fw_io_register_read_region - Read a BAR region
+ * 
+ * @param ctx 
+ * @param region_ptr 
+ * @param region_size 
+ * @param device_physical_address 
+ * 
+ * @return int: 0 on success; -1 on failure
+ */
+int fw_io_register_read_region(struct fw_io_ctx *ctx, void __iomem *region_ptr,
+				      u64 region_size, u64 device_physical_address);
+
+/**
+ * fw_io_read_csr_array_direct
+ * 
+ * @param addrs: an array of register addresses to read
+ * @param values: read values stored here
+ * @param num_csrs: the number of CSRs to read
+ * @param operational: true if the read expects the device to be in operational state
+ * 
+ * @return int: 0 on success; -1 on failure
+ */
+int fw_io_read_csr_array_direct(void **addrs, u32 *values, u32 num_csrs, bool operational);
+
+/**
+ * fw_io_read_csr_array_readless
+ * 
+ * @param ptrs: an array of register addresses to read
+ * @param values: read values stored here
+ * @param num_csrs: the number of CSRs to read
+ * 
+ * @return int: 0 on success; -1 on failure
+ */
+int fw_io_read_csr_array_readless(void **ptrs, u32 *values, u32 num_csrs);
 
 /**
  * fw_io_read_csr_array() - Read CSR(s) and return the value(s).
@@ -162,20 +216,6 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
 			uint32_t num_counters);
 
 /**
- * fw_io_topology() - Discovers devices connected to the given device.
- *
- * @ctx: FWIO context of the device for which topology
- * @pdev_index: the nd->pdev->device index
- * @device_id: The index of the neuron device
- * @connected_device_ids:  Connected device IDs are stored here.
- * @count: Number of devices connected to the given device.
- *
- * Return: 0 on success.
- *
- */
-int fw_io_topology(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count);
-
-/**
  * fw_io_device_id_read() - Read device id
  * @param bar - from bar
  * @param device_id  - output device id
@@ -207,5 +247,14 @@ u64 fw_io_get_err_count(struct fw_io_ctx *ctx);
  * @return 0 on success
  */
 int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count);
+
+/**
+ * fw_io_serial_number_read() - Read serial number
+ * 
+ * @param bar0: from bar
+ * @param serial_number: the serial number (lower 32 bits and upper 32 bits together as 64 bits serial number value)
+ * @return 0 on success
+ */
+int fw_io_serial_number_read(void *bar0, uint64_t *serial_number);
 
 #endif

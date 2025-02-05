@@ -6,6 +6,7 @@
 #include "neuron_dmabuf.h"
 #include "neuron_device.h"
 #include "neuron_mmap.h"
+#include "neuron_pci.h"
 
 /* Below is a short description of how dma-buf works (with libfabric and EFA driver)
  * - Memory Registration
@@ -21,7 +22,7 @@
  *      - ndmabuf_detach
  *      - ndmabuf_release
  *
- * See https://quip-amazon.com/iFhrAaUWihQk/Moving-to-dma-buf-for-EFA-Memory-Registration for more information.
+ * See internal documentation: Moving-to-dma-buf-for-EFA-Memory-Registration for more information.
  */
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)

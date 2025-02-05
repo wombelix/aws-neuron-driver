@@ -15,6 +15,7 @@
 #include "neuron_device.h"
 #include "neuron_mmap.h"
 #include "neuron_p2p.h"
+#include "neuron_pci.h"
 
 /*
  * Registers the VA with the callback and also returns the PA
@@ -98,15 +99,21 @@ int neuron_p2p_unregister_va(struct neuron_p2p_va_info *vainfo)
 	if (!vainfo)
 		return -1;
 
+	// pci call will catch out of bounds index, but we still want to check for null nd because not all systems have same number of neuron devices
 	nd = neuron_pci_get_device(vainfo->device_index);
+	if (nd == NULL) {
+		WARN_ONCE(1, "Invalid vainfo struct nd: %d , vaddr: %p size: 0x%llx", vainfo->device_index, vainfo->virtual_address, vainfo->size);
+		return -1;
+	}
+
 	write_lock(&nd->mpset.rbmmaplock);
+	
 	struct nmmap_node *mmap = nmmap_search_va(nd, vainfo->virtual_address);
 	if (mmap != NULL) {
 		mmap->free_callback = NULL;
 		mmap->data = NULL;
-	} else {
-        pr_err("possible memory leak for nd: %d vainfo: 0x%llx  va:0x%llx, pid:%d", vainfo->device_index, (u64)vainfo, (u64)vainfo->virtual_address, task_tgid_nr(current));
-	}
+	} 
+	vainfo->device_index = -1;
 	write_unlock(&nd->mpset.rbmmaplock);
 	kfree(vainfo);
 	return 0;

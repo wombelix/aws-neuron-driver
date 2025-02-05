@@ -99,7 +99,7 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 			      u64 start_addr, size_t pool_size,	u32 dram_channel, u32 dram_region)
 {
 	int ret;
-	int min_alloc_size = mempool_min_alloc_size;
+
 	// refuse to load with invalid memory alloc configuration
 	BUG_ON(mempool_min_alloc_size < PAGE_SIZE);
 	BUG_ON((mempool_min_alloc_size % PAGE_SIZE) != 0);
@@ -111,12 +111,7 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 	mp->dram_channel = dram_channel;
 	mp->dram_region = dram_region;
 
-	// v2 has a bigger mem size and gen pool create fails if < 1024
-	if (v2_chip && min_alloc_size < 1024) {
-		min_alloc_size = 1024;
-	}
-
-	mp->gen_pool = gen_pool_create(ilog2(min_alloc_size), -1);
+	mp->gen_pool = gen_pool_create(ilog2(ndhal->ndhal_mpset.mp_min_alloc_size), -1);
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
 
@@ -261,7 +256,7 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 	u64 device_dram_addr[MAX_DRAM_CHANNELS];
 	u64 device_dram_size[MAX_DRAM_CHANNELS];
 
-	ndhal->mpset_funcs.mpset_set_dram_and_mpset_info(mpset, device_dram_addr, device_dram_size);
+	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info(mpset, device_dram_addr, device_dram_size);
 
 	for (channel = 0; channel < mpset->num_channels; channel++) {
 		region_sz = device_dram_size[channel] / mpset->mp_device_num_regions;
@@ -275,7 +270,7 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 		}
 	}
 
-	ret = ndhal->mpset_funcs.mpset_block_carveout_regions(nd, mpset, device_dram_addr, device_dram_size);
+	ret = ndhal->ndhal_mpset.mpset_block_carveout_regions(nd, mpset, device_dram_addr, device_dram_size);
 	if (ret) {
 				goto fail;
 				goto fail;
@@ -554,7 +549,7 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 			}
 		}
 		if (mc->va)
-			mc->pa |= ndhal->address_map.pci_host_base;
+			mc->pa |= ndhal->ndhal_address_map.pci_host_base;
 		else
 			pr_info("host mem occupied %lld\n", mpset->host_mem_size);
 	} else {
@@ -682,7 +677,7 @@ void mc_free(struct mem_chunk **mcp)
 			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
 			mc->mp->allocated_size -= mc->size;
 		} else {
-			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~ndhal->address_map.pci_host_base);
+			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~ndhal->ndhal_address_map.pci_host_base);
 		}
 		mpset->host_mem_size -= mc->size;
 		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, mc->nc_id, mc->size);

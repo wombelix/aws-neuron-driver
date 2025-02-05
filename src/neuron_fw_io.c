@@ -41,36 +41,57 @@ int use_rr = 0;
 module_param(use_rr, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(use_rr, "use readless reads");
 
-static u64 fw_io_get_bar0_misc_ram_offset(void) {
-	return narch_get_arch() == NEURON_ARCH_V1 ?  V1_MMAP_BAR0_APB_MISC_RAM_OFFSET : V2_MMAP_BAR0_APB_MISC_RAM_OFFSET;
-}
-
 int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count)
 {
-    if (ecc_offset != FW_IO_REG_SRAM_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM0_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM1_ECC_OFFSET) {
-        pr_err("wrong ecc offset is given\n");
-        return -EINVAL;
-    }
+	if (ecc_offset != FW_IO_REG_SRAM_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM0_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM1_ECC_OFFSET) {
+		pr_err("wrong ecc offset is given\n");
+		return -EINVAL;
+	}
 
-    void *addr = bar0 + fw_io_get_bar0_misc_ram_offset() + ecc_offset;
-    int ret = fw_io_read_csr_array(&addr, ecc_err_count, 1, false);
-    if (ret) {
-        pr_err("failed to get ecc error count from pacific for ecc_offset=%llu\n", ecc_offset);
-        return -EIO;
-    }
+	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + ecc_offset;
+	int ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, ecc_err_count, 1, false);
+	if (ret) {
+		pr_err("failed to get ecc error count from the device for ecc_offset=%llu\n", ecc_offset);
+		return -EIO;
+	}
 
 	return 0;
 }
 
+int fw_io_serial_number_read(void *bar0, uint64_t *serial_number)
+{
+	int ret = 0;
+
+	uint32_t serial_number_lo = 0;
+	void *addr_lo = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_SERIAL_NUMBER_LO_OFFSET;
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr_lo, &serial_number_lo, 1, false);
+	if (ret) {
+		pr_err("failed to get the lower 32 bits of the serial number from the device\n");
+		return -EIO;
+	}
+
+	uint32_t serial_number_hi = 0;
+	void *addr_hi = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_SERIAL_NUMBER_HI_OFFSET;
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr_hi, &serial_number_hi, 1, false);
+	if (ret) {
+		pr_err("failed to get the higher 32 bits of the serial number from the device\n");
+		return -EIO;
+	}
+
+	*serial_number = ((uint64_t)serial_number_hi << 32) | serial_number_lo;
+
+	return ret;
+}
+
 int fw_io_device_id_read(void *bar0, u32 *device_id)
 {
-	void *addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
-	return fw_io_read_csr_array(&addr, device_id, 1, false);
+	void * addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_DEVICE_ID_OFFSET;
+	return ndhal->ndhal_fw_io.fw_io_read_csr_array( &addr, device_id, 1, false);
 }
 
 void fw_io_device_id_write(void *bar0, u32 device_id)
 {
-	void *addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
+	void * addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_DEVICE_ID_OFFSET;
 	reg_write32(addr, device_id);
 }
 
@@ -78,13 +99,13 @@ void fw_io_device_id_write(void *bar0, u32 device_id)
  */
 static int fw_io_init(void __iomem *bar0, u64 request_addr, u64 response_addr)
 {
-	reg_write32(bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET,
+	reg_write32(bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET,
 		    UINT64_LOW(request_addr));
-	reg_write32(bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET,
+	reg_write32(bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET,
 		    UINT64_HIGH(request_addr));
-	reg_write32(bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET,
+	reg_write32(bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET,
 		    UINT64_LOW(response_addr));
-	reg_write32(bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET,
+	reg_write32(bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET,
 		    UINT64_HIGH(response_addr));
 	return 0;
 }
@@ -93,7 +114,7 @@ static int fw_io_init(void __iomem *bar0, u64 request_addr, u64 response_addr)
  */
 static void fw_io_trigger(void __iomem *bar0)
 {
-	reg_write32(bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET, 1);
+	reg_write32(bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET, 1);
 }
 
 static const u32 crc32c_table[256] = {
@@ -151,10 +172,6 @@ static u32 crc32c(const u8 *data, size_t len)
 	dx_crc32c_add(data, len, &csum);
 	return csum ^ 0xffffffff;
 }
-
-// Hardware might take up to 15 seconds in worst case.
-#define FW_IO_RD_TIMEOUT (1000 * 1000 * 1)
-#define FW_IO_RD_RETRY   15
 
 static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size,
 			  u8 *resp, u32 resp_size)
@@ -266,7 +283,7 @@ struct fwio_read_region {
 #define MAX_REGIONS MAX_NEURON_DEVICE_COUNT * 2 // bar0 and bar2 for every device
 static struct fwio_read_region fwio_read_regions[MAX_REGIONS] = { { 0 } };
 
-static int fw_io_register_read_region(struct fw_io_ctx *ctx, void __iomem *region_ptr,
+int fw_io_register_read_region(struct fw_io_ctx *ctx, void __iomem *region_ptr,
 				      u64 region_size, u64 device_physical_address)
 {
 	int i;
@@ -282,7 +299,7 @@ static int fw_io_register_read_region(struct fw_io_ctx *ctx, void __iomem *regio
 	return -1;
 }
 
-static int fw_io_read_csr_array_direct(void **addrs, u32 *values, u32 num_csrs, bool operational)
+int fw_io_read_csr_array_direct(void **addrs, u32 *values, u32 num_csrs, bool operational)
 {
 	int i;
 
@@ -294,7 +311,6 @@ static int fw_io_read_csr_array_direct(void **addrs, u32 *values, u32 num_csrs, 
 	}
 
 	// reading during initialization/reset (only allow 1 read at a time)
-	//
 	if (num_csrs != 1) {
 		pr_err("error: attempting multi-csr read during reset/initialization\n");
 		return -1;
@@ -307,23 +323,14 @@ static int fw_io_read_csr_array_direct(void **addrs, u32 *values, u32 num_csrs, 
 
 			if (values[0] != 0xdeadbeef) return 0;
 			msleep(1);
-		} while ( ktime_to_us(ktime_sub(ktime_get(), start_time)) <  FW_IO_RD_TIMEOUT);
+		} while (ktime_to_us(ktime_sub(ktime_get(), start_time)) < FW_IO_RD_TIMEOUT);
 	}
 	return -1;
 }
 
-// max number of registers can be read in single function call.
-#define MAX_READLESS_READ_REGISTER_COUNT 100
-int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool operational)
+int fw_io_read_csr_array_readless(void **ptrs, u32 *values, u32 num_csrs)
 {
 	int i, j;
-	if (num_csrs > MAX_READLESS_READ_REGISTER_COUNT)
-		return -EINVAL;
-
-	if ((narch_get_arch() == NEURON_ARCH_V2) && !use_rr) {
-		return fw_io_read_csr_array_direct(ptrs, values, num_csrs, operational);
-	}
-
 	for (i = 0; i < MAX_REGIONS; i++) {
 		void *start, *end;
 		if (fwio_read_regions[i].ctx == NULL) {
@@ -333,7 +340,7 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool operationa
 		start = (void *)fwio_read_regions[i].region_ptr_start;
 		end = (void *)(fwio_read_regions[i].region_ptr_end - sizeof(u32));
 		if (ptrs[0] >= start && ptrs[0] <= end) {
-			u64 addrs[MAX_READLESS_READ_REGISTER_COUNT];
+			u64 addrs[FW_IO_MAX_READLESS_READ_REGISTER_COUNT];
 			u64 off;
 			for (j = 0; j < num_csrs; j++) {
 				// CSRs must be in the same readless region
@@ -345,6 +352,7 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool operationa
 			return fw_io_read(fwio_read_regions[i].ctx, addrs, values, num_csrs);
 		}
 	}
+
 	return -1;
 }
 
@@ -356,11 +364,11 @@ void fw_io_initiate_reset(void __iomem *bar0, bool device_reset, u32 tpb_reset_m
 		reset_type = FW_IO_RESET_TYPE_DEVICE;
 	} else {
 		reset_type = FW_IO_RESET_TYPE_TPB;
-		address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_TPB_MAP_OFFSET;
+		address = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESET_TPB_MAP_OFFSET;
 		reg_write32((u32 *)address, tpb_reset_map);
 		mb();
 	}
-	address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_OFFSET;
+	address = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESET_OFFSET;
 	reg_write32((u32 *)address, reset_type);
 	mb();
 	fw_io_trigger(bar0);
@@ -372,8 +380,8 @@ bool fw_io_is_reset_initiated(void __iomem *bar0)
 	int ret;
 	u32 val;
 
-	address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_OFFSET;
-	ret = fw_io_read_csr_array((void **)&address, &val, 1, false);
+	address = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESET_OFFSET;
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array((void **)&address, &val, 1, false);
 	if (ret == 0 && val == 0)
 		return true;
 	return false;
@@ -395,7 +403,7 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size)
 		return -ETIMEDOUT;
 #endif
 	// Write the data in the misc ram first
-	void * offset = (void *) (ctx->bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_METRIC_OFFSET);
+	void * offset = (void *) (ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_METRIC_OFFSET);
 	for (i = 0; i < (size / 4); i++) {
 		reg_write32(offset + (i * 4), m[i]);
 	}
@@ -414,94 +422,6 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
 			uint32_t num_counters)
 {
 	return fw_io_read(ctx, addr_in, val_out, num_counters);
-}
-
-static const int trn1_32xl_neigbor_ids[16][4] = {
-	{12, 3, 4, 1},   // neuron device 0
-	{13, 0, 5, 2},   // neuron device 1
-	{14, 1, 6, 3},   // neuron device 2
-	{15, 2, 7, 0},   // neuron device 3
-	{0, 7, 8, 5},    // neuron device 4
-	{1, 4, 9, 6},    // neuron device 5
-	{2, 5, 10, 7},   // neuron device 6
-	{3, 6, 11, 4},   // neuron device 7
-	{4, 11, 12, 9},  // neuron device 8
-	{5, 8, 13, 10},  // neuron device 9
-	{6, 9, 14, 11},  // neuron device 10
-	{7, 10, 15, 8},  // neuron device 11
-	{8, 15, 0, 13},  // neuron device 12
-	{9, 12, 1, 14},  // neuron device 13
-	{10, 13, 2, 15}, // neuron device 14
-	{11, 14, 3, 12}  // neuron device 15
-};
-
-static const int inf2_48xl_neighbor_ids[12][2] = {
-	{11, 1}, // neuron device 0
-	{0, 2},  // neuron device 1
-	{1, 3},  // neuron device 2
-	{2, 4},  // neuron device 3
-	{3, 5},  // neuron device 4
-	{4, 6},  // neuron device 5
-	{5, 7},  // neuron device 6
-	{6, 8},  // neuron device 7
-	{7, 9},  // neuron device 8
-	{8, 10}, // neuron device 9
-	{9, 11}, // neuron device 10
-	{10, 0}  // neuron device 11
-};
-
-static const int *inf2_24xl_neighbor_ids[6] = {
-	(int[]){1},		// neuron device 0
-	(int[]){0, 2},	// neuron device 1
-	(int[]){1, 3},	// neuron device 2
-	(int[]){2, 4},	// neuron device 3
-	(int[]){3, 5},	// neuron device 4
-	(int[]){4}		// neuron device 5
-};
-
-static int fw_io_topology_v2(int pdev_index, int device_id, u32 *connected_device_ids, int *count)
-{
-	// V2 does not have Pacific support to detect east/west/south/north neighbors like V1,
-	// so its topology is hardcoded based on instance type.
-	*count = 0;
-
-	if (total_neuron_devices == 0)
-		return 0;
-
-	switch (pdev_index) {
-		case TRN1_DEVICE_ID0: // Trn1
-			if (total_neuron_devices == 16) { // Trn1.32xl
-				*count = 4;
-				memcpy(connected_device_ids, trn1_32xl_neigbor_ids[device_id], (*count) * sizeof(int));
-			}
-			break;
-		case INF2_DEVICE_ID0: // Inf2
-			if (total_neuron_devices == 12) { // Inf2.48xl
-				*count = 2;
-				memcpy(connected_device_ids, inf2_48xl_neighbor_ids[device_id], (*count) * sizeof(int));
-			} else if (total_neuron_devices == 6) { // Inf2.24xl
-				if (device_id == 0 || device_id == 5)
-					*count = 1;
-				else
-					*count = 2;
-				memcpy(connected_device_ids, inf2_24xl_neighbor_ids[device_id], (*count) * sizeof(int));
-			}
-			break;
-		default:
-			break;
-	}
-	return 0;
-}
-
-int fw_io_topology(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
-{
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		return fw_io_topology_v1(ctx, connected_device_ids, count);
-	} else if (narch_get_arch() == NEURON_ARCH_V2) {
-		return fw_io_topology_v2(pdev_index, device_id, connected_device_ids, count);
-	} else {
-		return 0;
-	}
 }
 
 u64 fw_io_get_err_count(struct fw_io_ctx *ctx)
@@ -535,7 +455,7 @@ struct fw_io_ctx *fw_io_setup(void __iomem *bar0, u64 bar0_size,
 	}
 
 	ctx->request_addr = virt_to_phys(ctx->request);
-	ctx->request_addr |= ndhal->address_map.pci_host_base;
+	ctx->request_addr |= ndhal->ndhal_address_map.pci_host_base;
 
 	ctx->response = kmalloc(FW_IO_MAX_SIZE, GFP_ATOMIC);
 	if (ctx->response == NULL) {
@@ -544,24 +464,12 @@ struct fw_io_ctx *fw_io_setup(void __iomem *bar0, u64 bar0_size,
 	}
 
 	ctx->response_addr = virt_to_phys(ctx->response);
-	ctx->response_addr |= ndhal->address_map.pci_host_base;
+	ctx->response_addr |= ndhal->ndhal_address_map.pci_host_base;
 
-	if (narch_get_arch() == NEURON_ARCH_V1){
-		if (fw_io_register_read_region(ctx, bar0, bar0_size, P_0_APB_BASE)) {
-			pr_err("failed to register readless read BAR0 region\n");
-			goto error;
-		}
-		if (fw_io_register_read_region(ctx, bar2, bar2_size, V1_MMAP_TPB_OFFSET)) {
-			pr_err("failed to register readless read BAR2 region\n");
-			goto error;
-		}
-	} else {
-		if (fw_io_register_read_region(ctx, bar0, bar0_size, V2_MMAP_TPB_OFFSET)) {
-			pr_err("failed to register readless read BAR0 region\n");
-			goto error;
-		}
+	if (ndhal->ndhal_fw_io.fw_io_register_readless_read_region(ctx, bar0, bar0_size, bar2, bar2_size)) {
+		pr_err("failed to register readless read region\n");
+		goto error;
 	}
-
 
 	return ctx;
 

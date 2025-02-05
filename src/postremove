@@ -1,1 +1,6 @@
-rmmod neuron
+#!/bin/sh -e
+
+NEURON_PRES=$(dkms status | grep neuron)
+if [ -z "${NEURON_PRES}" ]; then
+    rmmod neuron
+fi

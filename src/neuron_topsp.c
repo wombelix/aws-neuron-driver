@@ -68,7 +68,7 @@ int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type)
 {
 	u8 nq_id;
 
-	if (nd == NULL || ts_id >= ndhal->topsp_funcs.ts_per_device)
+	if (nd == NULL || ts_id >= ndhal->ndhal_address_map.ts_per_device)
 		return -EINVAL;
 
 	nq_id = ts_nq_get_nqid(nd, eng_index, nq_type);
@@ -87,7 +87,7 @@ int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type)
 void ts_nq_destroy_all(struct neuron_device *nd)
 {
 	u8 ts_id;
-	for (ts_id = 0; ts_id < ndhal->topsp_funcs.ts_per_device; ts_id++) {
-		ndhal->topsp_funcs.ts_nq_destroy_one(nd, ts_id);
+	for (ts_id = 0; ts_id < ndhal->ndhal_address_map.ts_per_device; ts_id++) {
+		ndhal->ndhal_topsp.ts_nq_destroy_one(nd, ts_id);
 	}
 }

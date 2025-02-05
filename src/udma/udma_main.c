@@ -9,6 +9,8 @@
 
 #include "udma.h"
 #include "udma_regs.h"
+#include "neuron_arch.h"
+#include "../neuron_dhal.h"
 
 /** get field out of 32 bit register */
 #define REG_FIELD_GET(reg, mask, shift) (((reg) & (mask)) >> (shift))
@@ -27,7 +29,6 @@ struct udma_m2s_pkt_len_conf {
 	bool encode_64k_as_zero;
 };
 
-#define UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB (1 << 2)
 
 /*  dma_q flags */
 #define UDMA_Q_FLAGS_NO_COMP_UPDATE BIT(1)
@@ -58,8 +59,6 @@ static int udma_m2s_packet_size_cfg_set(struct udma *udma, struct udma_m2s_pkt_l
 	reg_write32(&udma->udma_regs_m2s->m2s.cfg_len, reg);
 	return 0;
 }
-
-#define UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY (1 << 16)
 
 /* set default configuration of one DMA engine */
 static int udma_set_defaults(struct udma *udma)
@@ -111,9 +110,8 @@ static int udma_set_defaults(struct udma *udma)
 	for (i = 0; i < DMA_MAX_Q_V4; i++)
 		reg_write32(&gen_ex_regs->vmpr_v4[i].tx_sel, 0xffffffff);
 
-	if (v2_chip)
-		reg_write32(&udma->udma_regs_m2s->axi_m2s.data_rd_cfg,
-			    UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY | 0x8);
+	/* Set M2S data read master configuration */
+	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set(udma);
 
 	/* Ack time out */
 	reg_write32(&udma->udma_regs_s2m->s2m_comp.cfg_application_ack, 0);
@@ -442,16 +440,7 @@ static void udma_q_init_internal(struct udma *udma, u32 qid, struct udma_q_param
 	udma_q->udma = udma;
 	udma_q->qid = qid;
 
-	if (v2_chip && udma_q->type == UDMA_TX) {
-		uint32_t *reg_addr;
-		uint32_t val;
-
-		reg_addr = &udma_q->q_regs->m2s_q.rlimit.mask;
-		val = udma_q->rlimit_mask;
-		// enable DMB
-		val &= ~UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB;
-		reg_write32(reg_addr, val);
-	}
+	ndhal->ndhal_udma.udma_q_config(udma_q);
 
 	/* clear all queue ptrs */
 	udma_q_reset(udma_q);

@@ -36,10 +36,10 @@ static int nnq_halt(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_typ
 {
 	u8 nq_id;
 
-	if (nd == NULL || nc_id >= ndhal->address_map.nc_per_device)
+	if (nd == NULL || nc_id >= ndhal->ndhal_address_map.nc_per_device)
 		return -EINVAL;
 
-	nq_id = ndhal->nq_funcs.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	nq_id = ndhal->ndhal_nq.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -47,7 +47,7 @@ static int nnq_halt(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_typ
 		return 0;
 	}
 
-	ndhal->nq_funcs.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, 0, 0);
+	ndhal->ndhal_nq.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, 0, 0);
 	
 	return 0;
 }
@@ -56,10 +56,10 @@ static int nnq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_
 {
 	u8 nq_id;
 
-	if (nd == NULL || nc_id >= ndhal->address_map.nc_per_device)
+	if (nd == NULL || nc_id >= ndhal->ndhal_address_map.nc_per_device)
 		return -EINVAL;
 
-	nq_id = ndhal->nq_funcs.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	nq_id = ndhal->ndhal_nq.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -82,10 +82,10 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 		pr_err("notification ring size must be power of 2");
 		return -EINVAL;
 	}
-	if (nd == NULL || nc_id >= ndhal->address_map.nc_per_device)
+	if (nd == NULL || nc_id >= ndhal->ndhal_address_map.nc_per_device)
 		return -EINVAL;
 
-	u8 nq_id = ndhal->nq_funcs.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	u8 nq_id = ndhal->ndhal_nq.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -96,7 +96,7 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 			       dram_channel, dram_region, nc_id, &_mc);
 		if (ret)
 			return ret;
-		ndhal->nq_funcs.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, _mc->pa);
+		ndhal->ndhal_nq.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, _mc->pa);
 		nd->nq_mc[nc_id][nq_id] = _mc;
 		if (mc) {
 			mc_free(&mc);
@@ -133,9 +133,9 @@ void nnq_destroy_nc(struct neuron_device *nd, u8 nc_id)
 		}
 	}
 
-	u8 ts_per_nc = ndhal->topsp_funcs.ts_per_device / ndhal->address_map.nc_per_device;
+	u8 ts_per_nc = ndhal->ndhal_address_map.ts_per_device / ndhal->ndhal_address_map.nc_per_device;
 	for (ts_id = nc_id * ts_per_nc; ts_id < (nc_id + 1) * ts_per_nc; ts_id++) {
-		ndhal->topsp_funcs.ts_nq_destroy_one(nd, ts_id);
+		ndhal->ndhal_topsp.ts_nq_destroy_one(nd, ts_id);
 	}
 }
 
@@ -143,7 +143,7 @@ void nnq_destroy_all(struct neuron_device *nd)
 {
 	u8 nc_id;
 
-	for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
+	for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
 		nnq_destroy_nc(nd, nc_id);
 	}
 }

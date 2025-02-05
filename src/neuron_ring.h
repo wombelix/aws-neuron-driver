@@ -82,6 +82,22 @@ struct ndma_eng {
 };
 
 /**
+ * ndmar_acquire_engine() - acquire the DMA engine
+ * 
+ * @param nd: neuron device
+ * @param eng_id: DMA engine ID
+ * @return struct ndma_eng*: the DMA engine to be acquired
+ */
+struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id);
+
+/**
+ * ndmar_release_engine() - release the DMA engine
+ * 
+ * @param eng: the DMA engine to be released
+ */
+void ndmar_release_engine(struct ndma_eng *eng);
+
+/**
  * ndmar_init() - Initialize DMA structures for given neuron device
  *
  * @nd: Neuron device to initialize
@@ -252,24 +268,6 @@ int ndmar_eng_get_state(struct neuron_device *nd, int eng_id, struct neuron_dma_
  */
 int ndmar_queue_get_state(struct neuron_device *nd, int eng_id, int qid,
 			  struct neuron_dma_queue_state *tx, struct neuron_dma_queue_state *rx);
-
-
-/** ndmar_set_model_started_v1() -
- *
- * Checks to see if the pa belongs to PE IRAM FIFO offset. If so, then these
- * descs are used to load the iram. The mem chunk is going to have all the descriptors
- * to load the instructions in iram. So go through all the dma queues and check if this mem chunk is
- * in that queue. Once we have the queue we set that queue to have descs
- * for iram. The actual copy start of the queue would come when model is started and at that time
- * set the state of model start for this nc.
- *
- * @nd: Neuron device which contains the DMA engine
- * @pa: pa to check
- * @mc: mem chunk that has descs
- *
- * Return: None
- */
-void ndmar_set_model_started_v1(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc);
 
 /** ndmar_h2t_ring_init() - initialize a DMA ring 
  * 

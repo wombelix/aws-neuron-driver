@@ -14,22 +14,6 @@
 struct neuron_device;
 
 /**
- * ndmar_acquire_engine() - acquire the DMA engine
- * 
- * @param nd: neuron device
- * @param eng_id: DMA engine ID
- * @return struct ndma_eng*: the DMA engine to be acquired
- */
-struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id);
-
-/**
- * ndmar_release_engine() - release the DMA engine
- * 
- * @param eng: the DMA engine to be released
- */
-void ndmar_release_engine(struct ndma_eng *eng);
-
-/**
  * ndma_memcpy_mc() - Copy data from a memory to another memory chunk.
  *
  * @nd: neuron device which should be used for dma
@@ -147,5 +131,22 @@ int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t 
  *
  */
 int ndma_memcpy_mc_wait( struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc, int dma_ctx_handle);
+
+/** 
+ * ndma_is_valid_host_mem() - check whether given PA is valid host memory.
+ *                          - a PA is valid only if it is allocated by the current process.
+ *
+ * @return: True if PA is valid, false otherwise.
+ */
+bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa);
+
+/**
+ * ndma_bar0_blocked_one_engine()
+ * 
+ * @param base 
+ * @param off 
+ * @return int 
+ */
+int ndma_bar0_blocked_one_engine(u64 base, u64 off);
 
 #endif

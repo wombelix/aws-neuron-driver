@@ -13,17 +13,16 @@
 /* Only this file should create trace points, anywhere else just include neuron_trace.h*/
 #define CREATE_TRACE_POINTS
 #include "neuron_trace.h"
+#include "neuron_cdev.h"
 
-MODULE_DESCRIPTION("Neuron Driver, built from SHA: 191a3a6ffdceb767d689674ecdb6f863627ce5ae");
+MODULE_DESCRIPTION("Neuron Driver, built from SHA: 9dbffa9295aae550a78d843153376d6e24e295ba");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.14.5.0");
+MODULE_VERSION("2.15.9.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.14.5.0";
-const char driver_revision[] = "191a3a6ffdceb767d689674ecdb6f863627ce5ae";
+const char driver_version[] = "2.15.9.0";
+const char driver_revision[] = "9dbffa9295aae550a78d843153376d6e24e295ba";
 
-extern int ncdev_module_init(void);
-extern void ncdev_module_exit(void);
 extern int neuron_pci_module_init(void);
 extern void neuron_pci_module_exit(void);
 
