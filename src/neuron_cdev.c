@@ -45,6 +45,7 @@ struct ncdev {
 	int minor;
 	int open_count; // number of times this node is opened.
 	struct cdev cdev;
+	struct mutex ncdev_lock;
 	struct neuron_device *ndev; // neuron device associated with this device node.
 };
 
@@ -101,17 +102,18 @@ static int ncdev_dma_queue_init(struct neuron_device *nd, void *param)
 	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_queue_init *)param, sizeof(arg));
 	if (ret)
 		return -EACCES;
-
-	rx_mc = ncdev_mem_handle_to_mem_chunk(arg.rx_handle);
-	tx_mc = ncdev_mem_handle_to_mem_chunk(arg.tx_handle);
+	if (arg.rx_handle)
+		rx_mc = ncdev_mem_handle_to_mem_chunk(arg.rx_handle);
+	else
+		rx_mc = NULL;
+	if (arg.tx_handle)
+		tx_mc = ncdev_mem_handle_to_mem_chunk(arg.tx_handle);
+	else
+		tx_mc = NULL;
 	if (arg.rxc_handle)
 		rxc_mc = ncdev_mem_handle_to_mem_chunk(arg.rxc_handle);
 	else
 		rxc_mc = NULL;
-	if (!rx_mc || !tx_mc)
-		return -EINVAL;
-	if (arg.rxc_handle && !rxc_mc)
-		return -EINVAL;
 	ret = ndmar_queue_init(nd, arg.eng_id, arg.qid, arg.tx_desc_count, arg.rx_desc_count, tx_mc,
 			       rx_mc, rxc_mc, arg.axi_port);
 	return ret;
@@ -710,7 +712,6 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 				goto done;
 			}
 			writel(data[i], nd->npdev.bar0 + off);
-			nc_track_register_write(nd, 0, off, data[i]);
 			trace_bar_write(nd, 0, off, data[i]);
 		}
 	} else {
@@ -874,35 +875,34 @@ static DEFINE_MUTEX(ncdev_discovery_lock);
 static long ncdev_device_info(struct neuron_device *nd, void *param)
 {
 	int i, ret;
+	u32 connected_devices[MAX_NEURON_DEVICE_COUNT];
+	int connected_device_count = 0;
 	struct neuron_ioctl_device_info result;
 
 	narch_fill_device_basic_info((struct neuron_ioctl_device_basic_info *)&result);
 
 	mutex_lock(&ncdev_discovery_lock);
-
 	// if topology discovery is not yet done, do it and cache the result
-	if (nd->connected_device_count <= 0) {
-		ret = fw_io_topology(nd->fw_io_ctx, nd->connected_devices,
-				     &nd->connected_device_count);
-		if (ret) {
-			ret = -EFAULT;
-			goto out;
-		}
+	// if it fails, don't fail completely, wait for a retry otherwise ndl_open_device would fail
+	ret = fw_io_topology(nd->fw_io_ctx, connected_devices, &connected_device_count);
+	if (ret) {
+		connected_device_count = 0;
+		pr_err("Unable to get connected devices for device %d", nd->device_index);
 	}
+	mutex_unlock(&ncdev_discovery_lock);
 
-	for (i = 0; i < nd->connected_device_count; i++) {
-		result.connected_devices[i] = nd->connected_devices[i];
+	for (i = 0; i < connected_device_count; i++) {
+		result.connected_devices[i] = connected_devices[i];
 	}
+	result.connected_device_count = connected_device_count;
+
 	result.bar_address[0] = (u64)nd->npdev.bar0;
 	result.bar_size[0] = nd->npdev.bar0_size;
 	result.bar_address[1] = (u64)nd->npdev.bar2;
 	result.bar_size[1] = nd->npdev.bar2_size;
 
-	result.connected_device_count = nd->connected_device_count;
 	ret = copy_to_user(param, &result, sizeof(result));
 
-out:
-	mutex_unlock(&ncdev_discovery_lock);
 	return ret;
 }
 
@@ -1018,23 +1018,6 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
-static long ncdev_nc_nq_info(struct neuron_device *nd, void *param)
-{
-	struct neuron_ioctl_notifications_queue_info arg;
-	int ret;
-
-	ret = copy_from_user(&arg, param, sizeof(arg));
-	if (ret)
-		return ret;
-
-	ret = nnq_get_nq_info(nd, arg.nq_dev_id, arg.nq_top_sp, arg.engine_index, arg.nq_type,
-			      &arg.head, &arg.phase_bit);
-	if (ret)
-		return ret;
-
-	return copy_to_user(param, &arg, sizeof(arg));
-}
-
 static long ncdev_acquire_neuron_ds(struct neuron_device *nd, void *param)
 {
 	int ret;
@@ -1128,7 +1111,10 @@ static long ncdev_crwl_nc_range_mark(void *param)
 	ret = ncrwl_nc_range_mark(arg.nc_count, arg.start_nc_index, arg.end_nc_index,
 				  &arg.max_nc_available, &arg.bitmap);
 	if (ret) {
-		copy_to_user(param, &arg, sizeof(arg));
+		int unused = copy_to_user(param, &arg, sizeof(arg));
+		unused = unused;
+		// note that ret indicates whether we marked the range
+		// successfully
 		return ret;
 	}
 
@@ -1332,7 +1318,7 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_V1) {
 		return 0;
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_QUEUE_INFO) {
-		return ncdev_nc_nq_info(nd, (void *)param);
+		return -1;
 	} else if (cmd == NEURON_IOCTL_READ_HW_COUNTERS) {
 		return ncdev_read_hw_counters(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_ACQUIRE_NEURON_DS) {
@@ -1352,9 +1338,6 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	return ncdev_misc_ioctl(filep, cmd, param);
 }
 
-/* Only one process can take ownership of a device. */
-static DEFINE_MUTEX(ncdev_device_lock);
-
 static int ncdev_open(struct inode *inode, struct file *filep)
 {
 	int ret;
@@ -1373,21 +1356,21 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 		pr_err("nd%d: failed to reset device\n", nd->device_index);
 		return EAGAIN;
 	}
-	mutex_lock(&ncdev_device_lock);
+	mutex_lock(&dev->ncdev_lock);
 	ret = ndmar_init(nd);
 	if (ret) {
 		pr_err("nd%d: failed to initialize DMA engines\n", nd->device_index);
-		mutex_unlock(&ncdev_device_lock);
+		mutex_unlock(&dev->ncdev_lock);
 		return EAGAIN;
 	}
 	if (!npid_attach(nd)) {
 		pr_err("nd%d: pid %d failed to open\n", nd->device_index, task_tgid_nr(current));
 		npid_print_usage(nd);
-		mutex_unlock(&ncdev_device_lock);
+		mutex_unlock(&dev->ncdev_lock);
 		return -EBUSY;
 	}
 	dev->open_count++;
-	mutex_unlock(&ncdev_device_lock);
+	mutex_unlock(&dev->ncdev_lock);
 	filep->private_data = dev;
 	return 0;
 }
@@ -1410,7 +1393,7 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 	dev = (struct ncdev *)filep->private_data;
 	nd = dev->ndev;
 
-	mutex_lock(&ncdev_device_lock);
+	mutex_lock(&dev->ncdev_lock);
 
 	// if the current process is going away then cleanup per process state
 	if (npid_is_attached(nd) == 1) {
@@ -1424,7 +1407,7 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 	}
 	npid_detach(nd);
 
-	mutex_unlock(&ncdev_device_lock);
+	mutex_unlock(&dev->ncdev_lock);
 
 	return 0;
 }
@@ -1440,13 +1423,13 @@ static int ncdev_release(struct inode *inode, struct file *filep)
 	dev = (struct ncdev *)filep->private_data;
 	nd = dev->ndev;
 
-	mutex_lock(&ncdev_device_lock);
+	mutex_lock(&dev->ncdev_lock);
 	dev->open_count--;
 	if (dev->open_count == 0) {
 		neuron_ds_clear(&nd->datastore);
 		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_ALL_PROCESS);
 	}
-	mutex_unlock(&ncdev_device_lock);
+	mutex_unlock(&dev->ncdev_lock);
 
 	return 0;
 }
@@ -1565,9 +1548,11 @@ static void ncdev_cleanup(void)
 
 int ncdev_module_init(void)
 {
-	int ret;
+	int i, ret;
 
 	memset(devnodes, 0, sizeof(devnodes));
+	for (i = 0; i < NEURON_MAX_DEV_NODES; i++)
+		mutex_init(&devnodes[i].ncdev_lock);
 
 	ret = alloc_chrdev_region(&neuron_dev, 0, NEURON_MAX_DEV_NODES, "neuron");
 	if (ret < 0) {

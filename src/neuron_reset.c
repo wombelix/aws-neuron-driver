@@ -21,6 +21,7 @@
 #include "v1/address_map.h"
 #include "v2/address_map.h"
 #include "v1/fw_io.h"
+#include "neuron_fw_io.h"
 
 int no_reset = 0;
 module_param(no_reset, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -36,15 +37,23 @@ static int nr_initiate_reset(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+
+	if (narch_is_qemu()) {
+		if (narch_get_arch() == NEURON_ARCH_TRN) {
+			volatile void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
+			writel(1, (volatile uint32_t *)addr);
+		}
+	} else {
 		int i, j;
-		if (narch_is_qemu())
-			return 0;
 		for (i = 0; i < NR_RESET_INIT_RETRY_COUNT; i++) {
 			fw_io_initiate_reset(nd->npdev.bar0);
 			// once reset is initiated, FWIO wont respond until the device
 			// comes out of reset, so sleep here for sometime
 			msleep(NR_RESET_INIT_PRE_WAIT_TIME_MS * (i + 1));
+			// Emulator doesn't have readless read support, just return
+			if (narch_is_emu()) {
+				return 0;
+			}
 			for (j = 0; j < NR_RESET_RETRY_COUNT; j++) {
 				if (fw_io_is_reset_initiated(nd->npdev.bar0))
 					return 0;
@@ -53,19 +62,6 @@ static int nr_initiate_reset(struct neuron_device *nd)
 		}
 		if (i == NR_RESET_INIT_RETRY_COUNT)
 			return -1;
-	} else if (narch_get_arch() == NEURON_ARCH_TRN) {
-		volatile void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET;
-		if (narch_is_qemu())
-			addr += V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
-		else
-			addr += V2_APB_IOFAB_RELBASE + V2_APB_IOFAB_MISC_RAM_RELBASE + V2_FW_IO_REG_FW_TRIGGER_OFFSET;
-		writel(1, (volatile uint32_t *)addr);
-		// wait a bit to give emulator a chance to kick off reset
-		if (narch_is_emu()) {
-			ssleep(5);
-		}
-	} else {
-		BUG();
 	}
 	return 0;
 }
@@ -83,8 +79,7 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 		}
 		if (i == NR_RESET_RETRY_COUNT)
 			return -1;
-		return fw_io_topology(nd->fw_io_ctx, nd->connected_devices,
-				      &nd->connected_device_count);
+		return 0;
 	} else if (narch_get_arch() == NEURON_ARCH_TRN) {
 		int i;
 		uint32_t retry_count = NR_RESET_RETRY_COUNT;
@@ -142,9 +137,11 @@ static int nr_reset_thread_fn(void *arg)
 			nd->nr.state = NEURON_RESET_STATE_FAILED;
 			continue;
 		} else {
-			pr_info("nd%d: reset completed\n", nd->device_index);
+			if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+				fw_io_device_id_write(nd->npdev.bar0, nd->device_index);
 			nd->nr.state = NEURON_RESET_STATE_COMPLETED;
 			nd->nr.request_pending = false;
+			pr_info("nd%d: reset completed\n", nd->device_index);
 		}
 	}
 	return 0;
@@ -183,7 +180,6 @@ void nr_start(struct neuron_device *nd)
 	nci_reset_state(nd);
 	// Reset the model started counter
 	memset((void *)nd->nc_model_started_count, 0, sizeof(u64) * MAX_NC_PER_DEVICE);
-	nnq_reset(nd);
 	nnq_destroy_all(nd);
 	wake_up_interruptible(&nd->nr.wait_queue);
 }

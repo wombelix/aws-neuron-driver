@@ -177,8 +177,3 @@ int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 	return 0;
 }
 
-void nc_track_register_write(struct neuron_device *nd, int bar, u64 offset, u32 value)
-{
-	// for now, tracking only notification queue register writes.
-	nnq_track_register_write(nd, bar, offset, value);
-}

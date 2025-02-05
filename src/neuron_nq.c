@@ -35,7 +35,7 @@ static u8 nnq_get_nqid(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type
 {
 	u8 nq_id = 0;
 	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
-		nq_id = (nq_type * NQ_TYPE_PER_ENGINE) + index;
+		nq_id = (nq_type * MAX_NQ_TYPE) + index;
 	else
 		nq_id = (nq_type * V2_MAX_NQ_QUEUES) + index; //for v2 nq is based on queue
 	return nq_id;
@@ -149,6 +149,7 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 	else
 		*mmap_offset = -1;
 	*nq_mc = mc;
+
 	return 0;
 }
 
@@ -160,106 +161,15 @@ void nnq_destroy_all(struct neuron_device *nd)
 
 	for (nc_id = 0; nc_id < NC_PER_DEVICE(nd); nc_id++) {
 		for (eng_index = 0; eng_index < MAX_NQ_ENGINE; eng_index++) {
-			for (nq_type = 0; nq_type < NQ_TYPE_PER_ENGINE; nq_type++) {
+			for (nq_type = 0; nq_type < MAX_NQ_TYPE; nq_type++) {
 				nnq_destroy(nd, nc_id, eng_index, nq_type);
 			}
 		}
 	}
+
+	if (narch_get_arch() == NEURON_ARCH_TRN)
+		ts_nq_destroy_all(nd);
 }
 
-int nnq_get_nq_info(struct neuron_device *nd, u8 nq_dev_id, u8 use_top_sp, u8 eng_index, u32 nq_type,
-		    u32 *head, u32 *phase_bit)
-{
-	u8 nq_id;
-	struct neuron_nq *nq;
 
-	if (narch_get_arch() == NEURON_ARCH_TRN && use_top_sp)
-		return ts_nq_get_info(nd, nq_dev_id, nq_type, head, phase_bit);
 
-	nq_id = nnq_get_nqid(nd, nq_dev_id, eng_index, nq_type);
-	if (nq_id >= MAX_NQ_SUPPORTED)
-		return -EINVAL;
-	nq = &nd->nq[nq_dev_id][nq_id];
-	*head = nq->head;
-	*phase_bit = nq->phase_bit;
-	return 0;
-}
-
-void nnq_reset(struct neuron_device *nd)
-{
-	int i, j;
-	for (i = 0; i < MAX_NC_PER_DEVICE; i++)
-		for(j = 0; j < MAX_NQ_SUPPORTED; j++) {
-			struct neuron_nq *nq = &nd->nq[i][j];
-			nq->head = 0;
-			if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
-				nq->phase_bit = 1; // see nnq_v1_head_update() for why this is 1.
-			else
-				nq->phase_bit = 0;
-		}
-}
-
-static void nnq_v1_head_update(struct neuron_device *nd, u8 nc_id, u8 instance, u8 nq_type,
-			       u32 new_head)
-{
-	u8 nq_id = nnq_get_nqid(nd, nc_id, instance, nq_type);
-	struct neuron_nq *nq;
-	u64 max_size;
-
-	if (nq_id >= MAX_NQ_SUPPORTED)
-		return;
-	nq = &nd->nq[nc_id][nq_id];
-
-#define MAX_NQ_HEAD_TAIL_DISTANCE 256
-	/* flip phase bit if head wraps around max size or if increment size is > expected size.
-	 * Application(runtime) keeps distance between head and tail pointers for NQ to avoid
-	 * a hardware bug. Hence detecting phase bit solely based on register written value
-	 * would lead to error (since hardware and software reported states are different).
-	 * For example, when hardware head/tail are 0(init), app would write head register
-	 * as 3840(for NQ of size 4096) but keeps its internal pointers as 0.
-	 * So the driver also mimics this behaviour to flip phase bit.
-	 */
-	max_size = nd->nq_mc[nc_id][nq_id]->size - MAX_NQ_HEAD_TAIL_DISTANCE;
-	if (new_head >= max_size && nq->head < max_size)
-		nq->phase_bit = !nq->phase_bit;
-	nq->head = new_head;
-}
-
-static void nnq_v2_head_update(struct neuron_device *nd, u8 nc_id, u8 instance, u8 nq_type,
-			       bool is_top_sp, u32 new_head)
-{
-	if (is_top_sp) {
-		ts_nq_update_head(nd, nc_id, nq_type, new_head);
-	} else {
-		u8 nq_id = nnq_get_nqid(nd, nc_id, instance, nq_type);
-		if (nq_id >= MAX_NQ_SUPPORTED)
-			return;
-		struct neuron_nq *nq = &nd->nq[nc_id][nq_id];
-		if (new_head < nq->head)
-			nq->phase_bit = !nq->phase_bit;
-		nq->head = new_head;
-	};
-}
-
-int nnq_track_register_write(struct neuron_device *nd, int bar, u64 offset, u32 value)
-{
-	int ret;
-	u8 nc_id, instance;
-	u32 nq_type;
-
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
-		ret = pu_decode_nq_head_reg_access(offset, &nc_id, &nq_type, &instance);
-		// if not head register access, then nothing needs to be done
-		if (ret)
-			return -1;
-		nnq_v1_head_update(nd, nc_id, instance, nq_type, value);
-	} else {
-		bool is_top_sp = false;
-		ret = notific_decode_nq_head_reg_access(offset, &nc_id, &nq_type, &instance, &is_top_sp);
-		// if not head register access, then nothing needs to be done
-		if (ret)
-			return -1;
-		nnq_v2_head_update(nd, nc_id, instance, nq_type, is_top_sp, value);
-	}
-	return 0;
-}

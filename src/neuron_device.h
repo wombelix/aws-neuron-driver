@@ -42,11 +42,6 @@ struct neuron_pci_device {
 	u64 bar4_size;
 };
 
-struct neuron_nq {
-	int head;
-	int phase_bit;
-};
-
 struct neuron_device {
 	struct pci_dev *pdev;
 	int device_index;
@@ -66,16 +61,10 @@ struct neuron_device {
 
 	struct mempool_set mpset;
 
-	// notification queue in each neuron core.
-	struct neuron_nq nq[MAX_NC_PER_DEVICE][MAX_NQ_SUPPORTED];
-
 	// memory chunk allocated for notification queue in each neuron core.
 	struct mem_chunk *nq_mc[MAX_NC_PER_DEVICE][MAX_NQ_SUPPORTED];
 	// memory chunk allocated for notification queue in each TOP_SP.
 	struct mem_chunk *ts_nq_mc[V2_TS_PER_DEVICE][MAX_NQ_SUPPORTED];
-
-	int connected_device_count; // number of devices connected to this device
-	u32 connected_devices[MAX_NEURON_DEVICE_COUNT]; // device ids of the connected devices
 
 	// memory chunk for setting device mem
 	struct mem_chunk *memset_mc;

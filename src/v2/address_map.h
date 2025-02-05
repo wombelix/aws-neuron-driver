@@ -31,6 +31,9 @@
 
 #define V2_MAX_DMA_RINGS 0
 
+// Number of TPB engines per NC
+#define V2_TPB_ENG_PER_NC 0
+
 // Number of TOP_SP per device
 #define V2_TS_PER_DEVICE 0
 

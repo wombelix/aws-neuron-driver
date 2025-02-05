@@ -159,8 +159,10 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 	qp.adapter_rev_id = 0;
 	qp.type = UDMA_TX;
 	qp.size = m2s_ring_size;
-	qp.desc_base = m2s_ring->ptr;
-	qp.desc_phy_base = m2s_ring->addr;
+	if (m2s_ring) {
+		qp.desc_base = m2s_ring->ptr;
+		qp.desc_phy_base = m2s_ring->addr;
+	}
 	qp.cdesc_base = NULL; // no completion for TX
 	qp.cdesc_phy_base = 0;
 	qp.allocatable = allocatable;
@@ -174,8 +176,10 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 	qp.adapter_rev_id = 0;
 	qp.type = UDMA_RX;
 	qp.size = s2m_ring_size;
-	qp.desc_base = s2m_ring->ptr;
-	qp.desc_phy_base = s2m_ring->addr;
+	if (s2m_ring) {
+		qp.desc_base = s2m_ring->ptr;
+		qp.desc_phy_base = s2m_ring->addr;
+	}
 
 	/* completion for RX is optional, the caller can pass NULL to disable */
 	if (s2m_compl_ring) {

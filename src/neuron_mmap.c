@@ -6,12 +6,19 @@
 
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
 
+#include <linux/capability.h>
 #include "neuron_mmap.h"
 #include "neuron_device.h"
 
-struct nmmap_node * nmmap_search_va(struct neuron_device *nd, void *va)
+struct nmmap_node *nmmap_search_va(struct neuron_device *nd, void *va)
 {
-	struct rb_node *node = nd->mpset.mmap_root.rb_node; /* top of the tree */
+	int slot;
+	struct rb_node *node;
+
+	slot = npid_find_process_slot(nd);
+	if (slot == -1)
+		return NULL;
+	node = nd->mpset.mmap_root[slot].rb_node; /* top of the tree */
 
 	while (node) {
 		struct nmmap_node *mmap = rb_entry(node, struct nmmap_node, node);
@@ -72,7 +79,13 @@ static void nmmap_remove_node_rbtree(struct rb_root *root, struct nmmap_node *mm
 void nmmap_create_node(struct neuron_device *nd, void *va, pid_t pid, u64 size, u64 pa)
 {
 	// Now insert the va in rb tree
-	struct nmmap_node *mmap = kzalloc(sizeof(struct nmmap_node), GFP_KERNEL);
+	int slot;
+	struct nmmap_node *mmap;
+
+	slot = npid_find_process_slot(nd);
+	if (slot == -1)
+		return;
+	mmap = kzalloc(sizeof(struct nmmap_node), GFP_KERNEL);
 	if (!mmap)
 		return;
 
@@ -86,21 +99,33 @@ void nmmap_create_node(struct neuron_device *nd, void *va, pid_t pid, u64 size, 
 	mmap->device_index = nd->device_index;
 	mmap->free_callback = NULL;
 	write_lock(&nd->mpset.rbmmaplock);
-	nmmap_insert_node_rbtree(&nd->mpset.mmap_root, mmap);
+	nmmap_insert_node_rbtree(&nd->mpset.mmap_root[slot], mmap);
 	write_unlock(&nd->mpset.rbmmaplock);
 }
 
 void nmmap_delete_node(struct vm_area_struct *vma)
 {
 	struct neuron_device *nd = (struct neuron_device *)vma->vm_private_data;
-	struct nmmap_node *mmap = nmmap_search_va(nd, (void *)vma->vm_start);
+	void (*free_callback)(void *data) = NULL;
+	void *data = NULL;
+	int slot;
+	struct nmmap_node *mmap;
+	slot = npid_find_process_slot(nd);
+	if (slot == -1) {
+		return;
+	}
+	mmap = nmmap_search_va(nd, (void *)vma->vm_start);
 	if (mmap != NULL) {
 		write_lock(&nd->mpset.rbmmaplock);
-		nmmap_remove_node_rbtree(&nd->mpset.mmap_root, mmap);
-		if (mmap->free_callback != NULL)
-			mmap->free_callback(mmap->data);
+		nmmap_remove_node_rbtree(&nd->mpset.mmap_root[slot], mmap);
+		if (mmap->free_callback != NULL) {
+			free_callback = mmap->free_callback;
+			data = mmap->data;
+		}
 		kfree(mmap);
 		write_unlock(&nd->mpset.rbmmaplock);
+		if (free_callback)
+			free_callback(data);
 	}
 }
 
@@ -112,7 +137,7 @@ u64 nmmap_offset(struct mem_chunk *mc)
 /**
  * nmmap_get_mc() - Return mem_chunk for given vma.
  */
-static struct mem_chunk * nmmap_get_mc(struct neuron_device *nd, struct vm_area_struct *vma)
+static struct mem_chunk *nmmap_get_mc(struct neuron_device *nd, struct vm_area_struct *vma)
 {
 	struct mem_chunk *mc;
 	u64 offset, size;
@@ -123,7 +148,9 @@ static struct mem_chunk * nmmap_get_mc(struct neuron_device *nd, struct vm_area_
 
 	pa = offset;
 
+	read_lock(&nd->mpset.rblock);
 	mc = mpset_search_mc(&nd->mpset, pa);
+	read_unlock(&nd->mpset.rblock);
 	if (mc == NULL) {
 		pr_err("nd%d: mc not found for mmap()\n", nd->device_index);
 		return NULL;
@@ -137,7 +164,8 @@ static struct mem_chunk * nmmap_get_mc(struct neuron_device *nd, struct vm_area_
 		return NULL;
 	}
 	if (mc->size != size) {
-		pr_err("nd%d: partial mmap of mc not supported(%x != %llx)\n", nd->device_index, mc->size, size);
+		pr_err("nd%d: partial mmap of mc not supported(%x != %llx)\n", nd->device_index,
+		       mc->size, size);
 		return NULL;
 	}
 	return mc;
@@ -147,20 +175,16 @@ static const struct vm_operations_struct nmmap_dm_vm_ops = {
 	.close = nmmap_delete_node,
 };
 
-static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma, struct mem_chunk *mc)
+static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma)
+{
+	return -EINVAL;
+
+}
+
+static int nmmap_dm_mc(struct neuron_device *nd, struct vm_area_struct *vma, struct mem_chunk *mc)
 {
 	int ret;
-	u64 offset;
-	u64 size;
 	phys_addr_t pa;
-
-	pa = mc->pa;
-	size = vma->vm_end - vma->vm_start;
-
-	if (!nd->npdev.bar4_pa) {
-		pr_err("BAR4 not mapped\n");
-		return -EINVAL;
-	}
 
 	// Readonly access for other processes for memory whose lifespan is not per device
 	if (mc->pid != task_tgid_nr(current) && mc->lifespan != MC_LIFESPAN_DEVICE) {
@@ -168,39 +192,42 @@ static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma, struct
 		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
 	}
 
-	offset = (u64)pa >> PAGE_SHIFT;  // convert to offset
-	vma->vm_pgoff = offset + ((nd->npdev.bar4_pa) >> PAGE_SHIFT);
+	pa = mc->pa;
+	vma->vm_pgoff = (u64)pa >> PAGE_SHIFT; // convert to offset
 
-	// set the vm ops to cleanup on unmap
-	vma->vm_private_data = (void *)nd;
-	vma->vm_ops = &nmmap_dm_vm_ops;
-
-	ret = io_remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff, size, vma->vm_page_prot);
+	ret = nmmap_dm(nd, vma);
 	if (ret != 0)
 		return ret;
 
 	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY;
 
 	// Insert the virtual address into tree so that we can do search using VA
-	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current), (u64)(vma->vm_end - vma->vm_start), (pa + nd->npdev.bar4_pa));
+	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current),
+			  (u64)(vma->vm_end - vma->vm_start), (pa + nd->npdev.bar4_pa));
 
 	return 0;
 }
 
+static int nmmap_dm_root(struct neuron_device *nd, struct vm_area_struct *vma)
+{
+	if (!capable(CAP_SYS_RAWIO))
+		return -EPERM;
+
+	return nmmap_dm(nd, vma);
+}
 
 int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma)
 {
 	int ret;
-	u64 offset;
 	struct mem_chunk *mc;
 
-	offset = vma->vm_pgoff * PAGE_SIZE;
 	mc = nmmap_get_mc(nd, vma);
 	if (mc == NULL)
-		return -EINVAL;
+		// no memchunk found. only allow root to map arbitrary device mem
+		return nmmap_dm_root(nd, vma);
 
 	if (mc->mem_location == MEM_LOC_DEVICE)
-		return nmmap_dm(nd, vma, mc);
+		return nmmap_dm_mc(nd, vma, mc);
 
 	// Readonly access for other processes for memory whose lifespan is not per device
 	if (mc->pid != task_tgid_nr(current) && mc->lifespan != MC_LIFESPAN_DEVICE) {
@@ -212,13 +239,15 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma)
 	if (should_fail(&neuron_fail_nc_mmap, 1))
 		return -ENOSPC;
 #endif
-	ret = remap_pfn_range(vma, vma->vm_start, PHYS_PFN(mc->pa & ~PCI_HOST_BASE(nd)), mc->size, vma->vm_page_prot);
+	ret = remap_pfn_range(vma, vma->vm_start, PHYS_PFN(mc->pa & ~PCI_HOST_BASE(nd)), mc->size,
+			      vma->vm_page_prot);
 	if (ret != 0)
 		return ret;
 
 	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY;
 
 	// Insert the virtual address into tree so that we can do search using VA
-	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current), (u64)(vma->vm_end - vma->vm_start), mc->pa);
+	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current),
+			  (u64)(vma->vm_end - vma->vm_start), mc->pa);
 	return 0;
 }

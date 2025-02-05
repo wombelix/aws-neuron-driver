@@ -25,7 +25,7 @@ struct nmmap_node {
 	//this will be used by efa or other utilities that are using this memory
 	//and if they have this function registered then it will be called so that
 	//it can clean up their state
-	void (*free_callback) (void *data);
+	void (*free_callback)(void *data);
 	void *data;
 };
 
@@ -67,7 +67,6 @@ u64 nmmap_offset(struct mem_chunk *mc);
  */
 int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma);
 
-
 /**
  * nmmap_search_va - Searches for va (mmap'd) in the rbtree
  *
@@ -76,6 +75,6 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma);
  *
  * Return: mmap node
  */
-struct nmmap_node * nmmap_search_va(struct neuron_device *nd, void *va);
+struct nmmap_node *nmmap_search_va(struct neuron_device *nd, void *va);
 
 #endif

@@ -94,7 +94,7 @@ struct mempool_set {
 	struct rb_root root; //rbtree that has all mem chunks allocated
 	rwlock_t rblock; //protect the rbtree access
 
-	struct rb_root mmap_root; //rbtree that tracks all mmap'd device mem va
+	struct rb_root mmap_root[NEURON_MAX_PROCESS_PER_DEVICE]; //rbtree that tracks all mmap'd device mem va
 	rwlock_t rbmmaplock; //protect the dmm root tree access
 };
 

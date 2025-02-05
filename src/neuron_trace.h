@@ -363,6 +363,28 @@ TRACE_EVENT(bar_read,
 		__entry->offset,
 		__entry->data
 	));
+
+#define METRICS_MAX_VALUE_LENGTH	128
+
+TRACE_EVENT(metrics_post,
+	TP_PROTO(u32 id, u32 length, const char *value),
+	TP_ARGS(id, length, value),
+	TP_STRUCT__entry(
+		__field(u32,              id)
+		__field(u32,              length)
+		__array(char, value, METRICS_MAX_VALUE_LENGTH)
+	),
+	TP_fast_assign(
+		__entry->id = id;
+		__entry->length = length;
+		memcpy(__entry->value, value, length);
+		__entry->value[length] = 0;
+	),
+	TP_printk("%u:%u:%s",
+	__entry->id,
+	__entry->length,
+	__entry->value
+));
 #endif
 
 #undef TRACE_INCLUDE_PATH

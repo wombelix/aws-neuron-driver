@@ -14,13 +14,18 @@
 #include <linux/fs.h>
 #include <linux/ctype.h>
 
+#include "neuron_trace.h"
 #include "neuron_metrics.h"
 #include "neuron_device.h"
 
 unsigned int nmetric_metric_post_delay = 300000; // milliseconds
+unsigned int nmetric_log_posts = 0;
 
 module_param(nmetric_metric_post_delay, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nmetric_metric_post_delay, "Minimum time to wait (in milliseconds) before posting metrics again");
+
+module_param(nmetric_log_posts, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(nmetric_log_posts, "If true, metrics will be logged instead of sent to fw");
 
 static int nmetric_counters_buf_size = sizeof(u64) * NMETRIC_COUNTER_COUNT;
 static int nmetric_versions_buf_size = sizeof(struct nmetric_versions);
@@ -30,6 +35,7 @@ static char nmetric_constant_metrics[NMETRIC_CONSTANTS_COUNT][NEURON_METRICS_VER
 static const char nmetric_instance_id_path[] = "/sys/devices/virtual/dmi/id/board_asset_tag";
 extern const char driver_version[];
 
+
 enum nmetric_metric_type {
 	COUNTER = 0, // counter type metrics
 	VERSION = 1, // version type metrics
@@ -38,7 +44,6 @@ enum nmetric_metric_type {
 
 enum nmetric_cw_id {
 	NMETRIC_CW_ID_UNUSED = 0,
-	NMETRIC_CW_ID_RT_VERSION = 1, // runtime version
 	NMETRIC_CW_ID_INSTANCE_ID = 12, // instance id
 	NMETRIC_CW_ID_DRIVER_VERSION = 13, // driver version
 
@@ -53,7 +58,16 @@ enum nmetric_cw_id {
 
 	// Return codes
 	NMETRIC_CW_ID_NERR_OK = 200, // status ok
-	NMETRIC_CW_ID_NERR_FAIL = 201 // status fail
+	NMETRIC_CW_ID_NERR_FAIL = 201, // status fail
+	NMETRIC_CW_ID_NERR_TIMEOUT = 205,
+	NMETRIC_CW_ID_NERR_HW_ERROR = 206,
+	NMETRIC_CW_ID_NERR_INFER_BAD_INPUT = 212,	
+	NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_NUM_ERR = 213,
+	NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_ERR = 214,
+	NMETRIC_CW_ID_NERR_NUMERICAL_ERR = 215,
+	NMETRIC_CW_ID_NERR_MODEL_ERR = 216,
+	NMETRIC_CW_ID_NERR_TRANSIENT_ERR = 217,
+	NMETRIC_CW_ID_NERR_RT_ERR = 218,
 };
 
 struct nmetric_cw_metric {
@@ -88,6 +102,24 @@ static int nmetric_id_to_ds_index(int internal_metric_id, enum nmetric_metric_ty
 			return NDS_NC_COUNTER_INFER_COMPLETED;
 		case NMETRIC_NERR_GENERIC_FAIL:
 			return NDS_NC_COUNTER_ERR_GENERIC;
+		case NMETRIC_TIMED_OUT:
+			return NDS_NC_COUNTER_INFER_TIMED_OUT;
+		case NMETRIC_BAD_INPUT:
+			return NDS_NC_COUNTER_INFER_INCORRECT_INPUT;
+		case NMETRIC_NUM_ERR:
+			return NDS_NC_COUNTER_ERR_NUMERICAL;
+		case NMETRIC_MODEL_ERR:
+			return NDS_NC_COUNTER_ERR_MODEL;
+		case NMETRIC_TRANSIENT_ERR:
+			return NDS_NC_COUNTER_ERR_TRANSIENT;
+		case NMETRIC_HW_ERR:
+			return NDS_NC_COUNTER_ERR_HW;
+		case NMETRIC_RT_ERR:
+			return NDS_NC_COUNTER_ERR_RT;
+		case NMETRIC_COMPLETED_WITH_ERR:
+			return NDS_NC_COUNTER_INFER_COMPLETED_WITH_ERR;
+		case NMETRIC_COMPLETED_WITH_NUMERIC_ERR:
+			return NDS_NC_COUNTER_INFER_COMPLETED_WITH_NUM_ERR;
 		default:
 			pr_err("No mapping between datastore counter and counter metric id %d\n", internal_metric_id);
 		}
@@ -119,6 +151,24 @@ static enum nmetric_cw_id nmetric_id_to_cw_id(int internal_metric_id, enum nmetr
 			return NMETRIC_CW_ID_NERR_OK;
 		case NMETRIC_NERR_GENERIC_FAIL:
 			return NMETRIC_CW_ID_NERR_FAIL;
+		case NMETRIC_TIMED_OUT:
+			return NMETRIC_CW_ID_NERR_TIMEOUT;
+		case NMETRIC_BAD_INPUT:
+			return NMETRIC_CW_ID_NERR_INFER_BAD_INPUT;
+		case NMETRIC_NUM_ERR:
+			return NMETRIC_CW_ID_NERR_NUMERICAL_ERR;
+		case NMETRIC_MODEL_ERR:
+			return NMETRIC_CW_ID_NERR_MODEL_ERR;
+		case NMETRIC_TRANSIENT_ERR:
+			return NMETRIC_CW_ID_NERR_TRANSIENT_ERR;
+		case NMETRIC_HW_ERR:
+			return NMETRIC_CW_ID_NERR_HW_ERROR;
+		case NMETRIC_RT_ERR:
+			return NMETRIC_CW_ID_NERR_RT_ERR;
+		case NMETRIC_COMPLETED_WITH_ERR:
+			return NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_ERR;
+		case NMETRIC_COMPLETED_WITH_NUMERIC_ERR:
+			return NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_NUM_ERR;
 		default:
 			pr_err("No mapping between cloudwatch id and counter metric id %d\n", internal_metric_id);
 		}
@@ -249,6 +299,27 @@ void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore
 }
 
 /**
+ * nmetric_mock_fw_io_post_metric() - Mock posting function used for internal testing
+ * 
+ * @data: start of posting buffer
+ * @size: size of posting buffer
+ * 
+ */
+void nmetric_mock_fw_io_post_metric(u8 *data, u32 size)
+{
+	// Print out every metric
+	struct nmetric_cw_metric *curr_metric = (struct nmetric_cw_metric *) data;
+	u8 *end_metric = data + size;
+	while ((uintptr_t)curr_metric < (uintptr_t)end_metric) {
+		char temp_buf[NEURON_METRICS_VERSION_STRING_MAX_LEN + 1];
+		memcpy(temp_buf, curr_metric->data, curr_metric->len);
+		temp_buf[curr_metric->len] = '\0'; // all metrics are saved as char arrays without trailing null char, so null char must be added
+		trace_metrics_post(curr_metric->id, curr_metric->len, temp_buf);
+		curr_metric = (struct nmetric_cw_metric *)(((uint8_t *)curr_metric) + sizeof(struct nmetric_cw_metric) + curr_metric->len);
+	}
+}
+
+/**
  * nmetric_post_metrics()  
  * 
  * Sends a byte array of metrics in string form to fw. Differential counter metrics are sent (as compared to the last posting); 
@@ -328,10 +399,14 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 		metric = (struct nmetric_cw_metric *)&nd->metrics.posting_buffer[data_size];
 	}
 
-	// post metrics
-	int ret = fw_io_post_metric(nd->fw_io_ctx, nd->metrics.posting_buffer, data_size);
-	if (ret < 0)
-		pr_err("Metric posting failed with error code: %d\n", ret);
+	// post metrics if available
+	if (nmetric_log_posts)
+		nmetric_mock_fw_io_post_metric(nd->metrics.posting_buffer, data_size);
+	else if (data_size) {
+		int ret = fw_io_post_metric(nd->fw_io_ctx, nd->metrics.posting_buffer, data_size);
+		if (ret < 0)
+			pr_err("Metric posting failed with error code: %d\n", ret);
+	}
 }
 
 /** 

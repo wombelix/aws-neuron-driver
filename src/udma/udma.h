@@ -299,9 +299,15 @@ static inline union udma_desc *udma_desc_get(struct udma_q *udma_q)
 	u32 next_desc_idx;
 
 	BUG_ON(udma_q == NULL);
-	if (!udma_q->is_allocatable) {
+	/* when setting up the queue caller might pass NULL for
+	   the queue base address.  That means the caller is responsible for
+	   attaching the ring and managing it somehow.  Should not be calling
+	   this function in that case
+	*/
+	if (udma_q->desc_base_ptr == NULL)
 		return NULL;
-	}
+	if (!udma_q->is_allocatable)
+		return NULL;
 
 	next_desc_idx = udma_q->next_desc_idx;
 	desc = udma_q->desc_base_ptr + next_desc_idx;

@@ -82,7 +82,6 @@ int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 // please check the chip's address_map.h to find the values
 #define MAX_NQ_TYPE 4
 #define MAX_NQ_ENGINE 4
-#define NQ_TYPE_PER_ENGINE 4
 
 #define MAX_NQ_SUPPORTED (MAX_NQ_TYPE * MAX_NQ_ENGINE)
 
@@ -159,36 +158,5 @@ void nc_nq_device_init(struct neuron_device *nd);
  */
 u64 nc_ds_mmap_offset(struct neuron_device *nd, u8 nc_index);
 
-/**
- * nnq_get_nq_info() - Get notification queue information.
- *
- * @nd: neuron device
- * @nq_dev_id: neuron core index or top_sp index
- * @use_top_sp: if 1 then use top_sp else use neuron core
- * @eng_index: engine index
- * @nq_type: NQ type
- * @head: Current head pointer would be stored here.
- * @phase_bit: Current phase bit of the queue would be stored here.
- *
- * @return 0 on success
- */
-int nnq_get_nq_info(struct neuron_device *nd, u8 nq_dev_id, u8 use_top_sp, u8 eng_index, u32 nq_type, u32 *head, u32 *phase_bit);
-
-/**
- * nc_track_register_write() - This function would be called when register write is called.
- *
- * @nd: neuron device
- * @bar: BAR number where write is destined.
- * @offset: Offset in the BAR.
- * @value: Value being written.
- */
-void nc_track_register_write(struct neuron_device *nd, int bar, u64 offset, u32 value);
-
-/**
- * nnq_reset() - Reset software state for all NQ in given device.
- *
- * @nd: neuron device
- */
-void nnq_reset(struct neuron_device *nd);
 
 #endif

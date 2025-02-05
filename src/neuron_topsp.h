@@ -46,25 +46,5 @@ int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type)
  */
 void ts_nq_destroy_all(struct neuron_device *nd);
 
-/**
- * ts_nq_get_info() - Update NQ head and phase bit
- *
- * @nd: neuron device
- * @ts_id: TopSP index
- * @nq_type: type of the notification queue
- * @head: current head would be stored here
- * @phase_bit: current phase bit would be stored here
- */
-int ts_nq_get_info(struct neuron_device *nd, u8 ts_id, u32 nq_type, u32 *head, u32 *phase_bit);
-
-/**
- * ts_nq_update_head() - Update NQ head
- *
- * @nd: neuron device
- * @ts_id: TopSP index
- * @nq_type: type of the notification queue
- * @new_head: New index of the head
- */
-void ts_nq_update_head(struct neuron_device *nd, u8 ts_id, u32 nq_type, u32 new_head);
 
 #endif

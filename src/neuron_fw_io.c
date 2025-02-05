@@ -50,6 +50,12 @@ int fw_io_device_id_read(void *bar0, u32 *device_id)
        return reg_read32(addr, device_id);
 }
 
+void fw_io_device_id_write(void *bar0, u32 device_id)
+{
+	void * addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
+	reg_write32(addr, device_id);
+}
+
 /** Set base address of request and response queues.
  */
 static int fw_io_init(void __iomem *bar0, u64 request_addr, u64 response_addr)
@@ -134,11 +140,6 @@ static u32 crc32c(const u8 *data, size_t len)
 int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size,
 			  u8 *resp, u32 resp_size)
 {
-	if (narch_get_arch() != NEURON_ARCH_INFERENTIA){
-		pr_err("TRN support not implemented");
-		return -EINVAL; //TODO: add support
-	}
-
 	int ret;
 	const u32 max_req_size = ctx->request_response_size - sizeof(struct fw_io_request);
 	const u32 max_resp_size = ctx->request_response_size - sizeof(struct fw_io_response);
@@ -351,6 +352,7 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
 {
 	return fw_io_read(ctx, addr_in, val_out, num_counters);
 }
+
 int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
 {
 	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
@@ -359,6 +361,7 @@ int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
 		return 0;
 	}
 }
+
 // Max size available for each message.
 #define FW_IO_MAX_SIZE 0xffff
 
@@ -401,12 +404,8 @@ struct fw_io_ctx *fw_io_setup(int device_index, void __iomem *bar0, u64 bar0_siz
 			pr_err("failed to register readless read BAR2 region\n");
 			goto error;
 		}
-
-		// set device id - this id is read by other devices connected by east-west PCIe link.
-		reg_write32(bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET, device_index);
-
 	} else {
-		if (fw_io_register_read_region(ctx, bar0, bar0_size, V2_MMAP_P_OFFSET)) {
+		if (fw_io_register_read_region(ctx, bar0, bar0_size, V2_MMAP_TPB_OFFSET)) {
 			pr_err("failed to register readless read BAR0 region\n");
 			goto error;
 		}

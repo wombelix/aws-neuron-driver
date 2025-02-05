@@ -27,16 +27,16 @@ static u64 neuron_p2p_register_and_get_pa(void *va, u64 size, void (*free_callba
 		nd = neuron_pci_get_device(i);
 		if (!nd)
 			continue;
-		read_lock(&nd->mpset.rbmmaplock);
+		write_lock(&nd->mpset.rbmmaplock);
 		struct nmmap_node *mmap = nmmap_search_va(nd, va);
 		if (mmap != NULL) {
 			mmap->free_callback = free_callback;
 			mmap->data = data;
-			read_unlock(&nd->mpset.rbmmaplock);
+			write_unlock(&nd->mpset.rbmmaplock);
 			*device_index = i;
 			return mmap->pa + (va - mmap->va);
 		} else {
-			read_unlock(&nd->mpset.rbmmaplock);
+			write_unlock(&nd->mpset.rbmmaplock);
 		}
 	}
 	return 0;
@@ -86,13 +86,13 @@ int neuron_p2p_unregister_va(struct neuron_p2p_va_info *vainfo)
 		return -1;
 
 	nd = neuron_pci_get_device(vainfo->device_index);
-	read_lock(&nd->mpset.rbmmaplock);
+	write_lock(&nd->mpset.rbmmaplock);
 	struct nmmap_node *mmap = nmmap_search_va(nd, vainfo->virtual_address);
 	if (mmap != NULL) {
 		mmap->free_callback = NULL;
 		mmap->data = NULL;
 	}
-	read_unlock(&nd->mpset.rbmmaplock);
+	write_unlock(&nd->mpset.rbmmaplock);
 	kfree(vainfo);
 	return 0;
 }

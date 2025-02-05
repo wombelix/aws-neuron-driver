@@ -20,7 +20,7 @@
 #include "neuron_device.h"
 #include "neuron_reg_access.h"
 
-int mempool_min_alloc_size = 256;
+int mempool_min_alloc_size = PAGE_SIZE; // always allocate on mmap() boundary
 int mempool_host_memory_size = 32 * 1024 * 1024;
 
 module_param(mempool_min_alloc_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -343,13 +343,14 @@ int mpset_constructor(struct mempool_set *mpset, void *pdev, struct neuron_devic
 	mutex_init(&mpset->lock);
 
 	INIT_LIST_HEAD(&mpset->mc_lifespan_local_head);
-	for(i = 0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++)
+	for(i = 0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++) {
 		INIT_LIST_HEAD(&mpset->mc_lifespan_cur_process_head[i]);
+		mpset->mmap_root[i] = RB_ROOT;
+	}
 	INIT_LIST_HEAD(&mpset->mc_lifespan_all_process_head);
 	INIT_LIST_HEAD(&mpset->mc_lifespan_device_head);
 
 	mpset->root = RB_ROOT;
-	mpset->mmap_root = RB_ROOT;
 	mpset->pdev = pdev;
 	mpset->nd = nd;
 

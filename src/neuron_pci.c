@@ -94,14 +94,10 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 		dma_set_coherent_mask(&nd->pdev->dev, DMA_BIT_MASK(64));
 	}
 
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
-		nd->fw_io_ctx = NULL;
-	} else {
-		nd->fw_io_ctx = fw_io_setup(nd->device_index, nd->npdev.bar0, nd->npdev.bar0_size,
-					    nd->npdev.bar2, nd->npdev.bar2_size);
-		if (nd->fw_io_ctx == NULL)
-			return -1;
-	}
+	nd->fw_io_ctx = fw_io_setup(nd->device_index, nd->npdev.bar0, nd->npdev.bar0_size,
+				    nd->npdev.bar2, nd->npdev.bar2_size);
+	if (nd->fw_io_ctx == NULL)
+		return -1;
 
 	ret = nr_create_thread(nd);
 	if (ret)
@@ -263,7 +259,7 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 #else
 	nd->device_index = atomic_add_return(1, &device_count) - 1;
 #endif
-	if (narch_get_arch() != NEURON_ARCH_INFERENTIA && !narch_is_qemu()) {
+	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
 		ret = fw_io_device_id_read(nd->npdev.bar0, &nd->device_index);
 		BUG_ON(ret != 0);
 	}

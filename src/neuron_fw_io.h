@@ -169,10 +169,17 @@ int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count);
 
 /**
  * fw_io_device_id_read() - Read device id
- * @param ndev - neuron device
+ * @param bar - from bar
  * @param device_id  - output device id
  * @return  0 on success.
  */
 int fw_io_device_id_read(void *bar0, u32 *device_id);
+
+/**
+ * fw_io_device_id_write() - Read device id
+ * @param bar - to bar
+ * @param device_id  - output device id
+ */
+void fw_io_device_id_write(void *bar0, u32 device_id);
 
 #endif
