@@ -27,6 +27,9 @@ struct nmmap_node {
 	//it can clean up their state
 	void (*free_callback)(void *data);
 	void *data;
+
+	/* dmabuf usage count */
+	u32 dmabuf_ref_cnt;
 };
 
 /**

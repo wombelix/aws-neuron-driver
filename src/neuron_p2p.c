@@ -104,6 +104,8 @@ int neuron_p2p_unregister_va(struct neuron_p2p_va_info *vainfo)
 	if (mmap != NULL) {
 		mmap->free_callback = NULL;
 		mmap->data = NULL;
+	} else {
+        pr_err("possible memory leak for nd: %d vainfo: 0x%llx  va:0x%llx, pid:%d", vainfo->device_index, (u64)vainfo, (u64)vainfo->virtual_address, task_tgid_nr(current));
 	}
 	write_unlock(&nd->mpset.rbmmaplock);
 	kfree(vainfo);

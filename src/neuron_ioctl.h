@@ -328,6 +328,14 @@ struct neuron_ioctl_device_bdf {
 	__u8 func;
 };
 
+struct neuron_ioctl_device_bdf_ext {
+	__u32 nd_index;
+	__u32 domain;
+	__u32 bus_number;
+	__u8 slot;
+	__u8 func;
+};
+
 #define NEURON_IOCTL_MAX_CONNECTED_DEVICES 8
 #define NEURON_MAX_BARS 2
 struct neuron_ioctl_device_info {
@@ -336,6 +344,12 @@ struct neuron_ioctl_device_info {
 	__u32 connected_devices[NEURON_IOCTL_MAX_CONNECTED_DEVICES]; // [out] List of connected device ids
 	__u64 bar_address[NEURON_MAX_BARS]; // [out] BAR addresses
 	__u64 bar_size[NEURON_MAX_BARS]; // [out] Size of the bar
+};
+
+struct neuron_ioctl_dmabuf_fd {
+	__u64 va;
+	__u64 size;
+	__s32 *fd;
 };
 
 #define NEURON_IOCTL_BASE 'N'
@@ -453,7 +467,7 @@ struct neuron_ioctl_device_info {
 /** Returns basic device information */
 #define NEURON_IOCTL_DEVICE_BASIC_INFO _IOW(NEURON_IOCTL_BASE, 100, struct neuron_ioctl_device_basic_info *)
 
-/** Returns pci device information */
+/** Returns pci device information - only for devices opened by the calling proceess (deprecated, don't use) */
 #define NEURON_IOCTL_DEVICE_BDF _IOR(NEURON_IOCTL_BASE, 101, struct neuron_ioctl_device_bdf *)
 
 /** Resets the requested NC (-1 for full device) */
@@ -465,6 +479,12 @@ struct neuron_ioctl_device_info {
 /** Neuron-core specific versions of program_engine ioctl to target right cores/dmas */
 #define NEURON_IOCTL_PROGRAM_ENGINE_NC _IOWR(NEURON_IOCTL_BASE, 105, struct neuron_ioctl_program_engine_nc *)
 
-#define NEURON_IOCTL_MAX 106
+/** Returns pci device information for any Neuron devices (not just these opened by the calling process */
+#define NEURON_IOCTL_DEVICE_BDF_EXT _IOR(NEURON_IOCTL_BASE, 106, struct neuron_ioctl_device_bdf_ext *)
+
+/** Get the dma-buf file-descriptor */
+#define NEURON_IOCTL_DMABUF_FD _IOR(NEURON_IOCTL_BASE, 107, struct neuron_ioctl_dmabuf_fd *)
+
+#define NEURON_IOCTL_MAX 108
 
 #endif

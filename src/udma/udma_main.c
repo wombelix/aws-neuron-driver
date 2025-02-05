@@ -363,8 +363,10 @@ static int udma_q_init_validate(struct udma *udma, u32 qid, struct udma_q_params
 		return -EINVAL;
 	}
 
-	if (q_params->size & (q_params->size - 1)) {
-		pr_err("queue%d size(%d) is not power of 2\n", qid, q_params->size);
+	// the h/w only supports rings base addr and end addr that are 256 byte aligned
+	size_t queue_size_bytes = q_params->size * sizeof(union udma_desc);
+	if ((HAS_ALIGNMENT(q_params->desc_phy_base, UDMA_QUEUE_ADDR_BYTE_ALIGNMENT) && HAS_ALIGNMENT(q_params->desc_phy_base + queue_size_bytes, UDMA_QUEUE_ADDR_BYTE_ALIGNMENT)) == false) {
+		pr_err("queue%d has invalid alignment (start addr and end addr must be 256 byte aligned): base addr: 0x%llx ring size: %lu bytes\n", qid, q_params->desc_phy_base, q_params->size * sizeof(union udma_desc));
 		return -EINVAL;
 	}
 

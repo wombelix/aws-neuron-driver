@@ -445,13 +445,13 @@ struct iofic_grp_ctrl {
 	u32 reserved7[3];
 };
 
-struct iofic_regs {
+union iofic_regs {
 	struct iofic_grp_ctrl ctrl[0];
 	u32 reserved0[0x400 >> 2];
 };
 
 struct udma_iofic_regs {
-	struct iofic_regs main_iofic;
+	union iofic_regs main_iofic;
 	u32 reserved0[(0x1c00) >> 2];
 	struct iofic_grp_ctrl secondary_iofic_ctrl[2];
 };

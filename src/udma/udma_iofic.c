@@ -246,7 +246,7 @@ enum udma_iofic_level { UDMA_IOFIC_LEVEL_PRIMARY, UDMA_IOFIC_LEVEL_SECONDARY };
  */
 static void iofic_config(void __iomem *regs_base, int group, u32 flags)
 {
-	struct iofic_regs __iomem *regs = (struct iofic_regs __iomem *)(regs_base);
+	union iofic_regs __iomem *regs = (union iofic_regs __iomem *)(regs_base);
 	reg_write32(&regs->ctrl[group].int_control_grp, flags);
 }
 
@@ -258,7 +258,7 @@ static void iofic_config(void __iomem *regs_base, int group, u32 flags)
  */
 static void iofic_unmask(void __iomem *regs_base, int group, u32 mask)
 {
-	struct iofic_regs __iomem *regs = (struct iofic_regs __iomem *)(regs_base);
+	union iofic_regs __iomem *regs = (union iofic_regs __iomem *)(regs_base);
 	reg_write32(&regs->ctrl[group].int_mask_clear_grp, ~mask);
 }
 
@@ -272,7 +272,7 @@ static void iofic_unmask(void __iomem *regs_base, int group, u32 mask)
  */
 static void iofic_abort_mask_clear(void __iomem *regs_base, int group, u32 mask)
 {
-	struct iofic_regs __iomem *regs = (struct iofic_regs __iomem *)(regs_base);
+	union iofic_regs __iomem *regs = (union iofic_regs __iomem *)(regs_base);
 	reg_write32(&regs->ctrl[group].int_abort_msk_grp, ~mask);
 }
 

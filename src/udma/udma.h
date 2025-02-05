@@ -20,9 +20,11 @@
  */
 #define UDMA_NUM_QUEUES_MAX 0xff
 
+#define UDMA_QUEUE_ADDR_BYTE_ALIGNMENT 256 // start and end addr for ring must be 256 byte aligned for prefetching
+
 /* DMA queue size range */
 #define UDMA_MIN_Q_SIZE 32
-#define UDMA_MAX_Q_SIZE (1 << 24)
+#define UDMA_MAX_Q_SIZE ((1 << 24) - 16) // udma start and end addr must be 256 byte aligned. Since a desc is 16 bytes, Max queue size in descs is (2^24 - (256 / 16))
 
 /* V1 hardware is DMA rev 4, other revisions are not supported */
 #define UDMA_REV_ID_4 4
@@ -68,6 +70,9 @@ union udma_desc {
 #define S2M_DESC_RING_ID_SHIFT 24
 #define S2M_DESC_RING_ID_MASK (0x3 << S2M_DESC_RING_ID_SHIFT) /* Ring ID bits in s2m */
 #define S2M_DESC_RING_SHIFT UDMA_S2M_Q_RDRBP_LOW_ADDR_SHIFT
+
+#define IS_POWER_OF_TWO(base) (((base) & ((base) - 1)) == 0) /* helper to check for powers of 2 */
+#define HAS_ALIGNMENT(base, alignment) (((base) & ((alignment) - 1)) == 0) /* helper to check alignments */
 
 /** UDMA completion descriptor */
 union udma_cdesc {
@@ -290,6 +295,11 @@ enum udma_state udma_state_get(struct udma *udma, enum udma_type type);
  */
 static inline u32 udma_available_get(struct udma_q *udma_q)
 {
+	// This function will only run on dma queues that use the
+	// wraparound feature (h2t only at the moment).
+	// Due to the wraparound logic using bitwise and as mod,
+	// we need to check size is power of 2.
+	BUG_ON(IS_POWER_OF_TWO(udma_q->size) == false);
 	u32 tmp = udma_q->next_cdesc_idx -
 		  (udma_q->next_desc_idx + UDMA_MAX_NUM_CDESC_PER_CACHE_LINE);
 	tmp &= udma_q->size_mask;
@@ -325,6 +335,11 @@ static inline union udma_desc *udma_desc_get(struct udma_q *udma_q)
 
 	next_desc_idx++;
 
+	// This function will only run on dma queues that use the
+	// wraparound feature (h2t only at the moment).
+	// Due to the wraparound logic using bitwise and as mod,
+	// we need to check size is power of 2.
+	BUG_ON(IS_POWER_OF_TWO(udma_q->size) == false);
 	/* if reached end of queue, wrap around */
 	udma_q->next_desc_idx = next_desc_idx & udma_q->size_mask;
 
@@ -373,6 +388,11 @@ void udma_desc_action_add(struct udma_q *udma_q, u32 num);
 static inline void udma_cdesc_ack(struct udma_q *udma_q, u32 num)
 {
 	BUG_ON(udma_q == NULL);
+	// This function will only run on dma queues that use the
+	// wraparound feature (h2t only at the moment).
+	// Due to the wraparound logic using bitwise and as mod,
+	// we need to check size is power of 2.
+	BUG_ON(IS_POWER_OF_TWO(udma_q->size) == false);
 
 	u32 cdesc_idx = udma_q->next_cdesc_idx;
 	u32 next_cdesc_idx = (cdesc_idx + num) & udma_q->size_mask;
@@ -415,8 +435,8 @@ int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_que
  *
  * @udma: UDMA structure.
  * @qid: Queue index.
- * @m2s_ring_size: Number of descriptors in the m2s queue(must be power of 2).
- * @s2m_ring_size: Number of descriptors in the s2m queue(must be power of 2).
+ * @m2s_ring_size: Number of descriptors in the m2s queue.
+ * @s2m_ring_size: Number of descriptors in the s2m queue.
  * @desc_allocatable: If false it means, descriptors cant be allocated from this queue.
  * @m2s_ring: Address/pointer to m2s queue.
  * @s2m_ring: Address/pointer to s2m queue.

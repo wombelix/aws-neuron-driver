@@ -31,12 +31,14 @@ enum nsysfsmetric_non_nds_ids {  // The metrics needed by sysfs metrics but not 
     NON_NDS_COUNTER_INFERENCE_COUNT,
     NON_NDS_OTHER_NEURON_ARCH_TYPE,
     NON_NDS_OTHER_NEURON_INSTANCE_TYPE,
-    NON_NDS_OTHER_NEURON_DEVICE_NAME
+    NON_NDS_OTHER_NEURON_DEVICE_NAME,
+    NON_NDS_OTHER_NOTIFY_DELAY
 };
 
 struct neuron_device;
 
 struct nsysfsmetric_counter {
+    struct kobject *kobj;
     u64 total;
     u64 present;
     u64 peak;

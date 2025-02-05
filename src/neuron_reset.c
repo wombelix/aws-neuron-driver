@@ -390,6 +390,10 @@ int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check)
 
 bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd)
 {
+	if (no_reset) {
+		return 0;
+	}
+
 	if (time_before_eq64(nd->nr.reset_end_time, nd->nr.reset_start_time)) {
 		return true;
 	} else if (time_before_eq64(op_start_time, nd->nr.reset_end_time)) {

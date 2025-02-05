@@ -76,6 +76,13 @@ static void nmmap_insert_node_rbtree(struct rb_root *root, struct nmmap_node *mm
  */
 static void nmmap_remove_node_rbtree(struct rb_root *root, struct nmmap_node *mmap)
 {
+	/* Before deleting the mmap node, warn user if there's a pending dmabuf operation.
+	 * This scenario could happen when an application is terminated midway between
+	 * memory registration and de-registration. */
+	if (mmap->dmabuf_ref_cnt > 0) {
+		pr_warn("mmap node is being removed while dmabuf is in progress, va:0x%llx nd:%d pid:%d dmabuf_ref_cnt:%d\n",
+				(u64)mmap->va, mmap->device_index, task_tgid_nr(current), mmap->dmabuf_ref_cnt);
+	}
 	rb_erase(&mmap->node, root);
 }
 
@@ -102,6 +109,7 @@ void nmmap_create_node(struct neuron_device *nd, void *va, pid_t pid, u64 size, 
 	mmap->pid = pid;
 	mmap->device_index = nd->device_index;
 	mmap->free_callback = NULL;
+	mmap->dmabuf_ref_cnt = 0;
 	write_lock(&nd->mpset.rbmmaplock);
 	nmmap_insert_node_rbtree(&nd->mpset.mmap_root[slot], mmap);
 	write_unlock(&nd->mpset.rbmmaplock);
@@ -138,7 +146,7 @@ static void nmmap_delete_node(struct vm_area_struct *vma)
 /* Cleanup all mmaped entries when the process goes away
  * Iterate over the entries in the process' slot and delete them
  * I'm sure there is a more efficient way of traversing rbtree but
- * normally the entries are removed when an application calls mmap.
+ * normally the entries are removed when an application calls unmap.
  * So this is only for the exceptions, does not have to be fast.
  */
 void nmmap_delete_all_nodes(struct neuron_device *nd)

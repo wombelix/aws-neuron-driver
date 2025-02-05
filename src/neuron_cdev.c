@@ -17,6 +17,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/module.h>
+#include <linux/dma-buf.h>
 
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
@@ -30,6 +31,7 @@
 #include "neuron_arch.h"
 #include "neuron_reset.h"
 #include "neuron_sysfs_metrics.h"
+#include "neuron_dmabuf.h"
 
 #include "v1/address_map.h"
 #include "v2/address_map.h"
@@ -435,6 +437,23 @@ static int ncdev_mem_get_extended_info(void *param)
 	return copy_to_user(param, &local, sizeof(local));
 }
 
+static int ncdev_get_dmabuf_fd(void *param)
+{
+	int ret;
+	struct neuron_ioctl_dmabuf_fd arg;
+    int dmabuf_fd;
+
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	ret = ndmabuf_get_fd(arg.va, arg.size, &dmabuf_fd);
+	if (ret)
+		return ret;
+
+	return copy_to_user(arg.fd, &dmabuf_fd, sizeof(dmabuf_fd));
+}
+
 static int ncdev_mem_free(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_mem_free mem_free_arg;
@@ -470,7 +489,12 @@ static int ncdev_memset(struct neuron_device *nd, void *param)
 		pr_err("offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
-	return ndma_memset(nd, mc, arg.offset, arg.value, arg.size);
+
+	ret = ndma_memset(nd, mc, arg.offset, arg.value, arg.size);
+	if (ret) {
+		pr_err("memset failed\n");
+	}
+	return ret;
 }
 
 static int ncdev_mem_copy(struct neuron_device *nd, void *param)
@@ -567,6 +591,10 @@ int ncdev_program_engine(struct neuron_device *nd, void *param)
 	ret = ndma_memcpy(nd, 0, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
 			  arg.dst + arg.offset, arg.size);
 
+    if (ret) {
+		pr_err("engine programming dma failed. addr: %llu\n", arg.dst + arg.offset);
+	}
+
 error:
 	mc_free(&src_mc);
 	return ret;
@@ -598,6 +626,9 @@ int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
 	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
 			  arg.dst + arg.offset, arg.size);
 
+    if (ret) {
+		pr_err("engine programming dma failed. nc_id: %d addr: %llu\n",arg.nc_id,  arg.dst + arg.offset);
+	}
 error:
 	mc_free(&src_mc);
 	return ret;
@@ -672,6 +703,10 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 			offset += copy_size;
 		}
 		mc_free(&src_mc);
+
+		if (ret) {
+			pr_err(" mem buffer copy failed\n");
+		}
 		return ret;
 	}
 }
@@ -1064,6 +1099,25 @@ static long ncdev_device_bdf(struct neuron_device *nd, void *param)
 	return copy_to_user(param, &result, sizeof(result));
 }
 
+static long ncdev_device_bdf_ext(void *param)
+{
+	struct neuron_ioctl_device_bdf_ext arg;
+	int ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	struct neuron_device *nd = neuron_pci_get_device(arg.nd_index);
+	if (!nd) {
+		pr_err("Invalid nd index %d", arg.nd_index);
+		return -1;
+	}
+	arg.domain = (__u32)pci_domain_nr(nd->pdev->bus);
+	arg.bus_number = nd->pdev->bus->number;
+	arg.slot = PCI_SLOT(nd->pdev->devfn);
+	arg.func = PCI_FUNC(nd->pdev->devfn);
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
 /* only one process can do discovery at a time */
 static DEFINE_MUTEX(ncdev_discovery_lock);
 static long ncdev_device_info(struct neuron_device *nd, void *param)
@@ -1406,11 +1460,13 @@ static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
 // version 6 of the runtime requires ham notification support +
 //           new V2 reset api for single-tpb reset +
 //           new notification init API with force mem realloc/resize
+// version 7 of the runtime requires udma queue size support for non power of 2 rings +
+//           dmabuf support
 #define V1_RT_MIN_COMPATIBLE_VERSION 2
-#define V1_RT_MAX_COMPATIBLE_VERSION 6
+#define V1_RT_MAX_COMPATIBLE_VERSION 7
 
 #define V2_RT_MIN_COMPATIBLE_VERSION 5
-#define V2_RT_MAX_COMPATIBLE_VERSION 6
+#define V2_RT_MAX_COMPATIBLE_VERSION 7
 
 static long ncdev_compatible_version(void *param)
 {
@@ -1435,6 +1491,13 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 		return ncdev_compatible_version((void*)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_BASIC_INFO) {
 		return ncdev_device_basic_info((void *)param);
+	} else if (cmd == NEURON_IOCTL_DEVICE_BDF_EXT) {
+		return ncdev_device_bdf_ext((void*)param);
+	} else if (cmd == NEURON_IOCTL_DMABUF_FD) {
+		/* Add dmabuf support under misc ioctl to avoid iterating
+		 * over all devices in the user space
+		 */
+		return ncdev_get_dmabuf_fd((void *)param);
 	}
 	pr_err("invalid misc IOCTL %d\n", cmd);
 	return -EINVAL;

@@ -130,7 +130,6 @@ static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
 }
 
 /* initialize one DMA queue on one DMA engine */
-#define IS_POWER_OF_TWO(v) (v != 0 && (v & (v - 1)) == 0)
 int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_ring_size,
 			bool allocatable, struct udma_ring_ptr *m2s_ring,
 			struct udma_ring_ptr *s2m_ring, struct udma_ring_ptr *s2m_compl_ring)
@@ -139,15 +138,24 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 	struct udma_q_params qp;
 
 	BUG_ON(udma == NULL);
-	/* the h/w only supports rings size that are the power of 2, check both m2s & s2m */
-	if (!IS_POWER_OF_TWO(m2s_ring_size)) {
-		pr_err("invalid m2s ring size: %u\n", m2s_ring_size);
+	/* the h/w only supports rings base addr and end addr that are 256 byte aligned, check both m2s & s2m */
+	if (m2s_ring != NULL && HAS_ALIGNMENT(m2s_ring->addr, UDMA_QUEUE_ADDR_BYTE_ALIGNMENT) == false) {
+		pr_err("invalid m2s ring alignment. Start addr must be %u byte aligned. base addr: 0x%llx\n", UDMA_QUEUE_ADDR_BYTE_ALIGNMENT, m2s_ring->addr);
 		return -1;
 	}
-	if (!IS_POWER_OF_TWO(s2m_ring_size)) {
-		pr_err("invalid s2m ring size: %u\n", s2m_ring_size);
+	if ((m2s_ring_size % (UDMA_QUEUE_ADDR_BYTE_ALIGNMENT / sizeof(union udma_desc))) != 0) {
+		pr_err("invalid m2s ring size. Ring size must be a multiple of %lu. ring size: %u descs\n", UDMA_QUEUE_ADDR_BYTE_ALIGNMENT / sizeof(union udma_desc), m2s_ring_size);
 		return -1;
 	}
+	if (s2m_ring != NULL && HAS_ALIGNMENT(s2m_ring->addr, UDMA_QUEUE_ADDR_BYTE_ALIGNMENT) == false) {
+		pr_err("invalid s2m ring alignment. Start addr must be %u byte aligned. base addr: 0x%llx\n", UDMA_QUEUE_ADDR_BYTE_ALIGNMENT, s2m_ring->addr);
+		return -1;
+	}
+	if ((s2m_ring_size % (UDMA_QUEUE_ADDR_BYTE_ALIGNMENT / sizeof(union udma_desc))) != 0) {
+		pr_err("invalid s2m ring size. Ring size must be a multiple of %lu. ring size: %u descs\n", UDMA_QUEUE_ADDR_BYTE_ALIGNMENT / sizeof(union udma_desc), s2m_ring_size);
+		return -1;
+	}
+
 	if (s2m_compl_ring != NULL) { // completion ring not supported, see sunda-5328
 		pr_err("Completion ring not supported\n");
 		return -1;
