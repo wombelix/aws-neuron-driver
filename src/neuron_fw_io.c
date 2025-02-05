@@ -399,6 +399,10 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size)
 	if (should_fail(&neuron_fail_fwio_post_metric, 1))
 		return -ETIMEDOUT;
 #endif
+	if (size > FW_IO_REG_METRIC_BUF_SZ) {
+		return -E2BIG;
+	}
+
 	// Write the data in the misc ram first
 	void * offset = (void *) (ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_METRIC_OFFSET);
 	for (i = 0; i < (size / 4); i++) {

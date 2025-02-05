@@ -99,6 +99,11 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 
 	ndmar_preinit(nd);
 
+	// Initialize the mc handle map
+	ret = nmch_handle_init(nd);
+	if (ret) 
+		goto fail_mch;
+
 	// Initialize the device mpset
 	memset(&nd->mpset, 0, sizeof(struct mempool_set));
 
@@ -126,6 +131,8 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 fail_chardev:
 	mpset_destructor(&nd->mpset);
 fail_mpset:
+	nmch_handle_cleanup(nd);
+fail_mch:
 	if (nd->fw_io_ctx)
 		fw_io_destroy((struct fw_io_ctx *)nd->fw_io_ctx);
 
@@ -147,6 +154,7 @@ static int neuron_pci_device_close(struct neuron_device *nd)
 	ndmar_close(nd);
 	neuron_ds_destroy(&nd->datastore);
 	mpset_destructor(&nd->mpset);
+	nmch_handle_cleanup(nd);
 
 	if (nd->fw_io_ctx)
 		fw_io_destroy((struct fw_io_ctx *)nd->fw_io_ctx);

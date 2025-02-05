@@ -131,6 +131,11 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 	if (eng == NULL)
 		return -EINVAL;
 
+	if (qid >= DMA_MAX_Q_V4) {
+		ret = -EINVAL;
+		goto done;
+	}
+	
 	queue = ndmar_get_queue(eng, qid);
 	ring = ndmar_get_ring(queue);
 
@@ -142,17 +147,36 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 	trace_dma_queue_init(nd, eng_id, qid, tx_desc_count, rx_desc_count, tx_mc, rx_mc, rxc_mc,
 			     port);
 
-	if (tx_mc)
+	if (tx_mc) {
+		/*
+		if ((u64)tx_desc_count * sizeof(union udma_desc) > tx_mc->size) {
+			ret = -EINVAL;
+			goto done;
+		}*/
 		ndmar_ring_set_mem_chunk(eng, qid, tx_mc, port, NEURON_DMA_QUEUE_TYPE_TX);
-	if (rx_mc)
-		ndmar_ring_set_mem_chunk(eng, qid, rx_mc, port, NEURON_DMA_QUEUE_TYPE_RX);
+	}
 
-	if (rxc_mc)
+	if (rx_mc) {
+		/*
+		if ((u64)rx_desc_count * sizeof(union udma_desc) > rx_mc->size) {
+			ret = -EINVAL;
+			goto done;
+		}*/
+		ndmar_ring_set_mem_chunk(eng, qid, rx_mc, port, NEURON_DMA_QUEUE_TYPE_RX);
+	}
+
+	if (rxc_mc) {
+		if ((u64)rx_desc_count * sizeof(union udma_desc) > rxc_mc->size) {
+			ret = -EINVAL;
+			goto done;
+		}
 		ndmar_ring_set_mem_chunk(eng, qid, rxc_mc, port, NEURON_DMA_QUEUE_TYPE_COMPLETION);
+	}
 
 	ret = udma_m2m_init_queue(&eng->udma, qid, tx_desc_count, rx_desc_count, false, tx_mc != NULL ? &ring->tx : NULL,
 				  rx_mc != NULL ? &ring->rx : NULL, rxc_mc != NULL ? &ring->rxc : NULL);
 
+done:
 	ndmar_release_engine(eng);
 	return ret;
 }
@@ -191,6 +215,7 @@ void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 
 int ndmar_ack_completed(struct neuron_device *nd, u32 eng_id, u32 qid, u32 count)
 {
+	int ret;
 	struct ndma_eng *eng;
 	struct udma_q *rxq, *txq;
 
@@ -200,14 +225,23 @@ int ndmar_ack_completed(struct neuron_device *nd, u32 eng_id, u32 qid, u32 count
 
 	trace_dma_ack_completed(nd, eng_id, qid, count);
 
-	udma_q_handle_get(&eng->udma, qid, UDMA_TX, &txq);
-	udma_q_handle_get(&eng->udma, qid, UDMA_RX, &rxq);
+	ret = udma_q_handle_get(&eng->udma, qid, UDMA_TX, &txq);
+	if (ret || !txq) {
+		pr_err("invalid tx qid %d for eng %d\n", qid, eng_id);
+		goto done;
+	}
+	ret = udma_q_handle_get(&eng->udma, qid, UDMA_RX, &rxq);
+	if (ret || !rxq) {
+		pr_err("invalid rx qid %d for eng %d\n", qid, eng_id);
+		goto done;
+	}
 
 	udma_cdesc_ack(rxq, count);
 	udma_cdesc_ack(txq, count);
 
+done:
 	ndmar_release_engine(eng);
-	return 0;
+	return ret;
 }
 
 int ndmar_queue_copy_start(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_count,

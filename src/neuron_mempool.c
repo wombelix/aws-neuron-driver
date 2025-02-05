@@ -21,6 +21,9 @@
 #include "neuron_reg_access.h"
 #include "neuron_dhal.h"
 
+// Temp def on 64 bit max signed int for overflow check
+#define       INT64_MAX  (9223372036854775807LL)
+
 /*
  *  genalloc.h mempool we use doesn't support VA=0; since we set it up such that va==pa for device memory
  *  allocations, it doesn't work for PA=0. Therefore, we amend address in all interactions with device
@@ -511,7 +514,6 @@ void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
 	mpset_free_lifespan_list(head, next_head);
 }
 
-
 static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id, mem_alloc_category_t mem_type,
 	     struct mem_chunk **result)
@@ -523,8 +525,12 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 
 	*result = NULL;
 
+	// vet size (need dhal value for this)
 	// Round the size up to a full page or multiple pages.
 	// Make mmap() happy with any memory allocated via this function.
+	if (size > INT64_MAX) {
+		return -EINVAL;
+	}
 	size = roundup(size, PAGE_SIZE);
 	if (channel >= ndhal->ndhal_address_map.dram_channels)
 		return -EINVAL;
@@ -532,8 +538,16 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	if (should_fail(&neuron_fail_mc_alloc, 1))
 		return -ENOMEM;
 #endif
+	if (nc_id >= MAX_NC_PER_DEVICE) {
+		return -EINVAL;
+	}
+
 	if (mpset->mp_device_num_regions == 1) // shared DRAM mode, always use region 0
 		region = 0;
+
+	if (region >= mpset->mp_device_num_regions) {
+		return -EINVAL;
+	}
 
 	mc = (struct mem_chunk *)kmalloc(sizeof(struct mem_chunk), GFP_KERNEL);
 	if (mc == NULL)
@@ -620,11 +634,12 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 		ret = -ENOMEM;
 		goto exit;
 	}
-
+	
 	mc->magic = MEMCHUNK_MAGIC;
 	mc->mpset = mpset;
 	mc->mp = mp;
 	mc->size = size;
+	mc->mc_handle = NMCH_INVALID_HANDLE;
 	mc->mem_location = location;
 	mc->dram_channel = channel;
 	mc->dram_region = region;
@@ -656,6 +671,7 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	nsysfsmetric_inc_counter(nd, NON_NDS_METRIC, counter, nc, size, false);
 
 	npid_add_allocated_memory(nd, location, size);
+
 exit:
 	mutex_unlock(&mpset->lock);
 	if (ret) {
@@ -693,6 +709,10 @@ void mc_free(struct mem_chunk **mcp)
 	if (mc->ref_count > 0) {
 		mutex_unlock(&mpset->lock);
 		return;
+	}
+
+	if (mc->mc_handle != NMCH_INVALID_HANDLE) {
+		nmch_handle_free(mpset->nd, mc->mc_handle);
 	}
 
 	write_lock(&mpset->rblock);

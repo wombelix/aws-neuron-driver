@@ -6,6 +6,7 @@ neuron-objs += neuron_module.o neuron_pci.o neuron_mempool.o neuron_dma.o neuron
 neuron-objs += neuron_core.o neuron_crwl.o neuron_cdev.o neuron_topsp.o neuron_pid.o
 neuron-objs += neuron_reset.o neuron_cinit.o neuron_mmap.o neuron_p2p.o
 neuron-objs += neuron_nq.o
+neuron-objs += neuron_mc_handle.o
 neuron-objs += neuron_metrics.o neuron_sysfs_metrics.o
 neuron-objs += udma/udma_iofic.o udma/udma_m2m.o udma/udma_main.o
 neuron-objs += neuron_fw_io.o

@@ -404,13 +404,21 @@ int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count
 	if (qid >= udma->num_of_queues) {
 		return -1;
 	}
+	
+	//BUG_ON((num == 0) || (s2m_count > txq->size));
 
 	ret = udma_q_handle_get(udma, qid, UDMA_TX, &txq);
 	if (ret)
 		return ret;
+	if (m2s_count > txq->size) {
+		return -1;
+	}
 	ret = udma_q_handle_get(udma, qid, UDMA_RX, &rxq);
 	if (ret)
 		return ret;
+	if (s2m_count > rxq->size) {
+		return -1;
+	}
 	udma_desc_action_add(rxq, s2m_count);
 	if (m2s_count > 0) {
 		udma_desc_action_add(txq, m2s_count);

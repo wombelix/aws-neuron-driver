@@ -66,6 +66,8 @@ enum {
 	FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET = 0x1f8,
 	FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET = 0x800,
 };
+	
+#define FW_IO_REG_METRIC_BUF_SZ 128
 
 struct fw_io_ctx {
 	void __iomem *bar0;

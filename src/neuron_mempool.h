@@ -21,6 +21,7 @@
 
 #include "share/neuron_driver_shared.h"
 #include "neuron_ioctl.h"
+#include "neuron_mc_handle.h"
 
 struct neuron_device;
 
@@ -127,6 +128,7 @@ struct mem_chunk {
 	u32 dram_channel; // DRAM channel
 	u32 dram_region; // TDRAM region
 	u32 nc_id; //neuron core index
+	neuron_mc_handle_t mc_handle; // memchunk handle
 	mem_alloc_category_t alloc_type; // memory allocation category
 
 	enum mem_location mem_location; // location of memory - Host or Device

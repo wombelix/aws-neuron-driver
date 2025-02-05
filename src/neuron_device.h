@@ -13,6 +13,7 @@
 
 #include "neuron_arch.h"
 #include "neuron_mempool.h"
+#include "neuron_mc_handle.h"
 #include "neuron_ring.h"
 #include "neuron_core.h"
 #include "neuron_reset.h"
@@ -88,6 +89,9 @@ struct neuron_device {
 	// memory chunk for setting device mem
 	struct mem_chunk *memset_mc;
 	struct mutex memset_lock;
+
+	// memory chunk handle map
+	struct neuron_mc_handle_map nmch;
 
 	struct neuron_datastore datastore; // neuron datastore
 
