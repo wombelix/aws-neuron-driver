@@ -269,12 +269,8 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 		device_dram_size[1] = P_0_DRAM_1_SIZE;
 		mpset->mp_device_num_regions = 4;
 	} else {
-		mpset->num_channels = V2_MAX_DRAM_CHANNELS;
-		device_dram_addr[0] = V2_DRAM_0_BASE;
-		device_dram_addr[1] = V2_DRAM_1_BASE;
-		device_dram_size[0] = V2_DRAM_0_SIZE;
-		device_dram_size[1] = V2_DRAM_1_SIZE;
-		mpset->mp_device_num_regions = 1;
+		mpset->num_channels = 0;
+		mpset->mp_device_num_regions = 0;
 	}
 
 	for (channel = 0; channel < mpset->num_channels; channel++) {
@@ -501,7 +497,8 @@ void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
 	mpset_free_lifespan_list(head, next_head);
 }
 
-int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
+
+static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size, u32 align,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
 	     struct mem_chunk **result)
 {
@@ -530,6 +527,10 @@ int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
 
 	mutex_lock(&mpset->lock);
 	if (location == MEM_LOC_HOST) {
+		if (align) {
+			pr_err("Allocating aligned host memory not supported");
+			return -EINVAL;
+		}
 		// kmalloc uses compound pages which cant be mmmaped(), to avoid applications knowing
 		// about kmalloc vs dma_alloc, use dma_alloc() for any PAGE_SIZE allocations
 		// since mmap() can make request only of multiple of PAGE_SIZE.
@@ -571,7 +572,14 @@ int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
 			goto exit;
 		}
 
-		mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
+		if (align) {
+			struct genpool_data_align align_data = { .align = align};
+			mc->va = (void *)gen_pool_alloc_algo(mp->gen_pool, size,
+							     gen_pool_first_fit_align, &align_data);
+			mc->pa = gen_pool_virt_to_phys(mp->gen_pool, (unsigned long) mc->va);
+		} else {
+			mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
+		}
 		if (mc->va) {
 			mp->allocated_size += size;
 		} else {
@@ -619,6 +627,18 @@ exit:
 	}
 	return ret;
 }
+
+int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
+	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
+	     struct mem_chunk **result) {
+	return mc_alloc_internal(nd, lifespan, size, 0, location, channel, region, nc_id, result);
+}
+
+int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size, u32 align,
+		   enum mem_location location, u32 channel, u32 region, u32 nc_id,
+		   struct mem_chunk **result) {
+	return mc_alloc_internal(nd, lifespan, size, align, location, channel, region, nc_id, result);
+};
 
 void mc_inc_refcount(struct mem_chunk *mc)
 {

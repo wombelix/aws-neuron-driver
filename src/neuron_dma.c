@@ -168,25 +168,18 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 	const u32 sync_threshold = DMA_H2T_DESC_COUNT - UDMA_MAX_NUM_CDESC_PER_CACHE_LINE - 1;
 	u32 offset;
 	int ret = 0;
-	struct ndma_eng *eng;
-	struct ndma_queue *queue;
-	struct ndma_ring *ring;
-	int eng_id;
-	int max_dma_rings;
-	int qid;
 
-	eng_id = DMA_ENG_IDX_H2T(nd) + (nc_id * DMA_ENG_PER_NC(nd));
-	max_dma_rings = narch_get_arch() == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
+	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
 	// for v2 the last one is reserved for collectives
-	qid = narch_get_arch() == NEURON_ARCH_TRN ? max_dma_rings - 2 : max_dma_rings - 1;
+	const int qid = ndmar_get_h2t_qid();
 
-	eng = &(nd->ndma_engine[eng_id]);
-	queue = &eng->queues[qid];
-	ring = &queue->ring_info;
+	struct ndma_eng *eng = &nd->ndma_engine[eng_id];
+	struct ndma_queue *queue = &eng->queues[qid];
+	struct ndma_ring *ring = &queue->ring_info;
 
 	chunk_size = size < MAX_DMA_DESC_SIZE ? size : MAX_DMA_DESC_SIZE;
 	remaining = size;
-	mutex_lock(&eng->h2t_ring_lock);
+	mutex_lock(&eng->h2t_ring_lock); // TODO: why is this lock needed given the eng lock?
 
 	for (offset = 0; remaining; offset += chunk_size, remaining -= chunk_size) {
 		if (remaining < MAX_DMA_DESC_SIZE)

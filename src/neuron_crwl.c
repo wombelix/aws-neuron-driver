@@ -26,11 +26,9 @@ static inline int ncrwl_validate_uuid(struct neuron_device *nd, u32 nc_index,
 	BUG_ON(nc_index >= MAX_NC_PER_DEVICE);
 
 	crwl = &nd->crwl[nc_index];
-	if (memcmp(&uuid, &crwl->uuid, sizeof(uuid))) {
-		pr_info("nd%dnc%d: pid:%d uuid check failed\n", nd->device_index, nc_index,
-		       task_tgid_nr(current));
+	if (memcmp(&uuid, &crwl->uuid, sizeof(uuid)))
 		return -ENOENT;
-	}
+
 	if (crwl->writer_pid != task_tgid_nr(current)) {
 		pr_err("nd%dnc%d: pid:%d Invalid pid - writer:%d\n",
 		       nd->device_index, nc_index, task_tgid_nr(current), crwl->writer_pid);

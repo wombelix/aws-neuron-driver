@@ -15,14 +15,13 @@
 
 // Size of datastore
 #define NEURON_DATASTORE_SIZE (256 * 1024UL)
-#define NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE (NEURON_MAX_PROCESS_PER_DEVICE * 2)
+#define NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE (NEURON_MAX_PROCESS_PER_DEVICE)
 
 struct neuron_device;
 
 struct neuron_datastore_entry {
 	pid_t pid;
-	bool in_use_by_creating_pid;
-	int ref_count;
+	u64 clear_tick;
 	struct mem_chunk *mc;
 };
 
@@ -40,7 +39,7 @@ struct neuron_datastore {
  *
  * Return: 0 on success, < 0 error code on failure
  */
-void neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent);
+int neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent);
 
 /** 
  * neuron_ds_check_entry_in_use() - Returns whether datastore entry is in use by creating pid. 
@@ -75,12 +74,20 @@ int neuron_ds_acquire_pid(struct neuron_datastore *nds, pid_t pid, struct mem_ch
 void neuron_ds_release_pid(struct neuron_datastore *nds, pid_t pid);
 
 /**
- * neuron_ds_destroy() - Removes existing entries regardless of refcount on driver shutdown
+ * neuron_ds_destroy() - Deallocates memory used by all the datastores
  *
  * @nds: neuron datastore
  *
  */
 void neuron_ds_destroy(struct neuron_datastore *nds);
+
+/**
+ * neuron_ds_clear() - Clears existing entries regardless of refcount on device file refcount == 0
+ *
+ * @nds: neuron datastore
+ *
+ */
+void neuron_ds_clear(struct neuron_datastore *nds);
 
 /**
  * neuron_ds_acquire_lock() - Acquires datastore lock

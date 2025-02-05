@@ -130,6 +130,7 @@ static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
 }
 
 /* initialize one DMA queue on one DMA engine */
+#define IS_POWER_OF_TWO(v) (v != 0 && (v & (v - 1)) == 0)
 int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_ring_size,
 			bool allocatable, struct udma_ring_ptr *m2s_ring,
 			struct udma_ring_ptr *s2m_ring, struct udma_ring_ptr *s2m_compl_ring)
@@ -139,11 +140,11 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 
 	BUG_ON(udma == NULL);
 	/* the h/w only supports rings size that are the power of 2, check both m2s & s2m */
-	if ((m2s_ring_size % 2) != 0) {
+	if (!IS_POWER_OF_TWO(m2s_ring_size)) {
 		pr_err("invalid m2s ring size: %u\n", m2s_ring_size);
 		return -1;
 	}
-	if ((s2m_ring_size % 2) != 0) {
+	if (!IS_POWER_OF_TWO(s2m_ring_size)) {
 		pr_err("invalid s2m ring size: %u\n", s2m_ring_size);
 		return -1;
 	}

@@ -125,7 +125,7 @@ static struct mem_chunk * nmmap_get_mc(struct neuron_device *nd, struct vm_area_
 
 	mc = mpset_search_mc(&nd->mpset, pa);
 	if (mc == NULL) {
-		pr_err("nd%d: mc not found for mmap()", nd->device_index);
+		pr_err("nd%d: mc not found for mmap()\n", nd->device_index);
 		return NULL;
 	}
 	if (!IS_ALIGNED(mc->size, PAGE_SIZE)) {
@@ -137,7 +137,7 @@ static struct mem_chunk * nmmap_get_mc(struct neuron_device *nd, struct vm_area_
 		return NULL;
 	}
 	if (mc->size != size) {
-		pr_err("nd%d: partial mmap of mc not supported(%x != %llx)", nd->device_index, mc->size, size);
+		pr_err("nd%d: partial mmap of mc not supported(%x != %llx)\n", nd->device_index, mc->size, size);
 		return NULL;
 	}
 	return mc;
@@ -162,8 +162,8 @@ static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma, struct
 		return -EINVAL;
 	}
 
-	// Readonly access for other processes
-	if (mc->pid != task_tgid_nr(current)) {
+	// Readonly access for other processes for memory whose lifespan is not per device
+	if (mc->pid != task_tgid_nr(current) && mc->lifespan != MC_LIFESPAN_DEVICE) {
 		vma->vm_flags &= ~VM_WRITE;
 		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
 	}
@@ -202,8 +202,8 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma)
 	if (mc->mem_location == MEM_LOC_DEVICE)
 		return nmmap_dm(nd, vma, mc);
 
-	// Readonly access for other processes
-	if (mc->pid != task_tgid_nr(current)) {
+	// Readonly access for other processes for memory whose lifespan is not per device
+	if (mc->pid != task_tgid_nr(current) && mc->lifespan != MC_LIFESPAN_DEVICE) {
 		vma->vm_flags &= ~VM_WRITE;
 		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
 	}

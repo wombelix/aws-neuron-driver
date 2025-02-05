@@ -80,9 +80,9 @@ int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 
 // followin defines have the max between versions of chip
 // please check the chip's address_map.h to find the values
-#define MAX_NQ_TYPE 5  //for v1 4 and v2 5
-#define MAX_NQ_ENGINE 16 // for v1 4 engines for v2 16 queues
-#define NQ_TYPE_PER_ENGINE 5 // for v1 4 and for v2 5
+#define MAX_NQ_TYPE 4
+#define MAX_NQ_ENGINE 4
+#define NQ_TYPE_PER_ENGINE 4
 
 #define MAX_NQ_SUPPORTED (MAX_NQ_TYPE * MAX_NQ_ENGINE)
 

@@ -50,16 +50,14 @@ static struct ndma_ring *ndmar_get_ring(struct ndma_queue *queue)
 	return &queue->ring_info;
 }
 
-static int ndmar_get_h2t_qid(u8 arch)
+uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id) {
+	return  (nc_id * V1_DMA_ENG_PER_NC) + (V1_DMA_ENG_PER_NC - 1);
+}
+
+int ndmar_get_h2t_qid(void)
 {
-	int max_dma_rings;
-	int qid;
-
-	max_dma_rings = arch == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
-
-	// for v2 the last one is reserved for collectives
-	qid = arch == NEURON_ARCH_TRN ? max_dma_rings - 2 : max_dma_rings - 1;
-	return qid;
+       // for v2 the last one is reserved for collectives
+       return (narch_get_arch() == NEURON_ARCH_TRN) ? 0 : V1_MAX_DMA_RINGS - 1;
 }
 
 u32 ndmar_ring_get_desc_count(u32 v)
@@ -175,6 +173,7 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 
 	queue->eng_id = eng_id;
 	queue->qid = qid;
+	queue->owner = task_tgid_nr(current);
 	ring->qid = qid;
 
 	trace_dma_queue_init(nd, eng_id, qid, tx_desc_count, rx_desc_count, tx_mc, rx_mc, rxc_mc,
@@ -191,6 +190,41 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 
 	ndmar_release_engine(eng);
 	return ret;
+}
+
+void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
+{
+	int ret, eng_id, qid, dma_eng_per_nd;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
+	} else {
+		int nc_per_dev;
+		if (narch_is_emu())
+			nc_per_dev = nc_per_dev_param;
+		else
+			nc_per_dev = V2_NC_PER_DEVICE;
+		dma_eng_per_nd = nc_per_dev * V2_DMA_ENG_PER_NC;
+	}
+	struct mem_chunk *mc = nd->ndma_q_dummy_mc;
+	const int desc_count = NDMA_QUEUE_DUMMY_RING_DESC_COUNT;
+	for (eng_id = 0; eng_id < dma_eng_per_nd; eng_id++) {
+		for (qid = 0; qid < DMA_MAX_Q_MAX; qid++) {
+			if (nd->ndma_engine[eng_id].queues[qid].owner != pid) {
+				continue;
+			}
+
+			// h2t rings are maintained by the driver so dont reset.
+			// there cant be any outstanding DMA transaction in h2t since it is a
+			// synchronous system call(which will block till finished when a process crashes).
+			if (nd->ndma_engine[eng_id].used_for_h2t && qid == ndmar_get_h2t_qid())
+				continue;
+
+			ret = ndmar_queue_init(nd, eng_id, qid, desc_count, desc_count, mc, mc, NULL, 0);
+			// ignore the error and continue to reset other queues.
+			if (ret)
+				pr_err("nd%d:dma%d:q%d failed to reset (%d)", nd->device_index, eng_id, qid, ret);
+		}
+	}
 }
 
 int ndmar_ack_completed(struct neuron_device *nd, u32 eng_id, u32 qid, u32 count)
@@ -253,32 +287,22 @@ int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid)
 int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 {
 	int ret = 0;
-	struct ndma_eng *eng;
-	struct ndma_queue *queue;
-	struct ndma_ring *ring;
-	int eng_id;
-	int ndesc;
-	u32 ring_size;
-	int max_dma_rings;
-	int qid;
 	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL, *h2t_completion_mc = NULL;
-	enum neuron_arch arch = narch_get_arch();
 
-	eng_id = DMA_ENG_IDX_H2T(nd) + (nc_id * DMA_ENG_PER_NC(nd));
-	ndesc = DMA_H2T_DESC_COUNT;
-	ring_size = ndmar_ring_get_desc_count(ndesc) * sizeof(union udma_desc);
-	max_dma_rings = arch == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
-	qid = ndmar_get_h2t_qid(arch);
+	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
+	const int ndesc = DMA_H2T_DESC_COUNT;
+	const u32 ring_size = ndmar_ring_get_desc_count(ndesc) * sizeof(union udma_desc);
+	const int qid = ndmar_get_h2t_qid();
 
-	eng = ndmar_acquire_engine(nd, eng_id);
+	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
 		return -EINVAL;
 
 	eng->used_for_h2t = true;
-	queue = &eng->queues[qid];
+	struct ndma_queue *queue = &eng->queues[qid];
 	queue->qid = qid;
 	queue->eng_id = eng_id;
-	ring = &queue->ring_info;
+	struct ndma_ring *ring = &queue->ring_info;
 	ring->qid = qid;
 	ring->size = ring_size;
 	ring->has_compl = false;
@@ -403,22 +427,14 @@ int ndmar_queue_get_descriptor_mc(struct neuron_device *nd, u8 eng_id, u8 qid,
 
 int ndmar_eng_init(struct neuron_device *nd, int eng_id)
 {
-	struct ndma_eng *eng;
 	int ret = 0;
-	int max_dma_rings;
-	int qid;
-	enum neuron_arch arch = narch_get_arch();
-
-	max_dma_rings = arch == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
-	qid = ndmar_get_h2t_qid(arch);
-
-	eng = ndmar_acquire_engine(nd, eng_id);
+	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
 		return -EINVAL;
 
 	trace_dma_engine_init(nd, eng_id);
 
-	if (arch == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
 		ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
 	else
 		ret = v2_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
@@ -426,12 +442,6 @@ int ndmar_eng_init(struct neuron_device *nd, int eng_id)
 	if (ret)
 		goto done;
 
-	if (eng->used_for_h2t) {
-		// Reinitialize the h2t queue
-		ret = ndmar_h2t_ring_init(eng, qid);
-		if (ret)
-			pr_err("could not reinitialize the h2t queue\n");
-	}
 done:
 	ndmar_release_engine(eng);
 	return ret;
@@ -454,18 +464,13 @@ void ndmar_preinit(struct neuron_device *nd)
 int ndmar_init(struct neuron_device *nd)
 {
 	int ret = 0;
-	int nc_id = 0;
 	int nc_per_dev;
 	int dma_eng_per_nc, dma_eng_per_nd;
-	int max_dma_rings;
-	int eng_id, qid;
 	enum neuron_arch arch = narch_get_arch();
 
 	if (nd->dmar_init_done)
 		return 0;
 
-	max_dma_rings = arch == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
-	qid = ndmar_get_h2t_qid(arch);
 
 	if (arch == NEURON_ARCH_INFERENTIA) {
 		nc_per_dev = V1_NC_PER_DEVICE;
@@ -480,18 +485,8 @@ int ndmar_init(struct neuron_device *nd)
 		dma_eng_per_nd = nc_per_dev * dma_eng_per_nc;
 	}
 
-	// allocate HT2 rings
-	for (nc_id = 0; nc_id < nc_per_dev; nc_id++) {
-		eng_id = DMA_ENG_IDX_H2T(nd) + (nc_id * dma_eng_per_nc);
-
-		ret = ndmar_h2t_ring_alloc(nd, nc_id);
-		if (ret) {
-			pr_err("nd%d:nc%d H2T ring allocation failed - %d\n", nd->device_index, nc_id, ret);
-			return ret;
-		}
-	}
-
-	// init all DMA engines in the ND
+	// init all seng DMA engines in the ND
+	int eng_id;
 	for (eng_id = 0; eng_id < dma_eng_per_nd; eng_id++) {
 		ret = ndmar_eng_init(nd, eng_id);
 		if (ret) {
@@ -500,13 +495,26 @@ int ndmar_init(struct neuron_device *nd)
 		}
 	}
 
-	// init h2t rings.
+	// allocate H2T engines and rings
+	int nc_id;
 	for (nc_id = 0; nc_id < nc_per_dev; nc_id++) {
-		struct ndma_eng *eng;
-		eng_id = DMA_ENG_IDX_H2T(nd) + (nc_id * dma_eng_per_nc);
-		eng = ndmar_acquire_engine(nd, eng_id);
+		const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
+		ret = ndmar_eng_init(nd, eng_id);
+                if (ret) {
+                        pr_err("nd%d: DMA eng%d init failed - %d\n", nd->device_index, eng_id, ret);
+                        return ret;
+                }
+
+		ret = ndmar_h2t_ring_alloc(nd, nc_id);
+		if (ret) {
+			pr_err("nd%d:nc%d H2T ring allocation failed - %d\n", nd->device_index, nc_id, ret);
+			return ret;
+		}
+
+		struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
 		if (eng == NULL)
 			return -EINVAL;
+		const int qid = ndmar_get_h2t_qid();
 		ret = ndmar_h2t_ring_init(eng, qid);
 		ndmar_release_engine(eng);
 		if (ret) {
@@ -514,25 +522,19 @@ int ndmar_init(struct neuron_device *nd)
 			return ret;
 		}
 	}
+
+
 	nd->dmar_init_done = true;
 	return ret;
 }
 
 static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
 {
-	struct ndma_eng *eng;
-	struct ndma_queue *queue;
-	struct ndma_ring *ring;
-	int max_dma_rings;
-	int qid;
-
-	max_dma_rings = narch_get_arch() == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
-	qid = ndmar_get_h2t_qid(narch_get_arch());
-	eng = ndmar_acquire_engine(nd, eng_id);
+	const int qid = ndmar_get_h2t_qid();
+	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	BUG_ON(eng == NULL);
-
-	queue = &eng->queues[qid];
-	ring = &queue->ring_info;
+	struct ndma_queue *queue = &eng->queues[qid];
+	struct ndma_ring *ring = &queue->ring_info;
 
 	if (ring->tx_mc)
 		mc_free(&ring->tx_mc);
@@ -548,19 +550,13 @@ static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
 
 void ndmar_close(struct neuron_device *nd)
 {
-	int nc_id;
-	int nc_per_dev;
-
+	const int nc_per_dev  = (narch_get_arch() == NEURON_ARCH_INFERENTIA) ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE;
 	if(!nd->dmar_init_done)
 		return;
-
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
-		nc_per_dev = V1_NC_PER_DEVICE;
-	else
-		nc_per_dev = V2_NC_PER_DEVICE;
-
+	int nc_id;
 	for (nc_id = 0; nc_id < nc_per_dev; nc_id++) {
-		ndmar_h2t_ring_free(nd, DMA_ENG_IDX_H2T(nd) + (nc_id * DMA_ENG_PER_NC(nd)));
+		const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
+		ndmar_h2t_ring_free(nd, eng_id);
 	}
 	nd->dmar_init_done = false;
 }

@@ -60,6 +60,7 @@ struct neuron_device {
 
 	bool dmar_init_done;
 	struct ndma_eng ndma_engine[NUM_DMA_ENG_PER_DEVICE];
+	struct mem_chunk *ndma_q_dummy_mc; // when any DMA queue is reset, it would set to point to this mc
 
 	void *fw_io_ctx;
 

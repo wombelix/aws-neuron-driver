@@ -61,9 +61,7 @@ static struct pci_device_id neuron_pci_dev_ids[] = {
 static atomic_t device_count = ATOMIC_INIT(0);
 
 extern int ncdev_create_device_node(struct neuron_device *ndev);
-extern int ncdev_create_misc_node(void);
 extern int ncdev_delete_device_node(struct neuron_device *ndev);
-extern int ncdev_delete_misc_node(void);
 extern void ndmar_preinit(struct neuron_device *nd);
 
 static struct neuron_device *neuron_devices[MAX_NEURON_DEVICE_COUNT] = { 0 };
@@ -275,13 +273,20 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_bar2_resource;
 
 	// initialize datastore
-	neuron_ds_init(&nd->datastore, nd);
+	ret = neuron_ds_init(&nd->datastore, nd);
+	if (ret)
+		goto fail_nds_resource;
+
+	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, NDMA_QUEUE_DUMMY_RING_SIZE, MEM_LOC_HOST, 0, 0, 0,
+		       &nd->ndma_q_dummy_mc);
+	if (ret)
+		goto fail_nds_resource;
 
 	// allocate memset mc (if datastore succeeded)
 	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMSET_HOST_BUF_SIZE, MEM_LOC_HOST, 0, 0, 0,
 		       &nd->memset_mc);
 	if (ret)
-		goto fail_bar2_resource;
+		goto fail_memset_mc;
 
 	// initialize metric aggregation and posting
  	ret = nmetric_init(nd);
@@ -297,6 +302,11 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 fail_nmetric_resource:
 	nmetric_stop_thread(nd);
+	mc_free(&nd->memset_mc);
+fail_memset_mc:
+	mc_free(&nd->ndma_q_dummy_mc);
+fail_nds_resource:
+	neuron_ds_destroy(&nd->datastore);
 fail_bar2_resource:
 	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
 		pci_release_region(dev, INF_AXI_BAR);
@@ -356,7 +366,7 @@ int neuron_pci_module_init(void)
 		pr_err("Failed to register neuron inf driver %d\n", ret);
 		return ret;
 	}
-	return ncdev_create_misc_node();
+	return 0;
 }
 
 void neuron_pci_module_exit(void)

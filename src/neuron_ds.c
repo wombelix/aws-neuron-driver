@@ -11,11 +11,22 @@
 #include "neuron_device.h"
 #include "neuron_metrics.h"
 
-void neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent)
+int neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent)
 {
+	int idx;
+	int ret = 0;
 	nds->parent = parent;
 	memset(nds->entries, 0, NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE * sizeof(struct neuron_datastore_entry));
 	mutex_init(&nds->lock);
+	for (idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
+		ret = mc_alloc(parent, MC_LIFESPAN_DEVICE, NEURON_DATASTORE_SIZE, MEM_LOC_HOST,
+			       0, 0, 0, &nds->entries[idx].mc);
+		if (ret) {
+			pr_err("nds allocation failure for nd[%d]", parent->device_index);
+			return ret;
+		}
+	}
+	return 0;
 }
 
 void neuron_ds_acquire_lock(struct neuron_datastore *nds)
@@ -28,11 +39,16 @@ void neuron_ds_release_lock(struct neuron_datastore *nds)
 	mutex_unlock(&nds->lock);
 }
 
-bool neuron_ds_check_entry_in_use(struct neuron_datastore *nds, u32 index) {
+static inline bool neuron_ds_entry_used(struct neuron_datastore_entry *entry)
+{
+	return entry->pid != 0;
+}
+
+bool neuron_ds_check_entry_in_use(struct neuron_datastore *nds, u32 index)
+{
 	BUG_ON(!mutex_is_locked(&nds->lock));
-	if (index >= NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE)
-		return false;
-	return nds->entries[index].in_use_by_creating_pid;
+	BUG_ON(index >= NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE);
+	return neuron_ds_entry_used(&nds->entries[index]);
 }
 
 static struct neuron_datastore_entry *neuron_ds_find(struct neuron_datastore *nds, pid_t pid)
@@ -41,8 +57,8 @@ static struct neuron_datastore_entry *neuron_ds_find(struct neuron_datastore *nd
 	struct neuron_datastore_entry *entry = NULL;
 	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
 		entry = &nds->entries[idx];
-		BUG_ON(entry->ref_count != 0 && entry->mc == NULL);
-		if (entry->ref_count != 0 && entry->pid == pid)
+		BUG_ON(neuron_ds_entry_used(entry) && entry->mc == NULL);
+		if (entry->pid == pid)
 			return entry;
 	}
 	return NULL;
@@ -51,67 +67,55 @@ static struct neuron_datastore_entry *neuron_ds_find(struct neuron_datastore *nd
 static int neuron_ds_find_empty_slot(struct neuron_datastore *nds)
 {
 	int idx;
+	int found_idx = -1;
+	u64 min_clear_tick = ~0ull;
+	struct neuron_datastore_entry *entry = NULL;
 	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
-		if (nds->entries[idx].ref_count == 0)
+		entry = &nds->entries[idx];
+		if (neuron_ds_entry_used(&nds->entries[idx]))
+			continue;
+		if (entry->clear_tick == 0)
 			return idx;
+		if (entry->clear_tick < min_clear_tick) {
+			min_clear_tick = entry->clear_tick;
+			found_idx = idx;
+		}
 	}
-	return -1;
+	return found_idx;
 }
 
 int neuron_ds_add_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
 {
-	int ret;
 	int new_index;
 	struct neuron_datastore_entry *entry = NULL;
-
 	*mc = NULL;
 
 	new_index = neuron_ds_find_empty_slot(nds);
-	if (new_index < 0) {
-		ret = -ENOMEM;
-		goto end;
-	}
+	if (new_index < 0)
+		return -ENOMEM;
 
-	ret = mc_alloc(nds->parent, MC_LIFESPAN_ALL_PROCESS, NEURON_DATASTORE_SIZE, MEM_LOC_HOST, 0, 0, 0, mc);
-	if (ret) {
-		goto end;
-	}
 	entry = &nds->entries[new_index];
 	entry->pid = pid;
-	entry->in_use_by_creating_pid = true;
-	entry->ref_count = 1;
-	entry->mc = *mc;
-end:
-	return ret;
+	*mc = entry->mc;
+
+	return 0;
 }
 
-int neuron_ds_acquire_existing_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc) {
-	bool is_increased_by_owner;
+int neuron_ds_acquire_existing_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
+{
 	struct neuron_datastore_entry *entry = neuron_ds_find(nds, pid);
 	if (entry == NULL)
 		return -ENOENT;
 	*mc = entry->mc;
-
-	// In the unlikely event the acquire IOCTL is called by the owner of this nds after previously closing it
-	is_increased_by_owner = entry->pid == task_tgid_nr(current);
-	if (is_increased_by_owner) {
-		if (entry->in_use_by_creating_pid)
-			return 0;
-		entry->in_use_by_creating_pid = true;
-	}
-	entry->ref_count++;
 	return 0;
 }
 
-int neuron_ds_create_and_acquire_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc) {
+int neuron_ds_create_and_acquire_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
+{
 	struct neuron_datastore_entry *entry;
 	entry = neuron_ds_find(nds, pid);
 	if (entry == NULL)
 		return neuron_ds_add_pid(nds, pid, mc);
-	if (!entry->in_use_by_creating_pid) {
-		entry->in_use_by_creating_pid = true;
-		entry->ref_count++;
-	}
 	*mc = entry->mc;
 	return 0;
 }
@@ -129,25 +133,29 @@ int neuron_ds_acquire_pid(struct neuron_datastore *nds, pid_t pid, struct mem_ch
 	return ret;
 }
 
-void neuron_ds_decref(struct neuron_datastore *nds, struct neuron_datastore_entry *entry)
+static void neuron_ds_free_entry(struct neuron_datastore_entry *entry)
 {
-	bool is_decreased_by_owner = entry->pid == task_tgid_nr(current);
-	// Guard to avoid double ref_count decrease if owner explicitly decreased it
-	// and ncdev_close attempts to decrease it again
-	if (is_decreased_by_owner) {
-		if(!entry->in_use_by_creating_pid)
-			return;
-		entry->in_use_by_creating_pid = false;
-  
- 		// Record stored metrics before datastore is released
- 		nmetric_partial_aggregate(nds->parent, entry);
-	}
-	entry->ref_count--;
-	if (entry->ref_count > 0)
-		return;
-	BUG_ON(entry->ref_count < 0 || entry->mc == NULL);
-	mc_free(&entry->mc);
+	if (entry->mc != NULL)
+		mc_free(&entry->mc);
+	memset(entry, 0, sizeof(struct neuron_datastore_entry));
+}
+
+static u64 ds_entry_clear_counter = 1;
+
+static void neuron_ds_clear_entry(struct neuron_datastore_entry *entry)
+{
 	entry->pid = 0;
+	entry->clear_tick = __sync_fetch_and_add(&ds_entry_clear_counter, 1);
+	memset(entry->mc->va, 0, NEURON_DATASTORE_SIZE);
+}
+
+static void neuron_ds_release_entry(struct neuron_datastore *nds, struct neuron_datastore_entry *entry)
+{
+	bool current_pid_is_owner = entry->pid == task_tgid_nr(current);
+	if (!current_pid_is_owner)
+		return;
+	nmetric_partial_aggregate(nds->parent, entry);
+	neuron_ds_clear_entry(entry);
 }
 
 void neuron_ds_release_pid(struct neuron_datastore *nds, pid_t pid)
@@ -158,21 +166,26 @@ void neuron_ds_release_pid(struct neuron_datastore *nds, pid_t pid)
 		pid = task_tgid_nr(current);
 	entry = neuron_ds_find(nds, pid);
 	if (entry != NULL)
-		neuron_ds_decref(nds, entry);
+		neuron_ds_release_entry(nds, entry);
+	neuron_ds_release_lock(nds);
+}
+
+static void neuron_ds_for_each_entry(struct neuron_datastore *nds,
+				     void (*f)(struct neuron_datastore_entry*)) {
+	int idx;
+	neuron_ds_acquire_lock(nds);
+	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
+		(*f)(&nds->entries[idx]);
+	}
 	neuron_ds_release_lock(nds);
 }
 
 void neuron_ds_destroy(struct neuron_datastore *nds)
 {
-	int idx;
-	struct neuron_datastore_entry *entry = NULL;
-	neuron_ds_acquire_lock(nds);
-	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
-		entry = &nds->entries[idx];
-		if (entry->ref_count == 0)
-			continue;
-		entry->ref_count = 0;
-		mc_free(&entry->mc);
-	}
-	neuron_ds_release_lock(nds);
+	neuron_ds_for_each_entry(nds, neuron_ds_free_entry);
+}
+
+void neuron_ds_clear(struct neuron_datastore *nds)
+{
+	neuron_ds_for_each_entry(nds, neuron_ds_clear_entry);
 }

@@ -187,6 +187,23 @@ int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
 	     struct mem_chunk **result);
 
 /**
+ * mc_alloc_align() - Allocate a memory chunk of size from given mpset, with alignment
+ *
+ * @nd: neuron_device to which the mc should be associated
+ * @lifespan: When the MC needs to be automatically freed(if not freed already).
+ * @size: Allocation size
+ * @align: alignment requirement
+ * @location: Backing DRAM location(host/device)
+ * @channel: Backing DRAM channel
+ * @region: Region in the backing DRAM
+ * @result: Buffer to store the allocated memory chunk pointer
+ *
+ * Return: 0 if allocation succeeds, a negative error code otherwise.
+ */
+int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size, u32 align,
+		   enum mem_location location, u32 channel, u32 region, u32 nc_id,
+		   struct mem_chunk **result);
+/**
  * mc_free() - Free memory chunk and associated backing memory.
  *
  * @mc: Pointer to memory chunk to be freed(this would be set to NULL on success)

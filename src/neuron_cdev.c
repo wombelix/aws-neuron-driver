@@ -38,13 +38,9 @@ static dev_t neuron_dev;
 static int major;
 static struct class *neuron_dev_class;
 
-int process_exit_sleep = 1000;
-module_param(process_exit_sleep, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(process_exit_sleep, "How long to sleep(in milliseconds) when process exits");
-
 /* one device node per device */
 #define NEURON_MAX_DEV_NODES MAX_NEURON_DEVICE_COUNT
-
+#define IS_NEURON_DEVICE_FREE_ACCESS(filep) ((filep->f_flags & O_WRONLY) == 1)
 struct ncdev {
 	int minor;
 	int open_count; // number of times this node is opened.
@@ -54,10 +50,6 @@ struct ncdev {
 
 /* char device nodes created for each device. */
 static struct ncdev devnodes[NEURON_MAX_DEV_NODES];
-static struct ncdev devnode_misc;
-
-/* minor num for device node for misc IOCTLs */
-#define MINOR_NUM_MISC (0xFF)
 
 static u64 ncdev_mem_chunk_to_mem_handle(struct mem_chunk *mc)
 {
@@ -864,6 +856,19 @@ static long ncdev_device_ready_deprecated(struct neuron_device *nd, void *param)
 	return copy_to_user(param, &result, 1);
 }
 
+static void narch_fill_device_basic_info(struct neuron_ioctl_device_basic_info *dest)
+{
+	dest->architecture = narch_get_arch();
+	dest->revision = narch_get_revision();
+}
+
+static long ncdev_device_basic_info(void *param)
+{
+	struct neuron_ioctl_device_basic_info result;
+	narch_fill_device_basic_info(&result);
+	return copy_to_user(param, &result, sizeof(result));
+}
+
 /* only one process can do discovery at a time */
 static DEFINE_MUTEX(ncdev_discovery_lock);
 static long ncdev_device_info(struct neuron_device *nd, void *param)
@@ -871,8 +876,7 @@ static long ncdev_device_info(struct neuron_device *nd, void *param)
 	int i, ret;
 	struct neuron_ioctl_device_info result;
 
-	result.architecture = narch_get_arch();
-	result.revision = narch_get_revision();
+	narch_fill_device_basic_info((struct neuron_ioctl_device_basic_info *)&result);
 
 	mutex_lock(&ncdev_discovery_lock);
 
@@ -901,7 +905,6 @@ out:
 	mutex_unlock(&ncdev_discovery_lock);
 	return ret;
 }
-
 
 static long ncdev_device_app_pid_deprecated(struct neuron_device *nd, void *param)
 {
@@ -1202,10 +1205,27 @@ static long ncdev_compatible_version(void *param)
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
+inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
+	if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
+		return ncdev_crwl_nc_range_mark((void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) {
+		return ncdev_crwl_nc_range_unmark((void *)param);
+	} else if (cmd == NEURON_IOCTL_COMPATIBLE_VERSION) {
+		return ncdev_compatible_version((void*)param);
+	} else if (cmd == NEURON_IOCTL_DEVICE_BASIC_INFO) {
+		return ncdev_device_basic_info((void *)param);
+	}
+	pr_err("invalid misc IOCTL %d\n", cmd);
+	return -EINVAL;
+}
+
 long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 {
 	struct ncdev *ncd;
 	struct neuron_device *nd;
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
+		return ncdev_misc_ioctl(filep, cmd, param);
 
 	ncd = filep->private_data;
 	if (ncd == NULL) {
@@ -1327,22 +1347,9 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_crwl_writer_enter(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_CRWL_WRITER_DOWNGRADE) {
 		return ncdev_crwl_writer_downgrade(nd, (void *)param);
-	} else {
-		pr_err("invalid IOCTL %d\n", cmd);
-		return -EINVAL;
 	}
-}
-
-long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
-	if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
-		return ncdev_crwl_nc_range_mark((void *)param);
-	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) {
-		return ncdev_crwl_nc_range_unmark((void *)param);
-	} else if (cmd == NEURON_IOCTL_COMPATIBLE_VERSION) {
-		return ncdev_compatible_version((void*)param);
-	}
-	pr_err("invalid misc IOCTL %d\n", cmd);
-	return -EINVAL;
+	// B/W compatibility
+	return ncdev_misc_ioctl(filep, cmd, param);
 }
 
 /* Only one process can take ownership of a device. */
@@ -1353,6 +1360,9 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	int ret;
 	struct ncdev *dev;
 	struct neuron_device *nd;
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
+		return 0;
 
 	dev = &devnodes[iminor(inode)];
 	nd = dev->ndev;
@@ -1382,41 +1392,62 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	return 0;
 }
 
-static int ncdev_close(struct inode *inode, struct file *filep)
+static inline int ncdev_misc_flush(struct file *filep)
 {
-	struct ncdev *dev = (struct ncdev *)filep->private_data;
-	struct neuron_device *nd = dev->ndev;
+       // Clear all NCs used by the closing process
+       ncrwl_nc_range_unmark(~0);
+       return 0;
+}
+
+static int ncdev_flush(struct file *filep, fl_owner_t id)
+{
+	struct ncdev *dev;
+	struct neuron_device *nd;
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
+		return ncdev_misc_flush(filep);
+
+	dev = (struct ncdev *)filep->private_data;
+	nd = dev->ndev;
 
 	mutex_lock(&ncdev_device_lock);
-	dev->open_count--;
 
 	// if the current process is going away then cleanup per process state
 	if (npid_is_attached(nd) == 1) {
-		// to any pending inflight DMA corrupting the memory, sleep few seconds.
-		// TODO - to avoid arbitrary amount of sleep, track per process DMA eng usage and
-		//        disable the engines when process dies.
-		msleep(process_exit_sleep);
+		// before resetting DMA, allow current NeuronCore execution to finish and settle.
+		msleep(1000);  // TODO - investigate directly clearing semaphore and events.
+		ndmar_handle_process_exit(nd, task_tgid_nr(current));
+		msleep(10); // TODO - confirm with HW dev, whether any delay needed after q reset.
 		ncrwl_release_current_process(nd);
 		neuron_ds_release_pid(&nd->datastore, task_tgid_nr(current));
 		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_CUR_PROCESS);
 	}
 	npid_detach(nd);
 
-	// if no process is attached then free ALL_PROCESS mc
-	if (dev->open_count == 0) {
-		neuron_ds_destroy(&nd->datastore);
-		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_ALL_PROCESS);
-	}
-
 	mutex_unlock(&ncdev_device_lock);
 
 	return 0;
 }
 
-static int ncdev_misc_close(struct inode *inode, struct file *filep)
+static int ncdev_release(struct inode *inode, struct file *filep)
 {
-	// Clear all NCs used by the closing process
-	ncrwl_nc_range_unmark(~0);
+	struct ncdev *dev;
+	struct neuron_device *nd;
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
+		return 0;
+
+	dev = (struct ncdev *)filep->private_data;
+	nd = dev->ndev;
+
+	mutex_lock(&ncdev_device_lock);
+	dev->open_count--;
+	if (dev->open_count == 0) {
+		neuron_ds_clear(&nd->datastore);
+		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_ALL_PROCESS);
+	}
+	mutex_unlock(&ncdev_device_lock);
+
 	return 0;
 }
 
@@ -1439,18 +1470,13 @@ static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
 static struct file_operations ncdev_fops = {
 	.owner = THIS_MODULE,
 	.open = ncdev_open,
-	.release = ncdev_close,
+	.flush = ncdev_flush,
+	.release = ncdev_release,
 	.unlocked_ioctl = ncdev_ioctl,
 	.mmap = ncdev_mmap,
 };
 
-static struct file_operations ncdev_misc_fops = {
-	.owner = THIS_MODULE,
-	.release = ncdev_misc_close,
-	.unlocked_ioctl = ncdev_misc_ioctl,
-};
-
-static int ncdev_init_device_node(struct ncdev *devnode, const char *dev_name, int minor,
+static inline int ncdev_init_device_node(struct ncdev *devnode, const char *dev_name, int minor,
 				  struct file_operations *fops, struct neuron_device *ndev)
 {
 	int ret;
@@ -1502,12 +1528,6 @@ int ncdev_create_device_node(struct neuron_device *ndev)
 	return 0;
 }
 
-int ncdev_create_misc_node(void)
-{
-	return ncdev_init_device_node(&devnode_misc, "neuron", MINOR_NUM_MISC,
-				      &ncdev_misc_fops, NULL);
-}
-
 static int ncdev_remove_device_node(struct ncdev *devnode)
 {
 	int minor;
@@ -1527,11 +1547,6 @@ int ncdev_delete_device_node(struct neuron_device *ndev)
 	return ncdev_remove_device_node(&devnodes[ndev->device_index]);;
 }
 
-int ncdev_delete_misc_node(void)
-{
-	return ncdev_remove_device_node(&devnode_misc);
-}
-
 static void ncdev_cleanup(void)
 {
 	int i;
@@ -1540,7 +1555,6 @@ static void ncdev_cleanup(void)
 			continue;
 		ncdev_delete_device_node(devnodes[i].ndev);
 	}
-	ncdev_delete_misc_node();
 
 	if (neuron_dev_class) {
 		class_destroy(neuron_dev_class);

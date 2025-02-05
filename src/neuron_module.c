@@ -16,10 +16,10 @@
 
 MODULE_DESCRIPTION("Neuron Driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.0.450.0");
+MODULE_VERSION("2.1.5.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.0.450.0";
+const char driver_version[] = "2.1.5.0";
 
 extern int ncdev_module_init(void);
 extern void ncdev_module_exit(void);
@@ -59,6 +59,8 @@ static int __init neuron_module_init(void)
 	int ret;
 
 	printk(KERN_INFO "Neuron Driver Started with Version:%s", driver_version);
+
+	nmetric_init_constants_metrics();
 
 #ifdef CONFIG_FAULT_INJECTION
 	neuron_module_init_debugfs();

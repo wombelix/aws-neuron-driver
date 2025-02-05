@@ -356,7 +356,6 @@ int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
 	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
 		return fw_io_topology_v1(ctx, device_ids, count);
 	} else {
-		pr_err("WARNING: fw_io_topology() not supported for V2");
 		return 0;
 	}
 }

@@ -12,12 +12,12 @@
 #include "v2/address_map.h"
 #include "v2/sdma.h"
 
-#define DMA_ENG_IDX_H2T(nd)                                                                        \
-	(narch_get_arch() == NEURON_ARCH_TRN ? V2_DMA_ENG_PER_NC - 1 : V1_DMA_ENG_PER_NC - 1)
-#define DMA_ENG_PER_NC(nd)                                                                         \
-	(narch_get_arch() == NEURON_ARCH_TRN ? V2_DMA_ENG_PER_NC : V1_DMA_ENG_PER_NC)
+
 #define DMA_H2T_DESC_COUNT 4096
 #define NUM_DMA_ENG_PER_DEVICE 32
+
+#define NDMA_QUEUE_DUMMY_RING_DESC_COUNT 64
+#define NDMA_QUEUE_DUMMY_RING_SIZE (NDMA_QUEUE_DUMMY_RING_DESC_COUNT * sizeof(union udma_desc))
 
 struct neuron_device;
 struct neuron_dma_eng_state;
@@ -42,7 +42,7 @@ struct ndma_queue {
 	struct ndma_ring ring_info;
 	u32 eng_id;
 	u32 qid;
-	bool in_use;
+	pid_t owner; // process which initialized this queue.
 };
 
 struct ndma_eng {
@@ -123,6 +123,18 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
  * Return: 0 if queue release succeeds, a negative error code otherwise.
  */
 int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid);
+
+/**
+ * ndmar_handle_process_exit() - Stops all the queues used by the given process.
+ *
+ * This function should be called when a process exits(before the MCs are freed),
+ * so that the DMA engines used can be reset and any ongoing DMA transaction can be
+ * stopped.
+ *
+ * @nd: Neuron device
+ * @pid: Process id.
+ */
+void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid);
 
 /**
  * ndmar_queue_copy_start() - Start DMA transfer.
@@ -212,5 +224,19 @@ int ndmar_queue_get_state(struct neuron_device *nd, int eng_id, int qid,
  * Return: None
  */
 void ndmar_set_model_started_v1(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc);
+
+/** ndmar_get_h2t_qid()
+ *
+ * Return qid
+ */
+int ndmar_get_h2t_qid(void);
+
+/** ndmar_get_h2t_eng_id()
+ *
+ *  @nd: Neuron device which contains the DMA engine
+ *  @nc_id: Neuron core corresponding to H2T engine
+ * Return engine id
+ */
+uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id);
 
 #endif

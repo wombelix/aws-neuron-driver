@@ -264,11 +264,18 @@ struct neuron_ioctl_compatible_version {
 	__u32 min; // [out] the lowest supported RT version
 };
 
+#define DEVICE_BASIC_INFO						\
+	__u32 architecture; /* [out] Architecture of the device */	\
+	__u32 revision; /* [out] Revision of the board */
+
+struct neuron_ioctl_device_basic_info {
+	DEVICE_BASIC_INFO
+};
+
 #define NEURON_IOCTL_MAX_CONNECTED_DEVICES 8
 #define NEURON_MAX_BARS 2
 struct neuron_ioctl_device_info {
-	__u32 architecture; // [out] Architecture of the device
-	__u32 revision; // [out] Revision of the board
+	DEVICE_BASIC_INFO
 	__u32 connected_device_count; // [out] Number devices connected
 	__u32 connected_devices[NEURON_IOCTL_MAX_CONNECTED_DEVICES]; // [out] List of connected device ids
 	__u64 bar_address[NEURON_MAX_BARS]; // [out] BAR addresses
@@ -310,9 +317,9 @@ struct neuron_ioctl_device_info {
 #define NEURON_IOCTL_MEM_BUF_COPY _IOWR(NEURON_IOCTL_BASE, 24, struct neuron_ioctl_mem_buf_copy *)
 /** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
 #define NEURON_IOCTL_MEM_GET_PA _IOR(NEURON_IOCTL_BASE, 25, struct neuron_ioctl_mem_get_pa *)
-#define NEURON_IOCTL_PROGRAM_ENGINE _IOWR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_program_engine *)
 /** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
-#define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_mem_get_info *)
+#define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_mem_get_info *)
+#define NEURON_IOCTL_PROGRAM_ENGINE _IOWR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_program_engine *)
 /** Meset zeros on the hanlde */
 #define NEURON_IOCTL_MEMSET _IOR(NEURON_IOCTL_BASE, 28, struct neuron_ioctl_memset *)
 /** Returns information of given memory_handle such as PA and mmap offset and size.
@@ -381,4 +388,8 @@ struct neuron_ioctl_device_info {
 
 /** Compatibility check */
 #define NEURON_IOCTL_COMPATIBLE_VERSION _IOW(NEURON_IOCTL_BASE, 93, struct  neuron_ioctl_compatible_version *)
+
+/** Returns basic device information */
+#define NEURON_IOCTL_DEVICE_BASIC_INFO _IOW(NEURON_IOCTL_BASE, 100, struct neuron_ioctl_device_basic_info *)
+
 #endif

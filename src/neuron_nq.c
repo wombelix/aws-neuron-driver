@@ -123,26 +123,27 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 	     u32 on_host_memory, u32 dram_channel, u32 dram_region,
 	     struct mem_chunk **nq_mc, u64 *mmap_offset)
 {
-	u8 nq_id;
-	struct mem_chunk *mc = NULL;
-
+	// Check that size is power of 2
+	if (size & (size - 1)) {
+		pr_err("notification ring size must be power of 2");
+		return -EINVAL;
+	}
 	if (nd == NULL || nc_id >= NC_PER_DEVICE(nd))
 		return -EINVAL;
 
-	nq_id = nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	u8 nq_id = nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
-	mc = nd->nq_mc[nc_id][nq_id];
+	struct mem_chunk *mc = nd->nq_mc[nc_id][nq_id];
 	if (mc == NULL) {
-		int ret;
-		ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
+		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
 			       dram_channel, dram_region, nc_id, &mc);
 		if (ret)
 			return ret;
-	        nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, mc->pa);
+		nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, mc->pa);
+		nd->nq_mc[nc_id][nq_id] = mc;
 	}
-	nd->nq_mc[nc_id][nq_id] = mc;
 	if (mc->mem_location == MEM_LOC_HOST)
 		*mmap_offset = nmmap_offset(mc);
 	else
@@ -231,10 +232,9 @@ static void nnq_v2_head_update(struct neuron_device *nd, u8 nc_id, u8 instance, 
 		ts_nq_update_head(nd, nc_id, nq_type, new_head);
 	} else {
 		u8 nq_id = nnq_get_nqid(nd, nc_id, instance, nq_type);
-		struct neuron_nq *nq;
 		if (nq_id >= MAX_NQ_SUPPORTED)
 			return;
-		nq = &nd->nq[nc_id][nq_id];
+		struct neuron_nq *nq = &nd->nq[nc_id][nq_id];
 		if (new_head < nq->head)
 			nq->phase_bit = !nq->phase_bit;
 		nq->head = new_head;

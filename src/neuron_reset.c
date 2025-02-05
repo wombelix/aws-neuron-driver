@@ -101,10 +101,13 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 		for (i = 0; i < retry_count; i++) {
 			bool reset_in_progress;
 
-			if (narch_is_qemu())
+			if (narch_is_qemu()) {
 				reset_in_progress = readl((volatile uint32_t *)addr);
-			else
-				reset_in_progress = readl((volatile uint32_t *)addr) & V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK;
+				msleep(2 * 1000);
+			} else {
+				reset_in_progress = readl((volatile uint32_t *)addr) &
+						    V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK;
+			}
 			if (!reset_in_progress)
 				return 0;
 			msleep(NR_RESET_RETRY_SLEEP_MS * i);
