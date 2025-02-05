@@ -11,6 +11,8 @@
 #include <linux/types.h>
 #include <linux/ioctl.h>
 
+#include "share/neuron_driver_shared.h"
+
 struct neuron_ioctl_mem_alloc {
 	__u64 size; // [in] Allocation size
 	__u32 host_memory; // [in] If true allocates from host memory; else allocates from device memory
@@ -71,12 +73,6 @@ struct neuron_ioctl_post_metric {
 	__u32 data_size; // [in] Total data size
 };
 
-enum neuron_dma_queue_type {
-	NEURON_DMA_QUEUE_TYPE_TX = 0, // transmit queue
-	NEURON_DMA_QUEUE_TYPE_RX, // receive queue
-	NEURON_DMA_QUEUE_TYPE_COMPLETION, // completion queue
-};
-
 struct neuron_ioctl_dma_copy_descriptors {
 	__u64 mem_handle; // [in] Source or Destination memory handle from/to data needs to be copied.
 	void *buffer; // [in] Buffer from/to where data to be copied.
@@ -123,28 +119,9 @@ struct neuron_ioctl_dma_eng_set_state {
 	__u32 state; // [in] state to set
 };
 
-struct neuron_dma_eng_state {
-	__u32 revision_id; // revision id
-	__u32 max_queues; // maximum queues supported
-	__u32 num_queues; // number of queues configured
-	__u32 tx_state; // Tx statue
-	__u32 rx_state; // Rx state
-};
-
 struct neuron_ioctl_dma_eng_get_state {
 	__u32 eng_id; // [in] DMA engine index
 	struct neuron_dma_eng_state *state; // [out] engine state
-};
-
-struct neuron_dma_queue_state {
-	__u32 hw_status; // hardware status
-	__u32 sw_status; // software status
-	__u64 base_addr; // base address of the queue
-	__u32 length; // size of the queue
-	__u32 head_pointer; // hardware pointer index
-	__u32 tail_pointer; // software pointer index
-	__u64 completion_base_addr; // completion queue base address
-	__u32 completion_head; // completion head
 };
 
 struct neuron_ioctl_dma_queue_get_state {
@@ -181,6 +158,11 @@ struct neuron_ioctl_notifications_init {
 	__u32 engine_index; // [in] Engine Index.
 	__u32 size; // [in] Notification queue size in bytes
 	__u64 mmap_offset; // [out] mmap() offset for this NQ
+};
+
+struct neuron_ioctl_neuron_counters_info {
+	__u64 mmap_offset; // [out] mmap() offset for the counters
+	__u32 size; // [out] size of memory allocated for counters
 };
 
 struct neuron_ioctl_notifications_destroy {
@@ -291,5 +273,8 @@ struct neuron_ioctl_device_info {
 
 /** Gets the HW counters */
 #define NEURON_IOCTL_READ_HW_COUNTERS _IOR(NEURON_IOCTL_BASE, 61, struct neuron_ioctl_read_hw_counters *)
+
+/** Get neuron counters info */
+#define NEURON_IOCTL_GET_NEURON_COUNTERS_INFO _IOR(NEURON_IOCTL_BASE, 71, struct neuron_ioctl_neuron_counters_info *)
 
 #endif

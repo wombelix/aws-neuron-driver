@@ -178,9 +178,13 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 #endif
 
 	ret = neuron_pci_device_init(nd);
-	if (ret) {
+	if (ret)
 		goto fail_bar2_resource;
-	}
+
+	ret = mc_alloc(&nd->mpset, &nd->counter_store, NEURON_DEVICE_COUNTER_STORE_SIZE,
+		       MEM_LOC_HOST, 0, 0, 0);
+	if (ret)
+		goto fail_alloc_mem;
 
 	BUG_ON(neuron_devices[nd->device_index] != NULL);
 	neuron_devices[nd->device_index] = nd;

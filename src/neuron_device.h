@@ -15,11 +15,10 @@
 // Maximum neuron devices supported on a system.
 #define MAX_NEURON_DEVICE_COUNT 16
 
-enum neuron_device_arch {
-	NEURON_ARCH_INVALID,
-	NEURON_ARCH_INFERENTIA = 1,
-	NEURON_ARCH_NUM = 3
-};
+// Number of u64 values used for counter storage
+#define NEURON_DEVICE_COUNTER_STORE_SIZE 4096
+
+enum neuron_device_arch { NEURON_ARCH_INVALID, NEURON_ARCH_INFERENTIA = 1, NEURON_ARCH_NUM = 3 };
 
 struct neuron_pci_device {
 	phys_addr_t bar0_pa;
@@ -53,6 +52,8 @@ struct neuron_device {
 
 	int connected_device_count; // number of devices connected to this device
 	u32 connected_devices[MAX_NEURON_DEVICE_COUNT]; // device ids of the connected devices
+
+	struct mem_chunk *counter_store;
 };
 
 /**

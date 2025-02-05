@@ -335,7 +335,6 @@ static int ncdev_mem_get_info(void *param)
 	else
 		pa = mc->pa;
 
-
 	ret = copy_to_user(arg.pa, &pa, sizeof(pa));
 	if (ret)
 		return ret;
@@ -799,7 +798,8 @@ static long ncdev_device_release(struct ncdev *dev, struct neuron_device *nd)
 	int ret = 0;
 	mutex_lock(&ncdev_device_lock);
 
-	if ((nd->current_pid_open_count == 0) && ((nd->current_pid == task_tgid_nr(current)) || nd->current_pid == task_ppid_nr(current))) {
+	if ((nd->current_pid_open_count == 0) && ((nd->current_pid == task_tgid_nr(current)) ||
+						  nd->current_pid == task_ppid_nr(current))) {
 		nd->current_pid = 0;
 	}
 
@@ -857,6 +857,14 @@ static long ncdev_nc_nq_destroy(struct neuron_device *nd, void *param)
 	return nc_nq_destroy(nd, nc_id, eng_index, nq_type);
 }
 
+static long ncdev_get_neuron_counters_info(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_neuron_counters_info arg = { .mmap_offset = nc_hm_mmap_offset(
+								 nd->counter_store),
+							 .size = NEURON_DEVICE_COUNTER_STORE_SIZE };
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
 long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 {
 	struct ncdev *ncd;
@@ -877,9 +885,9 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	    cmd == NEURON_IOCTL_DMA_QUEUE_RELEASE || cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS ||
 	    cmd == NEURON_IOCTL_MEM_ALLOC || cmd == NEURON_IOCTL_MEM_FREE ||
 	    cmd == NEURON_IOCTL_MEM_COPY || cmd == NEURON_IOCTL_MEM_GET_PA ||
-	    cmd == NEURON_IOCTL_MEM_GET_INFO ||
-	    cmd == NEURON_IOCTL_BAR_WRITE || cmd == NEURON_IOCTL_POST_METRIC ||
-	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT || cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY) {
+	    cmd == NEURON_IOCTL_MEM_GET_INFO || cmd == NEURON_IOCTL_BAR_WRITE ||
+	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT ||
+	    cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY) {
 		if (nd->current_pid != task_tgid_nr(current)) {
 			return -EACCES;
 		}
@@ -955,6 +963,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_nc_nq_destroy(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_READ_HW_COUNTERS) {
 		return ncdev_read_hw_counters(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_GET_NEURON_COUNTERS_INFO) {
+		return ncdev_get_neuron_counters_info(nd, (void *)param);
 	} else {
 		pr_err("invalid IOCTL %d\n", cmd);
 		return -EINVAL;
@@ -973,7 +983,8 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	}
 	mutex_lock(&ncdev_device_lock);
 	dev->open_count++;
-	if (nd && (nd->current_pid == task_tgid_nr(current) || nd->current_pid == task_ppid_nr(current))) {
+	if (nd && (nd->current_pid == task_tgid_nr(current) ||
+		   nd->current_pid == task_ppid_nr(current))) {
 		nd->current_pid_open_count++;
 	}
 	mutex_unlock(&ncdev_device_lock);
@@ -987,14 +998,14 @@ static int ncdev_close(struct inode *inode, struct file *filep)
 	struct neuron_device *nd = dev->ndev;
 	mutex_lock(&ncdev_device_lock);
 	dev->open_count--;
-	if (nd && (nd->current_pid == task_tgid_nr(current) || nd->current_pid == task_ppid_nr(current))) {
+	if (nd && (nd->current_pid == task_tgid_nr(current) ||
+		   nd->current_pid == task_ppid_nr(current))) {
 		nd->current_pid_open_count--;
 	}
 	mutex_unlock(&ncdev_device_lock);
 
 	return ncdev_device_release(dev, nd);
 }
-
 
 static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
 {
