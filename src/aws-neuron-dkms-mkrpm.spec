@@ -7,11 +7,13 @@
 %{?!_srcdir: %define _srcdir %_prefix/src}
 %{?!_datarootdir: %define _datarootdir %{_datadir}}
 
+%define release %(cat release.txt)
+
 Summary:	%{module_name} %{version} dkms package
 Name:		aws-neuron-dkms
 Version:	%{version}
 License:	%license
-Release:	dkms
+Release:	%release
 BuildArch:	noarch
 Group:		System/Kernel
 Requires: 	dkms >= 1.95

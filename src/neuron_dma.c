@@ -50,7 +50,7 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 
 	// One descriptor takes ~4 usec to transfer (64K at 16G/sec) -  wait 100x longer
 	u64 wait = 4 * count * 100;
-	unsigned long one_loop_sleep = 1; // poll every 10 usecs
+	unsigned long one_loop_sleep = 10; // poll every 10 usecs
 	u64 loop = wait / one_loop_sleep + 1;
 
 	rxc.ptr = kmalloc(DMA_COMPLETION_MARKER_SIZE * 2, GFP_ATOMIC);
