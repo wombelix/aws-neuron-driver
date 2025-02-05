@@ -327,6 +327,8 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
 	}
 	mutex_unlock(&nd->nr.nr_lock);
 	wake_up_interruptible(&nd->nr.wait_queue);
+
+	nsysfsmetric_inc_reset_count(nd); 
 	return 0;
 }
 

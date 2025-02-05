@@ -69,7 +69,7 @@ struct nmetric_aggregation_thread {
 
 struct neuron_metrics {
 	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
-	u64 ds_freed_bitmap_buf; // stores unsent bitmap metrics about to be freed from datastore
+	u64 ds_freed_feature_bitmap_buf; // stores unsent feature bitmap metrics about to be freed from datastore
 	u64 ds_freed_metrics_buf[NMETRIC_COUNTER_COUNT]; // stores unsent metrics about to be freed from datastore
 	struct nmetric_aggregation_thread neuron_aggregation; // aggregation thread that periodically aggregates and posts metrics
 	u8 posting_buffer[NEURON_METRICS_MAX_POSTING_BUF_SIZE + 1];

@@ -156,6 +156,7 @@ static void neuron_ds_release_entry(struct neuron_datastore *nds, struct neuron_
 	if (!current_pid_is_owner)
 		return;
 	nmetric_partial_aggregate(nds->parent, entry);
+	nsysfsmetric_nds_aggregate(nds->parent, entry);
 	neuron_ds_clear_entry(entry);
 }
 

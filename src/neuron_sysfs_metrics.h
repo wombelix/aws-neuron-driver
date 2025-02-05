@@ -1,0 +1,141 @@
+/*
+ * Copyright 2022, Amazon.com, Inc. or its affiliates. All Rights Reserved
+ */
+#ifndef NEURON_SYSFS_METRICS_H
+#define NEURON_SYSFS_METRICS_H
+
+#include <linux/device.h>
+
+#define MAX_CHILD_NODES_NUM	32
+#define MAX_METRIC_ID		NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT + 64
+#define COUNTER_ATTR_TYPE	2
+
+enum nsysfsmetric_attr_type {
+    TOTAL,     // counter value accumulated
+    PRESENT,   // counter value at the current window, controlled by refresh_rate
+    OTHER,     // all other types besides TOTAL and PRESENT
+};
+
+enum nsysfsmetric_metric_id_category {
+    NDS_NC_METRIC,
+    NON_NDS_METRIC,
+};
+
+enum nsysfsmetric_non_nds_ids {  // The metrics needed by sysfs metrics but not stored in datastore
+    NON_NDS_COUNTER_HOST_MEM,
+    NON_NDS_COUNTER_DEVICE_MEM,
+    NON_NDS_OTHER_REFRESH_RATE,
+    NON_NDS_COUNTER_RESET_COUNT,
+    NON_NDS_COUNTER_MODEL_LOAD_COUNT,
+    NON_NDS_COUNTER_INFERENCE_COUNT,
+    NON_NDS_OTHER_ARCH_TYPE,
+};
+
+struct neuron_device;
+
+struct nsysfsmetric_counter {
+    u64 total;
+    u64 present;
+};
+
+struct nsysfsmetric_node { // represent a subdirectory in sysfs
+    struct kobject kobj;
+    struct mutex lock;
+    bool is_root;
+    int child_node_num;
+    struct nsysfsmetric_node *child_nodes[MAX_CHILD_NODES_NUM];
+    struct attribute_group *attr_group;
+};
+
+struct nsysfsmetric_metrics { // per neuron_device
+    struct nsysfsmetric_node root;
+    struct nsysfsmetric_node *dynamic_metrics_dirs[MAX_NC_PER_DEVICE];
+    struct nsysfsmetric_counter nrt_metrics[MAX_METRIC_ID][MAX_NC_PER_DEVICE]; // runtime metrics, indiced by metric_id and nc_id
+    struct nsysfsmetric_counter dev_metrics[MAX_METRIC_ID]; // TODO: pacific metrics
+    uint64_t bitmap; // store the dynamic metrics to be added
+};
+
+typedef struct nsysfsmetric_attr_info {
+    char *attr_name;
+    int metric_id;
+    int attr_type;
+} nsysfsmetric_attr_info_t;
+
+typedef struct nsysfsmetric_node_info {
+    char *node_name;
+    int metric_id;
+    int attr_cnt;
+    nsysfsmetric_attr_info_t attr_info_tbl[COUNTER_ATTR_TYPE]; // present and total
+} nsysfsmetric_node_info_t;
+
+/**
+ * nsysfsmetric_register() - Perform various sysfs inits such as kobj init and attribute group creation per neuron device
+ *
+ * @nd: The pointer to the device which is the parent of the kobj to be initialized 
+ * @nd_kobj: The pointer to the parent kobject of nd->sysfs_metrics.metric_kobj
+ */
+int nsysfsmetric_register(struct neuron_device *nd, struct kobject *nd_kobj);
+
+/**
+ * nsysfsmetric_destroy() - Clean up memory allocated for kobj and remove attribute group
+ *
+ * @param nd: The pointer to the neuron_device
+ */
+void nsysfsmetric_destroy(struct neuron_device *nd);
+
+/**
+ * nsysfsmetric_init_and_add_dynamic_counter_nodes() - add all new dynamic metrics requested by runtime under each neuron device directory
+ * 
+ * @param nd: The pointer to the neuron_device
+ * @param ds_val: the value from datastore to be aggregated with the current bitmap
+ */
+int nsysfsmetric_init_and_add_dynamic_counter_nodes(struct neuron_device *nd, uint64_t ds_val);
+
+/**
+ * nsysfsmetric_nds_aggregate() - Aggregate sysfs metrics from datastore
+ * 
+ * @param nd: The pointer to the neuron_device
+ * @param entry: : The pointer to the datastore entry
+ */
+void nsysfsmetric_nds_aggregate(struct neuron_device *nd, struct neuron_datastore_entry *entry);
+
+/**
+ * nsysfsmetric_nc_inc_counter() - Increment the counter with id for neuron_device nd and neuron core nc_id by delta
+ * 
+ * @param nd: The pointer to the neuron_device
+ * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
+ * @param id: the index that represents the counter
+ * @param nc_id: the neuron core id
+ * @param delta: the amount to be incremented
+ */
+void nsysfsmetric_nc_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
+
+/**
+ * nsysfsmetric_nc_dec_counter() - Decrement the counter with id for neuron_device nd and neuron core nc_id by delta
+ * 
+ * @param nd: The pointer to the neuron_device
+ * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
+ * @param id: the index that represents the counter
+ * @param nc_id: the neuron core id
+ * @param delta: the amount to be decremented
+ */
+void nsysfsmetric_nc_dec_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
+
+/**
+ * nsysfsmetric_inc_counter() - Increment the counter with id for neuron_device nd by delta
+ * 
+ * @param nd: The pointer to the neuron_device
+ * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
+ * @param id: the index that represents the counter
+ * @param delta: the amount to be incremented/decremented
+ */
+void nsysfsmetric_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int delta);
+
+/**
+ * nsysfsmetric_inc_reset_count() - Increment the RESET_COUNT metrics
+ * 
+ * @param nd: The pointer to the neuron_device 
+ */
+void nsysfsmetric_inc_reset_count(struct neuron_device *nd);
+
+#endif

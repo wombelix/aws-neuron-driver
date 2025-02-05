@@ -96,8 +96,13 @@ typedef union nmetric_version {
 
 /*
  * NDS stats
+ * Note: 
+ * 	To add a new counter type inside the enum, 
+ * 		1. you need to manually decrease NDS_ND_COUNTER_RESERVED or NDS_NC_COUNTER_RESERVED by 1
+ * 		2. you need to update NDS_ND_COUNTER_COUNT or NDS_NC_COUNTER_COUNT
+ * 	To prevent compatability issues, you need to always append the new counter type to the end of the enum
  */
-#define NDS_ND_COUNTER_RESERVED 20
+#define NDS_ND_COUNTER_RESERVED 19
 
 // Device counter types
 enum {
@@ -115,10 +120,12 @@ enum {
 	NDS_ND_COUNTER_MEM_USAGE_SCRATCHPAD_HOST,
 	NDS_ND_COUNTER_MEM_USAGE_MISC_HOST,
 
-	NDS_ND_COUNTER_COUNT = NDS_ND_COUNTER_MEM_USAGE_MISC_HOST + NDS_ND_COUNTER_RESERVED + 1
+	NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP,
+
+	NDS_ND_COUNTER_COUNT = NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP + NDS_ND_COUNTER_RESERVED + 1
 };
 
-#define NDS_NC_COUNTER_RESERVED 4
+#define NDS_NC_COUNTER_RESERVED 1
 
 // Neuroncore counter types
 enum {
@@ -167,7 +174,12 @@ enum {
 	NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_DEVICE,
 	NDS_NC_COUNTER_MEM_USAGE_MISC_DEVICE,
 
-	NDS_NC_COUNTER_COUNT = NDS_NC_COUNTER_MEM_USAGE_MISC_DEVICE + NDS_NC_COUNTER_RESERVED + 1
+	NDS_NC_COUNTER_MODEL_LOAD_COUNT,
+	NDS_NC_COUNTER_INFERENCE_COUNT,
+
+	NDS_NC_COUNTER_MAC_COUNT,
+
+	NDS_NC_COUNTER_COUNT = NDS_NC_COUNTER_MAC_COUNT + NDS_NC_COUNTER_RESERVED + 1
 };
 
 typedef struct nds_header {

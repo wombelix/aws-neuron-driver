@@ -21,8 +21,18 @@
 #include "neuron_ioctl.h"
 #include "neuron_ds.h"
 #include "neuron_metrics.h"
+#include "neuron_sysfs_metrics.h"
 #include "v1/address_map.h"
 #include "v2/address_map.h"
+
+/* Vendor / Device ID for all devices supported by the driver */
+#define AMZN_VENDOR_ID  0x1D0F
+#define INF1_DEVICE_ID0 0x7064
+#define INF1_DEVICE_ID1 0x7065
+#define INF1_DEVICE_ID2 0x7066
+#define INF1_DEVICE_ID3 0x7067
+#define INF2_DEVICE_ID0 0x7264
+#define TRN1_DEVICE_ID0 0x7164
 
 #define NC_PER_DEVICE(nd)                                                                          \
 	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE)
@@ -88,6 +98,8 @@ struct neuron_device {
 	struct neuron_cinit nci[MAX_NC_PER_DEVICE]; // neuron
 
 	u64 nc_model_started_count[MAX_NC_PER_DEVICE]; // number of times the NCs has started model
+
+	struct nsysfsmetric_metrics sysfs_metrics;
 };
 
 #define PCI_HOST_BASE(nd) (narch_get_arch() == NEURON_ARCH_TRN ? V2_PCIE_A0_BASE : PCIEX8_0_BASE)

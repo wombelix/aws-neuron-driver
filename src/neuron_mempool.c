@@ -260,7 +260,7 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 {
 	int ret;
 	int channel = 0, region = 0;
-	u64 region_sz;
+	u64 region_sz = 0;
 	u64 device_dram_addr[MAX_DRAM_CHANNELS];
 	u64 device_dram_size[MAX_DDR_REGIONS];
 
@@ -657,10 +657,13 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	mc_insert_node(&mpset->root, mc);
 	write_unlock(&mpset->rblock);
 
-	if (location == MEM_LOC_HOST)
+	if (location == MEM_LOC_HOST) {
 		mpset->host_mem_size += size;
-	else
+		nsysfsmetric_nc_inc_counter(nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, nc_id, size);
+	} else {
 		mpset->device_mem_size += size;
+		nsysfsmetric_nc_inc_counter(nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, nc_id, size);
+	}
 
 	npid_add_allocated_memory(nd, location, size);
 exit:
@@ -719,12 +722,14 @@ void mc_free(struct mem_chunk **mcp)
 			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~PCI_HOST_BASE(nd));
 		}
 		mpset->host_mem_size -= mc->size;
+		nsysfsmetric_nc_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, mc->nc_id, mc->size);
 	} else if (mc->mem_location == MEM_LOC_DEVICE) {
 		struct mempool *mp;
 		mp = &mpset->mp_device[mc->dram_channel][mc->dram_region];
 		gen_pool_free(mp->gen_pool, (u64)mc->va, mc->size);
 		mp->allocated_size -= mc->size;
 		mpset->device_mem_size -= mc->size;
+		nsysfsmetric_nc_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, mc->nc_id, mc->size);
 	} else {
 		BUG();
 	}

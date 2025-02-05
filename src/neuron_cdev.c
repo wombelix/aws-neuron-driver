@@ -29,11 +29,13 @@
 #include "neuron_trace.h"
 #include "neuron_arch.h"
 #include "neuron_reset.h"
+#include "neuron_sysfs_metrics.h"
 
 #include "v1/address_map.h"
 #include "v2/address_map.h"
 #include "neuron_fw_io.h"
 #include "v1/fw_io.h"
+
 static dev_t neuron_dev;
 static int major;
 static struct class *neuron_dev_class;
@@ -1804,6 +1806,14 @@ static inline int ncdev_init_device_node(struct ncdev *devnode, const char *dev_
 		return ret;
 	}
 
+	ret = nsysfsmetric_register(ndev, &devnode->device->kobj);
+	if (ret) {
+		pr_err("failed to register sysfs metric for %s\n", dev_name);
+		device_destroy(neuron_dev_class, devno);
+		cdev_del(cdev);
+		return -1;
+	}
+
 	devnode->minor = minor;
 	devnode->ndev = ndev;
 
@@ -1831,6 +1841,7 @@ static int ncdev_remove_device_node(struct ncdev *devnode)
 	dev_t devno;
 
 	sysfs_remove_group(&(devnode->device->kobj), &attr_group);
+	nsysfsmetric_destroy(devnode->ndev);
 
 	minor = devnode->minor;
 	devno = MKDEV(major, minor);
@@ -1843,7 +1854,7 @@ static int ncdev_remove_device_node(struct ncdev *devnode)
 
 int ncdev_delete_device_node(struct neuron_device *ndev)
 {
-	return ncdev_remove_device_node(&devnodes[ndev->device_index]);;
+	return ncdev_remove_device_node(&devnodes[ndev->device_index]);
 }
 
 static void ncdev_cleanup(void)

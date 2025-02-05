@@ -26,15 +26,6 @@
 
 #include "neuron_dma.h"
 
-/* Vendor / Device ID for all devices supported by the driver */
-#define AMZN_VENDOR_ID  0x1D0F
-#define INF1_DEVICE_ID0 0x7064
-#define INF1_DEVICE_ID1 0x7065
-#define INF1_DEVICE_ID2 0x7066
-#define INF1_DEVICE_ID3 0x7067
-#define INF2_DEVICE_ID0 0x7264
-#define TRN1_DEVICE_ID0 0x7164
-
 
 static struct pci_device_id neuron_pci_dev_ids[] = {
 	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID0) },
