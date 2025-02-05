@@ -44,6 +44,7 @@ enum nmetric_metric_type {
 
 enum nmetric_cw_id {
 	NMETRIC_CW_ID_UNUSED = 0,
+	NMETRIC_CW_ID_FW_IO_ERROR_COUNT = 11, // internal driver fw_io error count. counted internally using a counter in fw_io_ctx struct
 	NMETRIC_CW_ID_INSTANCE_ID = 12, // instance id
 	NMETRIC_CW_ID_DRIVER_VERSION = 13, // driver version
 
@@ -59,15 +60,23 @@ enum nmetric_cw_id {
 	// Return codes
 	NMETRIC_CW_ID_NERR_OK = 200, // status ok
 	NMETRIC_CW_ID_NERR_FAIL = 201, // status fail
+	NMETRIC_CW_ID_NERR_INVALID = 202,
+	NMETRIC_CW_ID_NERR_RESOURCE = 204,
 	NMETRIC_CW_ID_NERR_TIMEOUT = 205,
 	NMETRIC_CW_ID_NERR_HW_ERROR = 206,
-	NMETRIC_CW_ID_NERR_INFER_BAD_INPUT = 212,	
+	NMETRIC_CW_ID_NERR_QUEUE_FULL = 207,
+	NMETRIC_CW_ID_NERR_RESOURCE_NC = 208,
+	NMETRIC_CW_ID_NERR_UNSUPPORTED_VERSION = 209,
+	NMETRIC_CW_ID_NERR_INFER_BAD_INPUT = 212,
 	NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_NUM_ERR = 213,
 	NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_ERR = 214,
 	NMETRIC_CW_ID_NERR_NUMERICAL_ERR = 215,
 	NMETRIC_CW_ID_NERR_MODEL_ERR = 216,
 	NMETRIC_CW_ID_NERR_TRANSIENT_ERR = 217,
 	NMETRIC_CW_ID_NERR_RT_ERR = 218,
+	NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR = 219, // generic notification error
+	                                          // for reference look at "INFER_SUBTYPE_NONE" in
+	                                          // KaenaRuntime repo "tdrv/infer_error_subtype_int.c"
 };
 
 struct nmetric_cw_metric {
@@ -98,10 +107,10 @@ static int nmetric_id_to_ds_index(int internal_metric_id, enum nmetric_metric_ty
 {
 	if (metric_type == COUNTER) {
 		switch (internal_metric_id) {
-		case NMETRIC_NERR_OK:
+		case NMETRIC_NERR_INFER_OK:
 			return NDS_NC_COUNTER_INFER_COMPLETED;
 		case NMETRIC_NERR_GENERIC_FAIL:
-			return NDS_NC_COUNTER_ERR_GENERIC;
+			return NDS_NC_COUNTER_GENERIC_FAIL;
 		case NMETRIC_TIMED_OUT:
 			return NDS_NC_COUNTER_INFER_TIMED_OUT;
 		case NMETRIC_BAD_INPUT:
@@ -120,15 +129,23 @@ static int nmetric_id_to_ds_index(int internal_metric_id, enum nmetric_metric_ty
 			return NDS_NC_COUNTER_INFER_COMPLETED_WITH_ERR;
 		case NMETRIC_COMPLETED_WITH_NUMERIC_ERR:
 			return NDS_NC_COUNTER_INFER_COMPLETED_WITH_NUM_ERR;
-		default:
-			pr_err("No mapping between datastore counter and counter metric id %d\n", internal_metric_id);
+		case NMETRIC_NERR_GENERIC_TPB_ERR:
+			return NDS_NC_COUNTER_ERR_GENERIC;
+		case NMETRIC_NERR_RESOURCE:
+			return NDS_NC_COUNTER_ERR_RESOURCE;
+		case NMETRIC_NERR_RESOURCE_NC:
+			return NDS_NC_COUNTER_ERR_RESOURCE_NC;
+		case NMETRIC_NERR_QUEUE_FULL:
+			return NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE;
+		case NMETRIC_NERR_INVALID:
+			return NDS_NC_COUNTER_ERR_INVALID;
+		case NMETRIC_NERR_UNSUPPORTED_NEFF:
+			return NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION;
 		}
 	} else if (metric_type == VERSION) {
 		switch (internal_metric_id) {
 		case NMETRIC_RT_VERSION:
 			return NDS_ND_COUNTER_RUNTIME_VERSION;
-		default:
-			pr_err("No mapping between datastore counter and version metric id %d\n", internal_metric_id);
 		}
 	}
 
@@ -147,7 +164,7 @@ static enum nmetric_cw_id nmetric_id_to_cw_id(int internal_metric_id, enum nmetr
 {
 	if (metric_type == COUNTER) {
 		switch (internal_metric_id) {
-		case NMETRIC_NERR_OK:
+		case NMETRIC_NERR_INFER_OK:
 			return NMETRIC_CW_ID_NERR_OK;
 		case NMETRIC_NERR_GENERIC_FAIL:
 			return NMETRIC_CW_ID_NERR_FAIL;
@@ -169,6 +186,20 @@ static enum nmetric_cw_id nmetric_id_to_cw_id(int internal_metric_id, enum nmetr
 			return NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_ERR;
 		case NMETRIC_COMPLETED_WITH_NUMERIC_ERR:
 			return NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_NUM_ERR;
+		case NMETRIC_NERR_GENERIC_TPB_ERR:
+			return NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR;
+		case NMETRIC_NERR_RESOURCE:
+			return NMETRIC_CW_ID_NERR_RESOURCE;
+		case NMETRIC_NERR_RESOURCE_NC:
+			return NMETRIC_CW_ID_NERR_RESOURCE_NC;
+		case NMETRIC_NERR_QUEUE_FULL:
+			return NMETRIC_CW_ID_NERR_QUEUE_FULL;
+		case NMETRIC_NERR_INVALID:
+			return NMETRIC_CW_ID_NERR_INVALID;
+		case NMETRIC_NERR_UNSUPPORTED_NEFF:
+			return NMETRIC_CW_ID_NERR_UNSUPPORTED_VERSION;
+		case NMETRIC_FW_IO_ERR:
+			return NMETRIC_CW_ID_FW_IO_ERROR_COUNT;
 		default:
 			pr_err("No mapping between cloudwatch id and counter metric id %d\n", internal_metric_id);
 		}
@@ -247,7 +278,7 @@ static void nmetric_aggregate_version_metrics(struct neuron_datastore_entry *ent
 }
 
 /**
- * nmetric_aggregate_entry()
+ * nmetric_aggregate_nd_counter_entry()
  * 
  * Aggregates all metrics in specified datastore entry to specified buffer. Counter metrics are added together. 
  * Multiple version metrics are can be gathered per posting session up to a predefined limit. Any excess versions will be discarded
@@ -257,7 +288,7 @@ static void nmetric_aggregate_version_metrics(struct neuron_datastore_entry *ent
  * @dest_buf: destination buffer to recieve all aggregated data from datastore entry, must be large enough to accommodate all counters being tracked
  * 
  */
-static void nmetric_aggregate_entry(struct neuron_device *nd, struct neuron_datastore_entry *entry, u64 *dest_buf)
+static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct neuron_datastore_entry *entry, u64 *dest_buf)
 {
 	int nc_id;
 	enum nmetric_counter_type internal_metric_id;
@@ -289,13 +320,16 @@ static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics)
 	int i;
 	for (i = 0; i < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; i++)
 		if (neuron_ds_check_entry_in_use(&nd->datastore, i)) // ensure that datastore entry is in use and valid
-			nmetric_aggregate_entry(nd, &nd->datastore.entries[i], curr_metrics);
+			nmetric_aggregate_nd_counter_entry(nd, &nd->datastore.entries[i], curr_metrics);
+
+	// update metrics that do not have counters in nds
+	curr_metrics[NMETRIC_FW_IO_ERR] = fw_io_get_err_count(nd->fw_io_ctx);
 }
 
 // Wrapper function for entry aggregate function
 void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore_entry *entry)
 {
-	nmetric_aggregate_entry(nd, entry, nd->metrics.ds_freed_metrics_buf);
+	nmetric_aggregate_nd_counter_entry(nd, entry, nd->metrics.ds_freed_metrics_buf);
 }
 
 /**

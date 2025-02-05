@@ -25,6 +25,7 @@ module_param(nc_per_dev_param, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nc_per_dev_param, "Number of neuron cores");
 
 extern int v1_dma_init(void __iomem *bar0, struct udma *udma, int eng_id);
+extern int v2_dma_init(void __iomem *bar0, struct udma *udma, int eng_id);
 
 static struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id)
 {
@@ -50,7 +51,11 @@ static struct ndma_ring *ndmar_get_ring(struct ndma_queue *queue)
 }
 
 uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id) {
-	return  (nc_id * V1_DMA_ENG_PER_NC) + (V1_DMA_ENG_PER_NC - 1);
+	if (narch_get_arch() == NEURON_ARCH_TRN) {
+		return (nc_id == 0) ? V2_D2H_IDX : V2_H2D_IDX;
+	} else {
+		return  (nc_id * V1_DMA_ENG_PER_NC) + (V1_DMA_ENG_PER_NC - 1);
+	}
 }
 
 int ndmar_get_h2t_qid(void)
@@ -60,6 +65,11 @@ int ndmar_get_h2t_qid(void)
 
 bool ndmar_is_nx_ring(uint32_t eng_id, uint32_t q_id)
 {
+	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
+		// for v2 the last queue is reserved for collectives, and the second
+		// to last queue in engs 0-10 are reserved for NX cores
+		return (q_id == (V2_DMA_QUEUE_PER_ENG - 2)) && ((eng_id % V2_DMA_ENG_PER_NC) < (V2_TPB_ENG_PER_NC + V2_TS_PER_DEVICE));
+	}
 	return false;
 }
 
@@ -200,7 +210,16 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 {
 	int ret, eng_id, qid, dma_eng_per_nd;
-	dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
+	} else {
+		int nc_per_dev;
+		if (narch_is_emu())
+			nc_per_dev = nc_per_dev_param;
+		else
+			nc_per_dev = V2_NC_PER_DEVICE;
+		dma_eng_per_nd = nc_per_dev * V2_DMA_ENG_PER_NC;
+	}
 	struct mem_chunk *mc = nd->ndma_q_dummy_mc;
 	const int desc_count = NDMA_QUEUE_DUMMY_RING_DESC_COUNT;
 	for (eng_id = 0; eng_id < dma_eng_per_nd; eng_id++) {
@@ -436,7 +455,10 @@ int ndmar_eng_init(struct neuron_device *nd, int eng_id)
 
 	trace_dma_engine_init(nd, eng_id);
 
-	ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+		ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
+	else
+		ret = v2_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
 
 	if (ret)
 		goto done;
@@ -465,14 +487,24 @@ int ndmar_init(struct neuron_device *nd)
 	int ret = 0;
 	int nc_per_dev;
 	int dma_eng_per_nc, dma_eng_per_nd;
+	enum neuron_arch arch = narch_get_arch();
 
 	if (nd->dmar_init_done)
 		return 0;
 
 
-	nc_per_dev = V1_NC_PER_DEVICE;
-	dma_eng_per_nc = V1_DMA_ENG_PER_NC;
-	dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
+	if (arch == NEURON_ARCH_INFERENTIA) {
+		nc_per_dev = V1_NC_PER_DEVICE;
+		dma_eng_per_nc = V1_DMA_ENG_PER_NC;
+		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
+	} else {
+		if (narch_is_emu())
+			nc_per_dev = nc_per_dev_param;
+		else
+			nc_per_dev = V2_NC_PER_DEVICE;
+		dma_eng_per_nc = V2_DMA_ENG_PER_NC;
+		dma_eng_per_nd = nc_per_dev * dma_eng_per_nc;
+	}
 
 	// init all seng DMA engines in the ND
 	int eng_id;
@@ -539,7 +571,7 @@ static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
 
 void ndmar_close(struct neuron_device *nd)
 {
-	const int nc_per_dev  = V1_NC_PER_DEVICE;
+	const int nc_per_dev  = (narch_get_arch() == NEURON_ARCH_INFERENTIA) ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE;
 	if(!nd->dmar_init_done)
 		return;
 	int nc_id;

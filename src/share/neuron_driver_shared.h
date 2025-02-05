@@ -72,8 +72,7 @@ struct neuron_app_info {
 /*
  * NDS stats
  */
-
-#define NDS_ND_COUNTER_RESERVED 16
+#define NDS_ND_COUNTER_RESERVED 27
 
 // Device counter types
 enum {
@@ -82,10 +81,10 @@ enum {
 	NDS_ND_COUNTER_MIN_NEFF_VERSION,
 	NDS_ND_COUNTER_MAX_NEFF_VERSION,
 
-	NDS_ND_COUNTER_COUNT = NDS_ND_COUNTER_MAX_NEFF_VERSION + NDS_ND_COUNTER_RESERVED
+	NDS_ND_COUNTER_COUNT = NDS_ND_COUNTER_MAX_NEFF_VERSION + NDS_ND_COUNTER_RESERVED + 1
 };
 
-#define NDS_NC_COUNTER_RESERVED 16
+#define NDS_NC_COUNTER_RESERVED 10
 
 // Neuroncore counter types
 enum {
@@ -98,6 +97,9 @@ enum {
 	NDS_NC_COUNTER_INFER_INCORRECT_INPUT,
 	NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE,
 
+	// these must be in this specifc order
+	// runtime assumes these are offset by
+	// error code
 	NDS_NC_COUNTER_ERR_GENERIC,
 	NDS_NC_COUNTER_ERR_NUMERICAL,
 	NDS_NC_COUNTER_ERR_MODEL,
@@ -109,7 +111,21 @@ enum {
 	NDS_NC_COUNTER_LATENCY_TOTAL,
 	NDS_NC_COUNTER_NC_CYCLES,
 
-	NDS_NC_COUNTER_COUNT = NDS_NC_COUNTER_NC_CYCLES + NDS_NC_COUNTER_RESERVED
+	// these are new counters
+	// these shall be placed at the
+	// end so there offsets are always
+	// greater than old counters
+	// This will ensure
+	// new runtime + old driver will
+	// write to reserved setions and not
+	// break anything
+	NDS_NC_COUNTER_GENERIC_FAIL,
+	NDS_NC_COUNTER_ERR_RESOURCE,
+	NDS_NC_COUNTER_ERR_RESOURCE_NC,
+	NDS_NC_COUNTER_ERR_INVALID,
+	NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION,
+
+	NDS_NC_COUNTER_COUNT = NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION + NDS_NC_COUNTER_RESERVED + 1
 };
 
 typedef struct nds_header {
@@ -125,9 +141,8 @@ typedef struct nds_header {
 #define NDS_HEADER_START (0)
 #define NDS_HEADER_SIZE (sizeof(nds_header_t))
 
-#define NDS_ND_COUNTERS_COUNT (NDS_NC_COUNTER_COUNT)
 #define NDS_ND_COUNTERS_START (NDS_HEADER_START + NDS_HEADER_SIZE)
-#define NDS_ND_COUNTERS_SIZE (NDS_ND_COUNTERS_COUNT * sizeof(uint64_t))
+#define NDS_ND_COUNTERS_SIZE (NDS_ND_COUNTER_COUNT * sizeof(uint64_t))
 #define NDS_ND_COUNTERS(base_addr) ((uint64_t *)(base_addr + NDS_ND_COUNTERS_START))
 
 #define MAX_NEURONCORE_COUNT (4)

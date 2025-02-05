@@ -67,11 +67,20 @@ static struct mem_chunk *ncdev_mem_handle_to_mem_chunk(u64 mh)
 	return mc;
 }
 
+
+unsigned long neuron_copy_from_user(const char *const fname, void * to, const void __user * from, unsigned long n) {
+	const long ret = copy_from_user(to, from, n);
+	if (ret) {
+		pr_err("copy_from_user failed: %s\n", fname);
+	}
+	return ret;
+}
+
 static int ncdev_dma_engine_set_state(struct neuron_device *nd, void *param)
 {
 	int ret;
 	struct neuron_ioctl_dma_eng_set_state arg;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_eng_set_state *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_eng_set_state *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	return ndmar_eng_set_state(nd, arg.eng_id, arg.state);
@@ -82,7 +91,7 @@ static int ncdev_dma_engine_get_state(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_dma_eng_get_state arg;
 	struct neuron_dma_eng_state state;
 	int ret;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_eng_get_state *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_eng_get_state *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	ret = ndmar_eng_get_state(nd, arg.eng_id, &state);
@@ -99,9 +108,10 @@ static int ncdev_dma_queue_init(struct neuron_device *nd, void *param)
 	struct mem_chunk *rxc_mc;
 	int ret;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_queue_init *)param, sizeof(arg));
-	if (ret)
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_queue_init *)param, sizeof(arg));
+	if (ret) {
 		return -EACCES;
+	}
 	if (arg.rx_handle)
 		rx_mc = ncdev_mem_handle_to_mem_chunk(arg.rx_handle);
 	else
@@ -126,7 +136,7 @@ static int ncdev_dma_copy_descriptors(struct neuron_device *nd, void *param)
 	u32 offset = 0, copy_size = 0;
 	int remaining, ret;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_copy_descriptors *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_copy_descriptors *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -147,7 +157,7 @@ static int ncdev_dma_copy_descriptors(struct neuron_device *nd, void *param)
 	}
 	while (remaining) {
 		copy_size = remaining < MAX_DMA_DESC_SIZE ? remaining : MAX_DMA_DESC_SIZE;
-		ret = copy_from_user(src_mc->va, arg.buffer + offset, copy_size);
+		ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + offset, copy_size);
 		if (ret) {
 			break;
 		}
@@ -168,7 +178,7 @@ static int ncdev_dma_copy_start(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_dma_queue_copy_start arg;
 	int ret;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_queue_copy_start *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_queue_copy_start *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -180,7 +190,7 @@ static int ncdev_dma_ack_completed(struct neuron_device *nd, void *param)
 {
 	int ret;
 	struct neuron_ioctl_dma_ack_completed arg;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_ack_completed *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_ack_completed *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -192,7 +202,7 @@ static int ncdev_dma_queue_get_state(struct neuron_device *nd, void *param)
 	int ret;
 	struct neuron_ioctl_dma_queue_get_state arg;
 	struct neuron_dma_queue_state tx, rx;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_queue_get_state *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_queue_get_state *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	ret = ndmar_queue_get_state(nd, arg.eng_id, arg.qid, &tx, &rx);
@@ -208,7 +218,7 @@ static int ncdev_dma_queue_release(struct neuron_device *nd, void *param)
 {
 	int ret;
 	struct neuron_ioctl_dma_queue_release arg;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_queue_release *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_queue_release *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	return ndmar_queue_release(nd, arg.eng_id, arg.qid);
@@ -223,7 +233,7 @@ static int ncdev_dma_descriptor_copyout(struct neuron_device *nd, void *param)
 	u32 desc_size = sizeof(union udma_desc), total_size, offset;
 	int ret;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_descriptor_copyout *)param,
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_descriptor_copyout *)param,
 			     sizeof(arg));
 	if (ret)
 		return ret;
@@ -283,7 +293,7 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&mem_alloc_arg, (struct neuron_ioctl_mem_alloc *)param,
+	ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc *)param,
 			     sizeof(mem_alloc_arg));
 	if (ret)
 		return -EACCES;
@@ -307,13 +317,46 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 	return 0;
 }
 
+
+static int ncdev_mem_alloc_v2(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_mem_alloc_v2 mem_alloc_arg;
+	enum mem_location location;
+	u64 mh;
+	struct mem_chunk *mc;
+	int ret;
+
+	ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2 *)param,
+			     sizeof(mem_alloc_arg));
+	if (ret)
+		return ret	;
+	if (mem_alloc_arg.host_memory)
+		location = MEM_LOC_HOST;
+	else
+		location = MEM_LOC_DEVICE;
+	ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, mem_alloc_arg.align, location, mem_alloc_arg.dram_channel,
+		       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, &mc);
+	if (ret)
+		return ret;
+
+	trace_ioctl_mem_alloc(nd, mc);
+
+	mh = ncdev_mem_chunk_to_mem_handle(mc);
+	ret = copy_to_user(mem_alloc_arg.mem_handle, &mh, sizeof(mc));
+	if (ret) {
+		mc_free(&mc);
+		return ret;
+	}
+	return 0;
+}
+
 static int ncdev_mem_get_pa_deprecated(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_mem_get_pa mem_get_pa_arg;
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&mem_get_pa_arg, (struct neuron_ioctl_mem_get_pa *)param,
+	ret = neuron_copy_from_user(__func__, &mem_get_pa_arg, (struct neuron_ioctl_mem_get_pa *)param,
 			     sizeof(mem_get_pa_arg));
 	if (ret)
 		return ret;
@@ -331,7 +374,7 @@ static int ncdev_mem_get_info_deprecated(void *param)
 	u64 mmap_offset;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -356,7 +399,7 @@ static int ncdev_mem_get_extended_info(void *param)
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -385,7 +428,7 @@ static int ncdev_mem_free(struct neuron_device *nd, void *param)
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&mem_free_arg, (struct neuron_ioctl_mem_free *)param,
+	ret = neuron_copy_from_user(__func__, &mem_free_arg, (struct neuron_ioctl_mem_free *)param,
 			     sizeof(mem_free_arg));
 	if (ret)
 		return ret;
@@ -403,7 +446,7 @@ static int ncdev_memset(struct neuron_device *nd, void *param)
 	struct mem_chunk *mc;
 	int ret = 0;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_memset *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_memset *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
@@ -424,7 +467,7 @@ static int ncdev_mem_copy(struct neuron_device *nd, void *param)
 	struct mem_chunk *dst_mc;
 	int ret;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_mem_copy *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	src_mc = ncdev_mem_handle_to_mem_chunk(arg.src_mem_handle);
@@ -491,23 +534,20 @@ int ncdev_program_engine(struct neuron_device *nd, void *param)
 	int ret;
 	struct mem_chunk *src_mc;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_program__engine *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program__engine *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
 	if (ncdev_verify_mem_region(nd, arg.dst))
 		return -ENOMEM;
 
-	if (arg.size > MAX_DMA_DESC_SIZE)
-		return -EINVAL;
-
-	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0, 0, &src_mc);
+	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, arg.size, MEM_LOC_HOST, 0, 0, 0, &src_mc);
 	if (ret) {
 		ret = -ENOMEM;
 		return ret;
 	}
 
-	ret = copy_from_user(src_mc->va, arg.buffer + arg.offset, arg.size);
+	ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + arg.offset, arg.size);
 	if (ret)
 		goto error;
 
@@ -525,7 +565,7 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_mem_buf_copy *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_buf_copy *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
@@ -544,7 +584,7 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 
 	if (mc->mem_location == MEM_LOC_HOST) {
 		if (arg.copy_to_mem_handle) {
-			ret = copy_from_user(mc->va + arg.offset, arg.buffer, arg.size);
+			ret = neuron_copy_from_user(__func__, mc->va + arg.offset, arg.buffer, arg.size);
 		} else {
 			ret = copy_to_user(arg.buffer, mc->va + arg.offset, arg.size);
 		}
@@ -564,7 +604,7 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 		while (remaining) {
 			copy_size = remaining < MAX_DMA_DESC_SIZE ? remaining : MAX_DMA_DESC_SIZE;
 			if (arg.copy_to_mem_handle) {
-				ret = copy_from_user(src_mc->va, arg.buffer + offset, copy_size);
+				ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + offset, copy_size);
 				if (ret) {
 					break;
 				}
@@ -597,7 +637,7 @@ static long ncdev_semaphore_ioctl(struct neuron_device *nd, unsigned int cmd, vo
 	int ret;
 	struct neuron_ioctl_semaphore arg;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_semaphore *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_semaphore *)param, sizeof(arg));
 	if (ret)
 		return ret;
 	if (cmd == NEURON_IOCTL_SEMAPHORE_READ) {
@@ -620,16 +660,15 @@ static long ncdev_events_ioctl(struct neuron_device *nd, unsigned int cmd, void 
 	int ret;
 	struct neuron_ioctl_event arg;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_event *)param,
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_event *)param,
 			     sizeof(struct neuron_ioctl_event));
 	if (ret)
 		return ret;
 
 	if (cmd == NEURON_IOCTL_EVENT_GET) {
 		ret = nc_event_get(nd, arg.nc_id, arg.event_index, &arg.value);
-		if (ret) {
-			return ret;
-		}
+		if (ret)
+		return ret;
 		return copy_to_user((struct neuron_ioctl_event *)param, &arg, sizeof(arg));
 	} else if (cmd == NEURON_IOCTL_EVENT_SET) {
 		return nc_event_set(nd, arg.nc_id, arg.event_index, arg.value);
@@ -692,7 +731,7 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 	data = kmalloc(data_size, GFP_KERNEL);
 	if (data == NULL)
 		return -ENOMEM;
-	ret = copy_from_user(data, user_va, data_size);
+	ret = neuron_copy_from_user(__func__, data, user_va, data_size);
 	if (ret)
 		goto done;
 
@@ -747,7 +786,7 @@ static long ncdev_bar_rw(struct neuron_device *nd, void *param, bool read)
 	u64 *reg_addresses = NULL;
 	u64 address_count;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_bar *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_bar *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -761,7 +800,7 @@ static long ncdev_bar_rw(struct neuron_device *nd, void *param, bool read)
 	if (reg_addresses == NULL)
 		return -ENOMEM;
 
-	ret = copy_from_user(reg_addresses, arg.address, address_count * sizeof(u64));
+	ret = neuron_copy_from_user(__func__, reg_addresses, arg.address, address_count * sizeof(u64));
 	if (ret != 0)
 		goto done;
 
@@ -781,10 +820,9 @@ static long ncdev_post_metric(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_post_metric arg;
 	u32 *data = NULL;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_post_metric *)param, sizeof(arg));
-	if (ret) {
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_post_metric *)param, sizeof(arg));
+	if (ret)
 		return ret;
-	}
 
 	data = kmalloc(arg.data_size, GFP_KERNEL);
 	if (data == NULL) {
@@ -792,7 +830,7 @@ static long ncdev_post_metric(struct neuron_device *nd, void *param)
 		goto done;
 	}
 
-	ret = copy_from_user(data, arg.data, arg.data_size);
+	ret = neuron_copy_from_user(__func__, data, arg.data, arg.data_size);
 	if (ret)
 		goto done;
 	ret = fw_io_post_metric(nd->fw_io_ctx, (u8 *)data, arg.data_size);
@@ -808,14 +846,14 @@ static long ncdev_read_hw_counters(struct neuron_device *nd, void *param)
 	uint64_t *reg_addresses = NULL;
 	uint32_t *data = NULL;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_read_hw_counters *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_read_hw_counters *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
 	reg_addresses = kmalloc(arg.count * sizeof(uint64_t), GFP_KERNEL);
 	if (reg_addresses == NULL)
 		return -ENOMEM;
-	ret = copy_from_user(reg_addresses, arg.address, arg.count * sizeof(uint64_t));
+	ret = neuron_copy_from_user(__func__, reg_addresses, arg.address, arg.count * sizeof(uint64_t));
 	if (ret != 0)
 		goto done;
 
@@ -936,7 +974,7 @@ static long ncdev_device_get_all_apps_info(struct neuron_device *nd, void *param
 	if (arg == NULL)
 		return -ENOMEM;
 
-	ret = copy_from_user(arg, user_arg, sizeof(struct neuron_ioctl_get_apps_info));
+	ret = neuron_copy_from_user(__func__, arg, user_arg, sizeof(struct neuron_ioctl_get_apps_info));
 	if (ret) {
 		kfree(arg);
 		return ret;
@@ -990,7 +1028,7 @@ static long ncdev_nc_nq_init_v1(struct neuron_device *nd, void *param)
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1008,7 +1046,7 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 	int ret;
 	struct mem_chunk *mc;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1033,7 +1071,7 @@ static long ncdev_acquire_neuron_ds(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_neuron_ds_info arg;
 	struct mem_chunk *mc;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1053,7 +1091,7 @@ static long ncdev_release_neuron_ds(struct neuron_device *nd, void *param)
 {
 	int ret;
 	struct neuron_ioctl_neuron_ds_info arg;
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 	neuron_ds_release_pid(&nd->datastore, arg.pid);
@@ -1065,7 +1103,7 @@ static long ncdev_crwl_reader_enter(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_crwl arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1077,7 +1115,7 @@ static long ncdev_crwl_reader_exit(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_crwl arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1089,7 +1127,7 @@ static long ncdev_crwl_writer_enter(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_crwl arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1101,7 +1139,7 @@ static long ncdev_crwl_writer_downgrade(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_crwl arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1113,7 +1151,7 @@ static long ncdev_crwl_nc_range_mark(void *param)
 	struct neuron_ioctl_crwl_nc_map arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1135,7 +1173,7 @@ static long ncdev_crwl_nc_range_unmark(void *param)
 	struct neuron_ioctl_crwl_nc_map arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -1148,10 +1186,9 @@ static long ncdev_cinit_set_state(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_cinit_set arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
-	if (ret) {
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
 		return ret;
-	}
 
 	nci_set_state(nd, arg.nc_id, arg.state, &arg.new_state);
 	return copy_to_user(param, &arg, sizeof(arg));
@@ -1162,10 +1199,9 @@ static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
 	struct neuron_ioctl_nc_model_started_count arg;
 	int ret;
 
-	ret = copy_from_user(&arg, param, sizeof(arg));
-	if (ret) {
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
 		return ret;
-	}
 
 	arg.started_count = nd->nc_model_started_count[arg.nc_id];
 	return copy_to_user(param, &arg, sizeof(arg));
@@ -1189,7 +1225,7 @@ static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
 // TODO the driver might need to return different sets on different
 // architectures.
 #define RT_MIN_COMPATIBLE_VERSION 2
-#define RT_MAX_COMPATIBLE_VERSION 2
+#define RT_MAX_COMPATIBLE_VERSION 3 // version 3 of runtime requires 1) aligned memory allocation support  2) SPROT
 
 static long ncdev_compatible_version(void *param)
 {
@@ -1240,6 +1276,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V1 ||
 	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2) {
 		if (!npid_is_attached(nd)) {
+			pr_err("Process not allowed to request cmd=%u, pid not attached\n", cmd);
+			npid_print_usage(nd);
 			return -EACCES;
 		}
 	}
@@ -1286,6 +1324,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_dma_descriptor_copyout(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC) {
 		return ncdev_mem_alloc(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_MEM_ALLOC_V2) {
+		return ncdev_mem_alloc_v2(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_EXTENDED_INFO) {
 		return ncdev_mem_get_extended_info((void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_INFO) {

@@ -31,14 +31,22 @@ u64 notific_get_relative_offset_sdma(int nc_id, int eng_id);
  */
 static inline u64 notific_get_relative_offset(int nc_idx)
 {
-	return 0;
+	u64 offset = (nc_idx == 0) ? V2_APB_SENG_0_RELBASE : V2_APB_SENG_1_RELBASE;
+
+	offset += V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_0_TPB_TOP_RELBASE +
+		  V2_APB_SENG_0_TPB_TOP_NOTIFIC_RELBASE;
+	return offset;
 }
 
 /** Returns NOTIFIC relative offset for given TOP_SP.
  */
 static inline u64 notific_get_relative_offset_topsp(int ts_idx)
 {
-	return 0;
+	u64 offset = V2_PCIE_BAR0_APB_OFFSET + V2_APB_IOFAB_RELBASE +
+		     V2_APB_IOFAB_TOP_SP_0_RELBASE + V2_APB_IOFAB_TOP_SP_0_NOTIFIC_RELBASE;
+
+	offset += V2_APB_IOFAB_TOP_SP_0_SIZE * ts_idx;
+	return offset;
 }
 
 #define NOTIFIC_NQ_SIZE 0x28
@@ -50,6 +58,9 @@ static inline u64 notific_get_relative_offset_topsp(int ts_idx)
 static inline void notific_write_nq_base_addr_lo(void __iomem *base, size_t index,
 								  uint32_t value)
 {
+	const size_t offset = NOTIFIC_NQ_BASE_ADDR_LO_OFFSET(index);
+
+	reg_write32(base + offset, value);
 }
 
 #define NOTIFIC_NQ_BASE_ADDR_HI_OFFSET_START 0x104
@@ -60,6 +71,9 @@ static inline void notific_write_nq_base_addr_lo(void __iomem *base, size_t inde
 static inline void notific_write_nq_base_addr_hi(void __iomem *base, size_t index,
 								  uint32_t value)
 {
+	const size_t offset = NOTIFIC_NQ_BASE_ADDR_HI_OFFSET(index);
+
+	reg_write32(base + offset, value);
 }
 
 #define NOTIFIC_NQ_F_SIZE_OFFSET_START 0x108
@@ -70,6 +84,9 @@ static inline void notific_write_nq_base_addr_hi(void __iomem *base, size_t inde
 static inline void notific_write_nq_f_size(void __iomem *base, size_t index,
 							    uint32_t value)
 {
+	const size_t offset = NOTIFIC_NQ_F_SIZE_OFFSET(index);
+
+	reg_write32(base + offset, value);
 }
 
 int notific_decode_nq_head_reg_access(u64 offset, u8 *nc_id, u32 *nq_type, u8 *instance,

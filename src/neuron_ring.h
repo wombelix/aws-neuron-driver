@@ -14,7 +14,7 @@
 
 
 #define DMA_H2T_DESC_COUNT 4096
-#define NUM_DMA_ENG_PER_DEVICE 32
+#define NUM_DMA_ENG_PER_DEVICE 34 // for v2 2 nc with each 16,
 
 #define NDMA_QUEUE_DUMMY_RING_DESC_COUNT 64
 #define NDMA_QUEUE_DUMMY_RING_SIZE (NDMA_QUEUE_DUMMY_RING_DESC_COUNT * sizeof(union udma_desc))

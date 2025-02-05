@@ -25,6 +25,7 @@ int neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent)
 			pr_err("nds allocation failure for nd[%d]", parent->device_index);
 			return ret;
 		}
+		memset(nds->entries[idx].mc->va, 0, NEURON_DATASTORE_SIZE);
 	}
 	return 0;
 }

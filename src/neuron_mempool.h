@@ -119,7 +119,7 @@ struct mem_chunk {
 	phys_addr_t pa; // physical address of the chunk
 	void *va; // virtual address of the chunk
 
-	u32 size; // chunk size
+	u64 size; // chunk size
 
 	struct mempool *mp; // backpointer to mp
 	struct mempool_set *mpset; // back pointer to mpset
@@ -182,7 +182,7 @@ struct mem_chunk *mpset_search_mc(struct mempool_set *mp, phys_addr_t pa);
  *
  * Return: 0 if allocation succeeds, a negative error code otherwise.
  */
-int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
+int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
 	     struct mem_chunk **result);
 
@@ -200,7 +200,7 @@ int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
  *
  * Return: 0 if allocation succeeds, a negative error code otherwise.
  */
-int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size, u32 align,
+int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
 		   enum mem_location location, u32 channel, u32 region, u32 nc_id,
 		   struct mem_chunk **result);
 /**

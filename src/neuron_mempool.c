@@ -20,6 +20,14 @@
 #include "neuron_device.h"
 #include "neuron_reg_access.h"
 
+/*
+ *  genalloc.h mempool we use doesn't support VA=0; since we set it up such that va==pa for device memory
+ *  allocations, it doesn't work for PA=0. Therefore, we amend address in all interactions with device
+ *  memory pools to set the upper most bit as a workaround.
+ */
+#define GENPOOL_DEVMEM_BASE (0x1ull << 63)
+
+
 int mempool_min_alloc_size = PAGE_SIZE; // always allocate on mmap() boundary
 int mempool_host_memory_size = 32 * 1024 * 1024;
 
@@ -33,8 +41,9 @@ MODULE_PARM_DESC(mempool_host_memory_size, "Host memory to reserve(in bytes)");
 DECLARE_FAULT_ATTR(neuron_fail_mc_alloc);
 #endif
 
-// Limit for using kmalloc
-#define MEMPOOL_KMALLOC_MAX_SIZE (256 * 1024)
+// Upper 16MB is used internally by the firmware, don't use it in
+// the allocation pool
+#define MEMPOOL_CARVEOUT_SIZE 0x1000000 // 16MB
 
 /**
  * mc_insert_node() - Insert a mem chunk to the tree
@@ -88,11 +97,15 @@ void mc_remove_node(struct rb_root *root, struct mem_chunk *mc)
  *
  * Return: 0 if pool is created, a negative error code otherwise.
  */
+
 static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 			      u64 start_addr, size_t pool_size,	u32 dram_channel, u32 dram_region)
 {
 	int ret;
 	int min_alloc_size = mempool_min_alloc_size;
+	// refuse to load with invalid memory alloc configuration
+	BUG_ON(mempool_min_alloc_size < PAGE_SIZE);
+	BUG_ON((mempool_min_alloc_size % PAGE_SIZE) != 0);
 
 	memset(mp, 0, sizeof(*mp));
 
@@ -110,27 +123,17 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
 
-	// 0 is special since we cant differentiate failure(NULL) in gen_pool_alloc().
-	// so avoid starting at 0 by sacrificing first chunk.
-	if (start_addr == 0) {
-		// For mmap the offset has to be page size. so start at page size boundary.
-		if (min_alloc_size % PAGE_SIZE != 0) {
-			start_addr = ((min_alloc_size/PAGE_SIZE) + 1) * PAGE_SIZE;
-			pool_size -= start_addr;
-		} else {
-			start_addr = min_alloc_size;
-			pool_size -= min_alloc_size;
-		}
-	}
-	ret = gen_pool_add_virt(mp->gen_pool, start_addr, start_addr, pool_size, -1);
+	ret = gen_pool_add_virt(mp->gen_pool, start_addr | GENPOOL_DEVMEM_BASE, start_addr, pool_size, -1);
 	if (ret) {
 		gen_pool_destroy(mp->gen_pool);
 		return ret;
 	}
 
+
 	snprintf(mp->name, sizeof(mp->name), "device mempool [%d:%d]", dram_channel, dram_region);
 	mp->region_size = pool_size;
 	mp->initialized = 1;
+
 
 	return 0;
 }
@@ -269,8 +272,12 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 		device_dram_size[1] = P_0_DRAM_1_SIZE;
 		mpset->mp_device_num_regions = 4;
 	} else {
-		mpset->num_channels = 0;
-		mpset->mp_device_num_regions = 0;
+		mpset->num_channels = V2_MAX_DRAM_CHANNELS;
+		device_dram_addr[0] = V2_HBM_0_BASE;
+		device_dram_addr[1] = V2_HBM_1_BASE;
+		device_dram_size[0] = V2_HBM_0_SIZE;
+		device_dram_size[1] = V2_HBM_1_SIZE;
+		mpset->mp_device_num_regions = 1;
 	}
 
 	for (channel = 0; channel < mpset->num_channels; channel++) {
@@ -280,12 +287,43 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 			ret = mp_init_device_mem(&mpset->mp_device[channel][region], mpset, addr,
 									 region_sz, channel, region);
 			if (ret) {
-				pr_err("neuron: mpset device init failed %d\n", ret);
+				pr_err("mpset device init failed %d\n", ret);
 				goto fail;
 			}
 		}
 	}
 
+	/*
+	*  Block carve out regions: Upper 16 MB is used internally by firmware for trainuim
+	*
+	*  Ideally we would carve out by simply changing the start address of the chunk;
+	*  however, that breaks aligned allocation in 4.x kernel versions (fixed in 5.x).
+	*  Fix here:
+	*     commit 52fbf1134d479234d7e64ba9dcbaea23405f229e
+	*     Author: Alexey Skidanov <alexey.skidanov@intel.com>
+	*     Date:   Thu Jan 3 15:26:44 2019 -0800
+	*
+	*     lib/genalloc.c: fix allocation of aligned buffer from non-aligned chunk
+	*/
+	for (channel = 0; channel < mpset->num_channels; channel++) {
+		for (region = 0; region < mpset->mp_device_num_regions; region++) {
+			const dma_addr_t start_addr = device_dram_addr[channel] + (region * region_sz);
+			if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+				continue;
+			struct mem_chunk *mc = NULL;
+			ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, MEM_LOC_DEVICE,
+				       channel, region, 0, &mc);
+			if (ret) {
+				pr_err("failed to allocate hbm carevout region: ret=%d\n", ret);
+				goto fail;
+			}
+			if (mc->pa != start_addr) {
+				pr_err("carve out mc not offset 0!");
+				mc_free(&mc);
+				goto fail;
+			}
+		}
+	}
 	return 0;
 
 fail:
@@ -311,7 +349,7 @@ static int mpset_print_lifespan_list(const char *name, struct list_head *head)
 	pr_err("%s has unfreed mcs:\n", name);
 	list_for_each_safe (this, next, head) {
 		struct mem_chunk *mc = list_entry(this, struct mem_chunk, lifespan_list);
-		pr_err("mc:%px ref_count:%d pid:%d caller:%pf location:%d size:%d\n", mc, mc->ref_count, mc->pid, mc->caller_pc, mc->mem_location, mc->size);
+		pr_err("mc:%px ref_count:%d pid:%d caller:%pf location:%d size:%llu\n", mc, mc->ref_count, mc->pid, mc->caller_pc, mc->mem_location, mc->size);
 		count++;
 	}
 	return count;
@@ -362,7 +400,7 @@ int mpset_constructor(struct mempool_set *mpset, void *pdev, struct neuron_devic
 		ret = mp_init_hrm_pool(&mpset->mp_hrm[host_page_index], mpset, page_size,
 				       page_count);
 		if (ret) {
-			pr_err("neuron: mpset host init failed %d\n", ret);
+			pr_err("mpset host init failed %d\n", ret);
 			goto fail;
 		}
 		host_allocated_size += mpset->mp_hrm[host_page_index].region_size;
@@ -499,7 +537,7 @@ void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
 }
 
 
-static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size, u32 align,
+static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
 	     struct mem_chunk **result)
 {
@@ -510,6 +548,9 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 
 	*result = NULL;
 
+	// Round the size up to a full page or multiple pages.
+	// Make mmap() happy with any memory allocated via this function.
+	size = roundup(size, PAGE_SIZE);
 	if (channel >= V1_MAX_DRAM_CHANNELS)
 		return -EINVAL;
 #ifdef CONFIG_FAULT_INJECTION
@@ -532,22 +573,10 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 			pr_err("Allocating aligned host memory not supported");
 			return -EINVAL;
 		}
-		// kmalloc uses compound pages which cant be mmmaped(), to avoid applications knowing
-		// about kmalloc vs dma_alloc, use dma_alloc() for any PAGE_SIZE allocations
-		// since mmap() can make request only of multiple of PAGE_SIZE.
-		// TODO - get rid of kmalloc() and always use dma_alloc()
-		if (size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(size, PAGE_SIZE)) {
-			dma_addr_t addr;
-			mc->va = dma_alloc_coherent(mpset->pdev, size, &addr,
-						    GFP_KERNEL | GFP_DMA32);
-			mc->pa = (phys_addr_t)addr;
-		} else {
-			mc->va = (void *)kmalloc(size, GFP_KERNEL);
-			if (mc->va) {
-				memset(mc->va, 0, size);
-				mc->pa = virt_to_phys(mc->va);
-			}
-		}
+		dma_addr_t addr;
+		mc->va = dma_alloc_coherent(mpset->pdev, size, &addr,
+				GFP_KERNEL | GFP_DMA32);
+		mc->pa = (phys_addr_t)addr;
 		// try to fill from reserved host memory
 		if (mc->va == NULL) {
 			int i;
@@ -568,23 +597,35 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	} else {
 		mp = &mpset->mp_device[channel][region];
 		if (!mp->gen_pool) {
-			pr_err("neuron: mempool not initialized\n");
+			pr_err("mempool not initialized\n");
 			ret = -ENOMEM;
 			goto exit;
 		}
 
 		if (align) {
+
+			if (align > INT_MAX) {
+				pr_err("alignment value not supported %llu\n", align);
+				ret = -EINVAL;
+				goto exit;
+			}
 			struct genpool_data_align align_data = { .align = align};
 			mc->va = (void *)gen_pool_alloc_algo(mp->gen_pool, size,
 							     gen_pool_first_fit_align, &align_data);
 			mc->pa = gen_pool_virt_to_phys(mp->gen_pool, (unsigned long) mc->va);
+			if (((align-1) & mc->pa) != 0){
+				pr_err("internal error, aligned memory allocation failed!\n");
+				gen_pool_free(mp->gen_pool, (unsigned long)mc->va, size);
+				ret = -ENOMEM;
+				goto exit;
+			}
 		} else {
 			mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
 		}
 		if (mc->va) {
 			mp->allocated_size += size;
 		} else {
-			pr_info("%s total %ld occupied %ld needed %d available %ld\n", mp->name,
+			pr_info("%s total %ld occupied %ld needed %lld available %ld\n", mp->name,
 				mp->region_size, mp->allocated_size, size,
 				gen_pool_avail(mp->gen_pool));
 			pr_info("device regions %d occupied %lld\n", mpset->mp_device_num_regions,
@@ -629,13 +670,13 @@ exit:
 	return ret;
 }
 
-int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
+int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
 	     struct mem_chunk **result) {
 	return mc_alloc_internal(nd, lifespan, size, 0, location, channel, region, nc_id, result);
 }
 
-int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size, u32 align,
+int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
 		   enum mem_location location, u32 channel, u32 region, u32 nc_id,
 		   struct mem_chunk **result) {
 	return mc_alloc_internal(nd, lifespan, size, align, location, channel, region, nc_id, result);
@@ -672,11 +713,8 @@ void mc_free(struct mem_chunk **mcp)
 		if (mc->mp) {
 			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
 			mc->mp->allocated_size -= mc->size;
-		} else if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
-			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~PCI_HOST_BASE(nd));
 		} else {
-			kfree(mc->va);
-			mc->va = NULL;
+			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~PCI_HOST_BASE(nd));
 		}
 		mpset->host_mem_size -= mc->size;
 	} else if (mc->mem_location == MEM_LOC_DEVICE) {

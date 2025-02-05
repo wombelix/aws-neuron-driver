@@ -36,7 +36,7 @@ static inline int reg_read32_array(void **addr, u32 *value, u32 num_values)
 		return 0;
 	} else {
 		int ret;
-		ret = fw_io_read_csr_array(addr, value, num_values);
+		ret = fw_io_read_csr_array(addr, value, num_values, false);
 		if (ret != 0) {
 			pr_err("register read failure while reading %p\n", addr);
 			dump_stack();

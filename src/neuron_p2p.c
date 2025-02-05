@@ -10,6 +10,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/device.h>
+#include <linux/log2.h>
 
 #include "neuron_device.h"
 #include "neuron_mmap.h"
@@ -47,31 +48,43 @@ int neuron_p2p_register_va(u64 virtual_address, u64 length, struct neuron_p2p_va
 	int device_index;
 	struct neuron_p2p_va_info *vainfo;
 	u64 pa = 0;
-	u32 entries;
-	int i;
-	int pg_size = PAGE_SIZE;
+	u32 entries = 1; // multiple entries support is for future expansion
+	u32 page_size;
 
 	pa = neuron_p2p_register_and_get_pa((void *)virtual_address, length, free_callback, data,
 				    &device_index);
 	if (!pa) {
-		pr_err("Could not find the physical address va:0x%llx, pid:%d", virtual_address, task_tgid_nr(current));
+		// this could be a legitimate case, EFA might try registering PA with different
+		// drivers, so some PAs might not be ours
+		pr_debug("Could not find the physical address va:0x%llx, pid:%d", virtual_address, task_tgid_nr(current));
 		return -EINVAL;
 	}
 
-	entries = DIV_ROUND_UP(length + (virtual_address & (pg_size - 1)), pg_size);
-	vainfo = kzalloc(sizeof(struct neuron_p2p_va_info) + (entries * sizeof(u64)), GFP_KERNEL);
+	// Memory allocated & mapped using driver are always PAGE_SIZE aligned. Make sure the pa we get
+	// is page size aligned
+	if (pa % PAGE_SIZE != 0) {
+		pr_err("physical address is not %ld aligned for pid:%d", PAGE_SIZE, task_tgid_nr(current));
+		return -EINVAL;
+	}
+
+	//in the current implementation the device memory is always contiguous and is mapped to a single entry, mutiple entries are supported and could be used in the future
+	vainfo = kzalloc(sizeof(struct neuron_p2p_va_info) + (sizeof(struct neuron_p2p_page_info) * entries), GFP_KERNEL);
 	if (!vainfo) {
         pr_err("Could not allocate memory for va info for va:0x%llx, pid:%d", virtual_address, task_tgid_nr(current));
 		return -ENOMEM;
     }
 
-	vainfo->size = NEURON_P2P_PAGE_SIZE_4KB;
-	for (i = 0; i < entries; i++) {
-		vainfo->physical_address[i] = pa + (i * pg_size);
-	}
+	// TODO: First step is to use just page size as default. In the subsequent commit will try to optimize.
+	// Page size should be chosen such that we can have the largest page size possible and the
+	// smallest page count
+	page_size = PAGE_SIZE;
+	vainfo->size = length;
+	vainfo->page_info[0].physical_address = pa; //just set to pa, since pa is already page size aligned.
+	vainfo->page_info[0].page_count = length/page_size;
 	vainfo->device_index = device_index;
-	vainfo->entries = entries; 
+	vainfo->entries = 1;
 	vainfo->virtual_address = (void *)virtual_address;
+	vainfo->shift_page_size = fls(page_size) - 1;
 	*va_info = vainfo;
 
 	return 0;

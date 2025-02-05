@@ -83,10 +83,17 @@ static int udma_set_defaults(struct udma *udma)
 		(UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_RESET_VALUE << UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_SHIFT);
 	reg_write32(&udma->udma_regs_m2s->m2s_rd.data_cfg, value);
 
-	value = (128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DATA_RD_SHIFT) |
-		(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DESC_RD_SHIFT) |
-		(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_SHIFT) |
-		(32 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_DATA_WR_SHIFT);
+	if (udma->reserve_max_read_axi_id) {
+		value = (111 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DATA_RD_SHIFT) |
+			(8 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DESC_RD_SHIFT) |
+			(0 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_SHIFT) |
+			(0 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_DATA_WR_SHIFT);
+	} else {
+		value = (128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DATA_RD_SHIFT) |
+			(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DESC_RD_SHIFT) |
+			(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_SHIFT) |
+			(32 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_DATA_WR_SHIFT);
+	}
 	/* Set M2S max number of outstanding transactions */
 	reg_write32(&udma->udma_regs_m2s->axi_m2s.ostand_cfg, value);
 
@@ -120,7 +127,8 @@ static int udma_set_defaults(struct udma *udma)
 	}
 
 	/* Set S2M max number of outstanding transactions */
-	value = (128 << UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_SHIFT) |
+	const u32 s2m_ostand_rd_max_desc = (udma->reserve_max_read_axi_id) ? 8 : 128;
+	value = (s2m_ostand_rd_max_desc << UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_SHIFT) |
             (0x40 << UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_STREAM_ACK_SHIFT);
 	reg_write32(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_rd, value);
 
@@ -248,6 +256,7 @@ static int udma_handle_init_aux(struct udma *udma, struct udma_params *udma_para
 	/* note, V1 hardware uses DMA rev4, no need to support other version */
 	udma->rev_id = UDMA_REV_ID_4;
 	udma->num_of_queues_max = DMA_MAX_Q_V4;
+	udma->reserve_max_read_axi_id = udma_params->reserve_max_read_axi_id;
 
 	if (udma_params->num_of_queues == UDMA_NUM_QUEUES_MAX)
 		udma->num_of_queues = udma->num_of_queues_max;
@@ -310,9 +319,8 @@ int udma_init(struct udma *udma, struct udma_params *udma_params)
 
 	/* initialize configuration registers to correct values */
 	ret = udma_set_defaults(udma);
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 
 	/* unmask error interrupts */
 	udma_iofic_m2s_error_ints_unmask(udma);
@@ -323,9 +331,8 @@ int udma_init(struct udma *udma, struct udma_params *udma_params)
 	      (udma_params->cdesc_size >> 2) << UDMA_S2M_COMP_CFG_1C_DESC_SIZE_SHIFT; /* the register expects it to be in words */
 	reg_write32(&udma->udma_regs_s2m->s2m_comp.cfg_1c, val);
 	ret = udma_cache_defaults(udma);
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 
 	pr_debug("%s initialized. base m2s: %p, s2m: %p\n", udma->name, udma->udma_regs_m2s,
 		 udma->udma_regs_s2m);

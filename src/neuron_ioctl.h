@@ -22,6 +22,16 @@ struct neuron_ioctl_mem_alloc {
 	__u64 *mem_handle; // [out] Allocated memory handle would stored here.
 };
 
+struct neuron_ioctl_mem_alloc_v2 {
+	__u64 size; // [in] Allocation size
+	__u64 align; // [in] alignment
+	__u32 host_memory; // [in] If true allocates from host memory; else allocates from device memory
+	__u32 dram_channel; // [in] DRAM channel in device memory
+	__u32 dram_region; // [in] DRAM region in device memory
+	__u32 nc_id; // [in] NeuronCore id(valid only if location is device)
+	__u64 *mem_handle; // [out] Allocated memory handle would stored here.
+};
+
 struct neuron_ioctl_device_init {
 	/* Splits DRAM in the device into smaller regions.
 	 * This improves performance of DDR by allowing parallel DMA using different regions.
@@ -315,6 +325,8 @@ struct neuron_ioctl_device_info {
 
 /** Allocated memory and return a memory_handle. */
 #define NEURON_IOCTL_MEM_ALLOC _IOR(NEURON_IOCTL_BASE, 21, struct neuron_ioctl_mem_alloc *)
+#define NEURON_IOCTL_MEM_ALLOC_V2 _IOR(NEURON_IOCTL_BASE, 102, struct neuron_ioctl_mem_alloc_v2 *)
+
 /** Free given memory_handle. */
 #define NEURON_IOCTL_MEM_FREE _IOR(NEURON_IOCTL_BASE, 22, struct neuron_ioctl_mem_free *)
 /** Copy data between two memory handles. (using DMA) */

@@ -51,14 +51,22 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	u64 i;
 
 	// One descriptor takes ~4 usec to transfer (64K at 16G/sec) -  wait 100x longer
-	u64 wait = 4 * count * 100;
+	u64 est_wait_time = 4 * count;
+	u64 first_wait_time = (8 * est_wait_time) / 10; // first wait will be for 80% of est wait time. This will reduce the number of times we need to poll for completion
+	u64 wait = (est_wait_time * 100) - first_wait_time;
 
+	if (narch_get_arch() == NEURON_ARCH_TRN) {
+		// for some reason getting a timeout when staging some of
+		// BERT training graphs.  Need to investigate: https://t.corp.amazon.com/P55240908
+		// In the meantime make the timeout 100x the original
+		wait *= 100;
+	}
 	if (narch_is_qemu())
 		wait *= 10 * 1000;
 	else if (narch_is_emu())
 		wait *= 100 * 1000;
 
-	unsigned long one_loop_sleep = 10; // poll every 10 usecs
+	unsigned long one_loop_sleep = 1; // poll every 1 usecs
 	u64 loop = wait / one_loop_sleep + 1;
 
 	// For h2t ring the memory for completion is allocated at init and so use that
@@ -102,6 +110,7 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 		goto error;
 	}
 #endif
+	udelay(first_wait_time);
 	for (i = 0; i <= loop; i++) {
 		u32 dst_val = READ_ONCE(*dst);
 		// this descriptor is executed, meaning all other have completed
@@ -321,6 +330,8 @@ int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offs
 static bool ndma_is_valid_host_mem_from_nd(u8 nd_index, phys_addr_t pa)
 {
 	struct neuron_device *nd;
+	bool found = false;
+
 	if (nd_index >= MAX_NEURON_DEVICE_COUNT)
 		return false;
 	nd = neuron_pci_get_device(nd_index);
@@ -329,7 +340,11 @@ static bool ndma_is_valid_host_mem_from_nd(u8 nd_index, phys_addr_t pa)
 	if (!npid_is_attached(nd))
 		return false;
 
-	return mpset_search_mc(&nd->mpset, pa) != NULL;
+	read_lock(&nd->mpset.rblock);
+	found = mpset_search_mc(&nd->mpset, pa) != NULL;
+	read_unlock(&nd->mpset.rblock);
+
+	return found;
 }
 
 /** ndma_is_valid_host_mem() - Check whether given PA is valid host memory.
@@ -343,7 +358,6 @@ static bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa)
 	bool found = false;
 	int i;
 
-	read_lock(&nd->mpset.rblock);
 	// common case - check whether the PA is allocated from the current ND
 	found = ndma_is_valid_host_mem_from_nd(nd->device_index, pa);
 	if (found)
@@ -366,7 +380,6 @@ static bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa)
 	}
 
 done:
-	read_unlock(&nd->mpset.rblock);
 	if (!found)
 		pr_err("nd%d:invalid host memory(%#llx) in DMA descriptor\n", nd->device_index, pa);
 	return found;

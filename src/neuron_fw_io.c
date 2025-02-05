@@ -137,8 +137,8 @@ static u32 crc32c(const u8 *data, size_t len)
 // Hardware might take up to 15 seconds in worst case.
 #define FW_IO_RD_TIMEOUT (1000 * 1000 * 15)
 
-int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size,
-			  u8 *resp, u32 resp_size)
+static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size,
+			  u8 *resp, u32 resp_size, bool busy_wait)
 {
 	int ret;
 	const u32 max_req_size = ctx->request_response_size - sizeof(struct fw_io_request);
@@ -176,7 +176,14 @@ int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u
 		resp_seq = READ_ONCE(*fwio_seq);
 		if (resp_seq == ctx->next_seq_num)
 			break;
-		udelay(1000);
+
+		// busy wait on perf critical sections
+		// else we can take our time
+		if (busy_wait == true)
+			udelay(1000);
+		else
+			msleep(1);
+
 	}
 	ret = -1;
 	if (resp_seq != ctx->next_seq_num) {
@@ -195,6 +202,7 @@ int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u
 		ret = 0;
 		goto done;
 	}
+	ctx->fw_io_err_count++;
 	pr_err(KERN_ERR "seq: %u, cmd: %u failed %u\n", ctx->next_seq_num, command_id,
 	       ctx->response->error_code);
 done:
@@ -208,10 +216,11 @@ done:
  * @param addr_in[in]	- List of registers to read
  * @param values[out]	- Buffer to store results.
  * @param num_req[in]	- Total number of registers in the addr_in
+ * @param busy_wait[in] - true if task is performance critical false otherwise.
  *
  * @return 0 on success 1 on error
  */
-int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req)
+int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req, bool busy_wait)
 {
 #ifdef CONFIG_FAULT_INJECTION
 	if (should_fail(&neuron_fail_fwio_read, 1))
@@ -219,7 +228,7 @@ int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req)
 #endif
 
 	return fw_io_execute_request(ctx, FW_IO_CMD_READ, (u8 *)addr_in, sizeof(u64) * num_req,
-				     (u8 *)val_out, sizeof(u32) * num_req);
+				     (u8 *)val_out, sizeof(u32) * num_req, busy_wait);
 }
 
 /** Handle offset to device physical address mapping.
@@ -256,7 +265,7 @@ static int fw_io_register_read_region(struct fw_io_ctx *ctx, void __iomem *regio
 
 // max number of registers can be read in single function call.
 #define MAX_READLESS_READ_REGISTER_COUNT 100
-int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs)
+int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool busy_wait)
 {
 	int i, j;
 	if (num_csrs > MAX_READLESS_READ_REGISTER_COUNT)
@@ -279,7 +288,7 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs)
 				off = ptrs[j] - start;
 				addrs[j] = fwio_read_regions[i].device_physical_address + off;
 			}
-			return fw_io_read(fwio_read_regions[i].ctx, addrs, values, num_csrs);
+			return fw_io_read(fwio_read_regions[i].ctx, addrs, values, num_csrs, busy_wait);
 		}
 	}
 	return -1;
@@ -300,7 +309,7 @@ bool fw_io_is_reset_initiated(void __iomem *bar0)
 	u32 val;
 
 	address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_OFFSET;
-	ret = fw_io_read_csr_array((void **)&address, &val, 1);
+	ret = fw_io_read_csr_array((void **)&address, &val, 1, true);
 	if (ret == 0 && val == 0)
 		return true;
 	return false;
@@ -343,14 +352,14 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size)
 		reg_write32(offset + size_aligned, padded_u32);
 	}
 
-	return fw_io_execute_request(ctx, FW_IO_CMD_POST_TO_CW, data, size, data, size);
+	return fw_io_execute_request(ctx, FW_IO_CMD_POST_TO_CW, data, size, data, size, false);
 }
 
 
 int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_out[],
 			uint32_t num_counters)
 {
-	return fw_io_read(ctx, addr_in, val_out, num_counters);
+	return fw_io_read(ctx, addr_in, val_out, num_counters, false);
 }
 
 int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
@@ -360,6 +369,14 @@ int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
 	} else {
 		return 0;
 	}
+}
+
+u64 fw_io_get_err_count(struct fw_io_ctx *ctx)
+{
+	if (ctx == NULL) {
+		return 0;
+	}
+	return ctx->fw_io_err_count;
 }
 
 // Max size available for each message.
@@ -373,6 +390,7 @@ struct fw_io_ctx *fw_io_setup(int device_index, void __iomem *bar0, u64 bar0_siz
 		pr_err("memory allocation failed\n");
 		return NULL;
 	}
+	ctx->fw_io_err_count = 0;
 	ctx->bar0 = bar0;
 	ctx->next_seq_num = 1;
 	mutex_init(&ctx->lock);

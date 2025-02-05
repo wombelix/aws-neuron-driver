@@ -22,7 +22,7 @@
 
 // Maximum neuron devices supported on a system.
 #define MAX_NEURON_DEVICE_COUNT 16
-#define MAX_NC_PER_DEVICE 4
+#define MAX_NC_PER_DEVICE 4 //for v1 4 and v2 2
 
 #define NC_PER_DEVICE(nd)                                                                          \
 	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE)

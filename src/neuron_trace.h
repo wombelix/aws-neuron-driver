@@ -100,7 +100,7 @@ TRACE_EVENT(dma_desc_copy,
 		__field(void *,	buffer)
 		__field(u32, src_offset)
 		__field(u32, dst_offset)
-		__field(u32, size)
+		__field(u64, size)
 	),
 	TP_fast_assign(
 		__entry->device_index = nd->device_index;
@@ -112,7 +112,7 @@ TRACE_EVENT(dma_desc_copy,
 		__entry->dst_offset = dst_offset;
 		__entry->size = size;
 	),
-	TP_printk("nd%d eng%d q%d type %d src %p src_offset %x dst_offset %x size %x",
+	TP_printk("nd%d eng%d q%d type %d src %p src_offset %x dst_offset %x size %llx",
 		__entry->device_index,
 		__entry->eng_id,
 		__entry->qid,
@@ -184,7 +184,7 @@ TRACE_EVENT(ioctl_mem_alloc,
 		__entry->device_index = nd->device_index;
 		__entry->mc = mc;
 	),
-	TP_printk("nd%d nc%d %s:%llx (%d bytes) channel %d region %d mc %p",
+	TP_printk("nd%d nc%d %s:%llx (%lld bytes) channel %d region %d mc %p",
 		__entry->device_index,
 		__entry->mc->nc_id,
 		__entry->mc->mem_location == MEM_LOC_HOST ? "HOST": "DEVICE",
@@ -206,7 +206,7 @@ TRACE_EVENT(ioctl_mem_free,
 		__entry->device_index = nd->device_index;
 		__entry->mc = mc;
 	),
-	TP_printk("nd%d nc%d %s:%llx (%d bytes) mc %p",
+	TP_printk("nd%d nc%d %s:%llx (%lld bytes) mc %p",
 		__entry->device_index,
 		__entry->mc->nc_id,
 		__entry->mc->mem_location == MEM_LOC_HOST ? "HOST": "DEVICE",
@@ -228,7 +228,7 @@ TRACE_EVENT(ioctl_mem_copy,
 		__entry->src = src;
 		__entry->dst = dst;
 	),
-	TP_printk("nd%d nc%d %s:%#llx (%d bytes) => nc%d %s:%#llx",
+	TP_printk("nd%d nc%d %s:%#llx (%lld bytes) => nc%d %s:%#llx",
 		__entry->device_index,
 		__entry->src->nc_id,
 		__entry->src->mem_location == MEM_LOC_HOST ? "HOST": "DEVICE",

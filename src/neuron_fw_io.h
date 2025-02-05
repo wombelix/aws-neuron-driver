@@ -53,6 +53,8 @@ struct fw_io_ctx {
 	u64 request_addr;
 	u64 response_addr;
 	u32 request_response_size; // for simplicity always use the same buffer size for request and response
+	u64 fw_io_err_count;
+
 	struct mutex lock;
 };
 
@@ -66,10 +68,11 @@ struct fw_io_ctx {
  * @ptrs: Array of register address to read
  * @values: Read values stored here
  * @num_csrs: Number of CSRs to read
+ * @busy_wait: true if task is performance critical false otherwise.
  *
  * Return: 0 if CSR read is successful, a negative error code otherwise.
  */
-int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs);
+int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool busy_wait);
 
 /** Read the list of addresses given in the address list and returns it's values in the value list
  *
@@ -77,10 +80,11 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs);
  * @param addr_in[in]	- List of registers to read
  * @param values[out]	- Buffer to store results.
  * @param num_req[in]	- Total number of registers in the addr_in
+ * @busy_wait - true if task is performance critical false otherwise.
  *
  * @return 0 on success 1 on error
  */
-int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req);
+int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req, bool busy_wait);
 
 
 /**
@@ -181,5 +185,12 @@ int fw_io_device_id_read(void *bar0, u32 *device_id);
  * @param device_id  - output device id
  */
 void fw_io_device_id_write(void *bar0, u32 device_id);
+
+/**
+ * fw_io_get_err_count() - gets the fw io error count
+ * @ctx - FWIO context of the device for which counters are read.
+ * @return  fw io error count on success.
+ */
+u64 fw_io_get_err_count(struct fw_io_ctx *ctx);
 
 #endif

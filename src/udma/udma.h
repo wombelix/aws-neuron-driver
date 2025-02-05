@@ -125,6 +125,7 @@ struct udma_params {
 	u8 num_of_queues; // number of queues used by the UDMA
 	u32 flags;
 	const char *name; /**< caller should not free name*/
+	bool reserve_max_read_axi_id; // a trn1 configuration workaround, see sunda-5328
 };
 
 /* Fordward declaration */
@@ -181,6 +182,7 @@ struct udma {
 	struct udma_q udma_q_s2m[DMA_MAX_Q_MAX]; // Array of UDMA Qs pointers
 	unsigned int rev_id; // UDMA revision ID
 	u32 cdesc_size;
+	bool reserve_max_read_axi_id; // a trn1 configuration workaround, see sunda-5328
 };
 
 /**
@@ -393,11 +395,11 @@ struct udma_ring_ptr {
  * @num_queues: Number of queues
  * @eng_name: Human readable name(for debugging)
  * @disable_phase_bit: If true disables checking phase bit
- *
+ * @reserve_max_read_axi_id: a trn1 configuration workaround, see sunda-5328
  * Return: 0 if initialization is successful, a negative error code otherwise.
  */
 int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_queues, char *eng_name,
-			 int disable_phase_bit, int allowed_desc_per_pkt);
+			 int disable_phase_bit, int allowed_desc_per_pkt, bool reserve_max_read_axi_id);
 
 /**
  * udma_m2m_init_queue() - Initialize a queue in the M2M engine.

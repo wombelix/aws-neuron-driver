@@ -48,7 +48,8 @@ int npid_is_attached(struct neuron_device *nd)
 void npid_print_usage(struct neuron_device *nd)
 {
 	int i;
-	pr_info("nd%d usage:\n", nd->device_index);
+	pr_info("neuron: nd%d usage:\n", nd->device_index);
+	pr_info("current pid: %u\n", task_tgid_nr(current));
 	for (i=0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++) {
 		if (nd->attached_processes[i].pid > 0)
 			pr_info("pid %d open count %d\n",
@@ -74,9 +75,11 @@ bool npid_attach(struct neuron_device *nd)
 		if (nd->attached_processes[i].pid == 0) {
 			nd->attached_processes[i].pid = task_tgid_nr(current);
 			nd->attached_processes[i].open_count = 1; //since the ioctl done after open set to 1
+			pr_info("neuron:npid_attach: pid=%u, slot=%u\n", task_tgid_nr(current), i);
 			return true;
 		}
 	}
+
 	return false;
 }
 
@@ -93,8 +96,10 @@ int npid_detach(struct neuron_device *nd)
 	BUG_ON(nd->attached_processes[slot].open_count == 0);
 	nd->attached_processes[slot].open_count--;
 	// release the process if refcount becomes 0
-	if (nd->attached_processes[slot].open_count == 0)
+	if (nd->attached_processes[slot].open_count == 0) {
+		pr_info("neuron:npid_detach: pid=%u, slot=%u\n", nd->attached_processes[slot].pid, slot);
 		nd->attached_processes[slot].pid = 0;
+	}
 	return nd->attached_processes[slot].open_count;
 }
 

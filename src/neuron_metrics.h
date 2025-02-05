@@ -29,7 +29,7 @@ enum nmetric_constants_type {
 
 enum nmetric_counter_type {
 	NMETRIC_COUNTER_FIRST,
-	NMETRIC_NERR_OK = 0, // inference completed with no errors
+	NMETRIC_NERR_INFER_OK = 0, // inference completed with no errors
 	NMETRIC_NERR_GENERIC_FAIL = 1, // inference completed with a non-specific error
 	NMETRIC_TIMED_OUT = 2,
 	NMETRIC_BAD_INPUT = 3,
@@ -40,6 +40,14 @@ enum nmetric_counter_type {
 	NMETRIC_RT_ERR = 8,
 	NMETRIC_COMPLETED_WITH_ERR = 9,
 	NMETRIC_COMPLETED_WITH_NUMERIC_ERR = 10,
+	NMETRIC_NERR_GENERIC_TPB_ERR = 11,
+	NMETRIC_NERR_RESOURCE = 12,
+	NMETRIC_NERR_RESOURCE_NC = 13,
+	NMETRIC_NERR_QUEUE_FULL = 14,
+	NMETRIC_NERR_INVALID = 15,
+	NMETRIC_NERR_UNSUPPORTED_NEFF = 16,
+	NMETRIC_FW_IO_ERR = 17,
+
 	NMETRIC_COUNTER_COUNT
 };
 

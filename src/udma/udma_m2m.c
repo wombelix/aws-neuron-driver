@@ -148,6 +148,10 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 		pr_err("invalid s2m ring size: %u\n", s2m_ring_size);
 		return -1;
 	}
+	if (s2m_compl_ring != NULL) { // completion ring not supported, see sunda-5328
+		pr_err("Completion ring not supported\n");
+		return -1;
+	}
 	/* either don't use the completion ring or the ring must exist */
 	if (s2m_compl_ring && s2m_compl_ring->ptr == NULL) {
 		pr_err("invalid completion ring\n");
@@ -200,7 +204,7 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 
 /* initialize one DMA engine */
 int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_queues, char *eng_name,
-			 int disable_phase_bit, int max_desc_per_packet)
+			 int disable_phase_bit, int max_desc_per_packet, bool reserve_max_read_axi_id)
 {
 	int ret;
 	struct udma_params params;
@@ -219,6 +223,8 @@ int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_que
 		params.flags |= UDMA_ENG_CFG_FLAGS_DISABLE_ERROR;
 		params.flags |= UDMA_ENG_CFG_FLAGS_DISABLE_ABORT;
 	}
+
+	params.reserve_max_read_axi_id = reserve_max_read_axi_id;
 
 	ret = udma_init(udma, &params);
 	if (ret) {
@@ -345,13 +351,11 @@ int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma
 		size = 0;
 	}
 	ret = udma_q_handle_get(udma, qid, UDMA_TX, &txq);
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 	ret = udma_q_handle_get(udma, qid, UDMA_RX, &rxq);
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 	/* is there enough room and the m2s and s2m rings ? */
 	ndesc = udma_available_get(txq);
 	if (ndesc < 1) {
@@ -388,13 +392,11 @@ int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count
 	}
 
 	ret = udma_q_handle_get(udma, qid, UDMA_TX, &txq);
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 	ret = udma_q_handle_get(udma, qid, UDMA_RX, &rxq);
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 	udma_desc_action_add(rxq, s2m_count);
 	if (m2s_count > 0) {
 		udma_desc_action_add(txq, m2s_count);

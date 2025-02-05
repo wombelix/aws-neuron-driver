@@ -28,7 +28,7 @@ int v1_dma_init(void __iomem *bar0, struct udma *udma, int eng_id)
 	tdma_base[eng_id] = (void __iomem *)bar0 + teng_tdma_base[nc_id] + (eid * P_0_APB_TENG_0_TDMA_0_SIZE);
 
 	snprintf(udma_name, UDMA_INSTANCE_NAME_LEN, "UDMA_ENG_%d", eng_id);
-	ret = udma_m2m_init_engine(udma, udma_base[eng_id], DMA_MAX_Q_MAX, udma_name, 0, V1_ALLOWED_DESC_PER_PACKET);
+	ret = udma_m2m_init_engine(udma, udma_base[eng_id], DMA_MAX_Q_MAX, udma_name, 0, V1_ALLOWED_DESC_PER_PACKET, false);
 	if (ret) {
 		pr_err("UDMA ENG:%d init failed\n", eng_id);
 		goto done;

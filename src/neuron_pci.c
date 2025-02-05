@@ -50,7 +50,9 @@ static struct pci_device_id neuron_pci_dev_ids[] = {
 #define TRN_APB_BAR_QEMU 2
 #define TRN_APB_BAR_EMU 0
 #define TRN_APB_BAR 0
-#define TRN_BAR4 4
+
+/* device memory is BAR4 */
+#define BAR4 4
 
 // some old kernels do not have pci_info defined.
 #ifndef pci_info
@@ -254,14 +256,33 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		nd->npdev.bar2_size = pci_resource_len(dev, INF_AXI_BAR);
 	}
 
+	// map bar4 for device memory.
+	ret = pci_request_region(dev, BAR4, "BAR4");
+	if (ret == 0) {
+		nd->npdev.bar4_pa = pci_resource_start(dev, BAR4);
+		if (nd->npdev.bar4_pa) {
+			nd->npdev.bar4 = pci_iomap(dev, BAR4, pci_resource_len(dev, BAR4));
+			nd->npdev.bar4_size = pci_resource_len(dev, BAR4);
+		}
+	}
+
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 	nd->device_index = atomic_fetch_add(1, &device_count);
 #else
 	nd->device_index = atomic_add_return(1, &device_count) - 1;
-#endif
+#endif 
 	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
+		nd->device_index = 0;
 		ret = fw_io_device_id_read(nd->npdev.bar0, &nd->device_index);
 		BUG_ON(ret != 0);
+		// TODO temporary for the bringup, remove
+		printk("** BDF: %2.2x:%2.2x.%x => nd[%d]\n", dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), nd->device_index);
+		if (nd->device_index < 0) {
+			pr_err("Invalid device index %u", nd->device_index);
+			ret = -ENODEV;
+			goto fail_bar2_resource;
+		}
 	}
 
 	ret = neuron_pci_device_init(nd);
@@ -336,12 +357,21 @@ static void neuron_pci_remove(struct pci_dev *dev)
 	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
 		pci_release_region(dev, INF_AXI_BAR);
 
-	if (narch_get_arch() == NEURON_ARCH_TRN)
-		pci_release_region(dev, TRN_BAR4);
+	pci_release_region(dev, BAR4);
 
 	pci_disable_device(dev);
 
 	neuron_pci_device_close(nd);
+
+	if (nd->npdev.bar0) {
+		pci_iounmap(dev, nd->npdev.bar0);
+	}
+	if (nd->npdev.bar2) {
+		pci_iounmap(dev, nd->npdev.bar2);
+	}
+	if (nd->npdev.bar4) {
+		pci_iounmap(dev, nd->npdev.bar4);
+	}
 
 	kfree(nd);
 }
