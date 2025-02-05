@@ -272,6 +272,12 @@ struct neuron_ioctl_device_basic_info {
 	DEVICE_BASIC_INFO
 };
 
+struct neuron_ioctl_device_bdf {
+	__u32 bus_number;
+	__u8 slot;
+	__u8 func;
+};
+
 #define NEURON_IOCTL_MAX_CONNECTED_DEVICES 8
 #define NEURON_MAX_BARS 2
 struct neuron_ioctl_device_info {
@@ -391,5 +397,8 @@ struct neuron_ioctl_device_info {
 
 /** Returns basic device information */
 #define NEURON_IOCTL_DEVICE_BASIC_INFO _IOW(NEURON_IOCTL_BASE, 100, struct neuron_ioctl_device_basic_info *)
+
+/** Returns pci device information */
+#define NEURON_IOCTL_DEVICE_BDF _IOR(NEURON_IOCTL_BASE, 101, struct neuron_ioctl_device_bdf *)
 
 #endif

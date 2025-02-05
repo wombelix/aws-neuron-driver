@@ -870,6 +870,15 @@ static long ncdev_device_basic_info(void *param)
 	return copy_to_user(param, &result, sizeof(result));
 }
 
+static long ncdev_device_bdf(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_device_bdf result;
+	result.bus_number = nd->pdev->bus->number;
+	result.slot = PCI_SLOT(nd->pdev->devfn);
+	result.func = PCI_FUNC(nd->pdev->devfn);
+	return copy_to_user(param, &result, sizeof(result));
+}
+
 /* only one process can do discovery at a time */
 static DEFINE_MUTEX(ncdev_discovery_lock);
 static long ncdev_device_info(struct neuron_device *nd, void *param)
@@ -1333,6 +1342,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_crwl_writer_enter(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_CRWL_WRITER_DOWNGRADE) {
 		return ncdev_crwl_writer_downgrade(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_DEVICE_BDF) {
+		return ncdev_device_bdf(nd, (void*)param);
 	}
 	// B/W compatibility
 	return ncdev_misc_ioctl(filep, cmd, param);
