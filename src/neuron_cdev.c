@@ -15,6 +15,8 @@
 #include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/pci.h>
+#include <linux/delay.h>
+#include <linux/module.h>
 
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
@@ -36,6 +38,10 @@ static dev_t neuron_dev;
 static int major;
 static struct class *neuron_dev_class;
 
+int process_exit_sleep = 1000;
+module_param(process_exit_sleep, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(process_exit_sleep, "How long to sleep(in milliseconds) when process exits");
+
 /* one device node per device */
 #define NEURON_MAX_DEV_NODES MAX_NEURON_DEVICE_COUNT
 
@@ -48,6 +54,10 @@ struct ncdev {
 
 /* char device nodes created for each device. */
 static struct ncdev devnodes[NEURON_MAX_DEV_NODES];
+static struct ncdev devnode_misc;
+
+/* minor num for device node for misc IOCTLs */
+#define MINOR_NUM_MISC (0xFF)
 
 static u64 ncdev_mem_chunk_to_mem_handle(struct mem_chunk *mc)
 {
@@ -1317,16 +1327,22 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_crwl_writer_enter(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_CRWL_WRITER_DOWNGRADE) {
 		return ncdev_crwl_writer_downgrade(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
+	} else {
+		pr_err("invalid IOCTL %d\n", cmd);
+		return -EINVAL;
+	}
+}
+
+long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
+	if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
 		return ncdev_crwl_nc_range_mark((void *)param);
 	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) {
 		return ncdev_crwl_nc_range_unmark((void *)param);
 	} else if (cmd == NEURON_IOCTL_COMPATIBLE_VERSION) {
 		return ncdev_compatible_version((void*)param);
-	} else {
-		pr_err("invalid IOCTL %d\n", cmd);
-		return -EINVAL;
 	}
+	pr_err("invalid misc IOCTL %d\n", cmd);
+	return -EINVAL;
 }
 
 /* Only one process can take ownership of a device. */
@@ -1339,10 +1355,6 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	struct neuron_device *nd;
 
 	dev = &devnodes[iminor(inode)];
-	if (!dev) {
-		pr_err("invalid device %d\n", iminor(inode));
-		return -ENODEV;
-	}
 	nd = dev->ndev;
 
 	// wait for reset to complete.
@@ -1380,6 +1392,10 @@ static int ncdev_close(struct inode *inode, struct file *filep)
 
 	// if the current process is going away then cleanup per process state
 	if (npid_is_attached(nd) == 1) {
+		// to any pending inflight DMA corrupting the memory, sleep few seconds.
+		// TODO - to avoid arbitrary amount of sleep, track per process DMA eng usage and
+		//        disable the engines when process dies.
+		msleep(process_exit_sleep);
 		ncrwl_release_current_process(nd);
 		neuron_ds_release_pid(&nd->datastore, task_tgid_nr(current));
 		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_CUR_PROCESS);
@@ -1394,6 +1410,13 @@ static int ncdev_close(struct inode *inode, struct file *filep)
 
 	mutex_unlock(&ncdev_device_lock);
 
+	return 0;
+}
+
+static int ncdev_misc_close(struct inode *inode, struct file *filep)
+{
+	// Clear all NCs used by the closing process
+	ncrwl_nc_range_unmark(~0);
 	return 0;
 }
 
@@ -1421,30 +1444,30 @@ static struct file_operations ncdev_fops = {
 	.mmap = ncdev_mmap,
 };
 
-#define NEURON_MAX_DEV_NAME 32
-int ncdev_create_device_node(struct neuron_device *ndev)
+static struct file_operations ncdev_misc_fops = {
+	.owner = THIS_MODULE,
+	.release = ncdev_misc_close,
+	.unlocked_ioctl = ncdev_misc_ioctl,
+};
+
+static int ncdev_init_device_node(struct ncdev *devnode, const char *dev_name, int minor,
+				  struct file_operations *fops, struct neuron_device *ndev)
 {
-	int ret, minor = ndev->device_index;
+	int ret;
 	dev_t devno;
 	struct device *device = NULL;
-	struct cdev *cdev = &devnodes[minor].cdev;
-	char dev_name[NEURON_MAX_DEV_NAME];
-
-	snprintf(dev_name, sizeof(dev_name), "neuron%d", minor);
-	devnodes[minor].minor = minor;
+	struct cdev *cdev = &devnode->cdev;
 
 	devno = MKDEV(major, minor);
-	cdev_init(cdev, &ncdev_fops);
+	cdev_init(cdev, fops);
 	cdev->owner = THIS_MODULE;
 
 	/* register cdev */
 	ret = cdev_add(cdev, devno, 1);
 	if (ret < 0) {
 		pr_err("failed to register character device %s\n", dev_name);
-		return -1;
+		return ret;
 	}
-
-	devnodes[minor].ndev = ndev;
 
 	device = device_create(neuron_dev_class, NULL, /* no parent device */
 			       devno, NULL, /* no additional data */
@@ -1458,22 +1481,55 @@ int ncdev_create_device_node(struct neuron_device *ndev)
 		return ret;
 	}
 
+	devnode->minor = minor;
+	devnode->ndev = ndev;
+
+	return 0;
+}
+
+#define NEURON_MAX_DEV_NAME 32
+int ncdev_create_device_node(struct neuron_device *ndev)
+{
+	int ret, minor = ndev->device_index;
+	char dev_name[NEURON_MAX_DEV_NAME];
+	snprintf(dev_name, sizeof(dev_name), "neuron%d", minor);
+
+	ret = ncdev_init_device_node(&devnodes[minor], dev_name, minor, &ncdev_fops, ndev);
+	if (ret)
+		return ret;
+
 	ndev->ncdev = &devnodes[minor];
+	return 0;
+}
+
+int ncdev_create_misc_node(void)
+{
+	return ncdev_init_device_node(&devnode_misc, "neuron", MINOR_NUM_MISC,
+				      &ncdev_misc_fops, NULL);
+}
+
+static int ncdev_remove_device_node(struct ncdev *devnode)
+{
+	int minor;
+	dev_t devno;
+
+	minor = devnode->minor;
+	devno = MKDEV(major, minor);
+	device_destroy(neuron_dev_class, devno);
+	cdev_del(&devnode->cdev);
+	memset(devnode, 0, sizeof(struct ncdev));
+
 	return 0;
 }
 
 int ncdev_delete_device_node(struct neuron_device *ndev)
 {
-	int minor;
-	dev_t devno;
+	return ncdev_remove_device_node(&devnodes[ndev->device_index]);;
+}
 
-	minor = devnodes[ndev->device_index].minor;
-	devno = MKDEV(major, minor);
-	device_destroy(neuron_dev_class, devno);
-	cdev_del(&devnodes[minor].cdev);
-	memset(&devnodes[ndev->device_index], 0, sizeof(devnodes[0]));
-
-	return 0;
+int ncdev_delete_misc_node(void)
+{
+	return ncdev_remove_device_node(&devnode_misc);
 }
 
 static void ncdev_cleanup(void)
@@ -1484,6 +1540,7 @@ static void ncdev_cleanup(void)
 			continue;
 		ncdev_delete_device_node(devnodes[i].ndev);
 	}
+	ncdev_delete_misc_node();
 
 	if (neuron_dev_class) {
 		class_destroy(neuron_dev_class);

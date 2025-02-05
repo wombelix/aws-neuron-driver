@@ -312,13 +312,13 @@ struct neuron_ioctl_device_info {
 #define NEURON_IOCTL_MEM_GET_PA _IOR(NEURON_IOCTL_BASE, 25, struct neuron_ioctl_mem_get_pa *)
 #define NEURON_IOCTL_PROGRAM_ENGINE _IOWR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_program_engine *)
 /** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
-#define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_mem_get_info *)
+#define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_mem_get_info *)
 /** Meset zeros on the hanlde */
-#define NEURON_IOCTL_MEMSET _IOR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_memset *)
+#define NEURON_IOCTL_MEMSET _IOR(NEURON_IOCTL_BASE, 28, struct neuron_ioctl_memset *)
 /** Returns information of given memory_handle such as PA and mmap offset and size.
  *  Application can use this info to generate DMA descriptors or mmap memory.
  */
-#define NEURON_IOCTL_MEM_GET_EXTENDED_INFO _IOR(NEURON_IOCTL_BASE, 28, struct neuron_ioctl_mem_get_extended_info *)
+#define NEURON_IOCTL_MEM_GET_EXTENDED_INFO _IOR(NEURON_IOCTL_BASE, 29, struct neuron_ioctl_mem_get_extended_info *)
 
 
 /** Deprecated - Initialize DMA engine. */

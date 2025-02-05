@@ -240,8 +240,6 @@ void ncrwl_release_current_process(struct neuron_device *nd)
 {
 	struct neuron_crwl *crwl;
 	int nc_index;
-	volatile long unsigned int free_map;
-	u64 nc_mask;
 
 	for (nc_index = 0; nc_index < MAX_NC_PER_DEVICE; nc_index++) {
 		crwl = &nd->crwl[nc_index];
@@ -254,9 +252,4 @@ void ncrwl_release_current_process(struct neuron_device *nd)
 		}
 		mutex_unlock(&crwl->lock);
 	}
-
-	// free all NCs range acquired by this processs
-	nc_mask = (1 << NC_PER_DEVICE(nd)) - 1;
-	free_map = (nc_mask << (nd->device_index * NC_PER_DEVICE(nd)));
-	ncrwl_nc_range_unmark(free_map);
 }

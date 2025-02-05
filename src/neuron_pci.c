@@ -61,7 +61,9 @@ static struct pci_device_id neuron_pci_dev_ids[] = {
 static atomic_t device_count = ATOMIC_INIT(0);
 
 extern int ncdev_create_device_node(struct neuron_device *ndev);
+extern int ncdev_create_misc_node(void);
 extern int ncdev_delete_device_node(struct neuron_device *ndev);
+extern int ncdev_delete_misc_node(void);
 extern void ndmar_preinit(struct neuron_device *nd);
 
 static struct neuron_device *neuron_devices[MAX_NEURON_DEVICE_COUNT] = { 0 };
@@ -130,6 +132,7 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 		pci_info(nd->pdev, "create device node failed\n");
 		goto fail_chardev;
 	}
+
 	return 0;
 
 fail_chardev:
@@ -353,8 +356,7 @@ int neuron_pci_module_init(void)
 		pr_err("Failed to register neuron inf driver %d\n", ret);
 		return ret;
 	}
-
-	return 0;
+	return ncdev_create_misc_node();
 }
 
 void neuron_pci_module_exit(void)
