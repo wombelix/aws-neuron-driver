@@ -32,10 +32,12 @@ struct udma_m2s {
 	u32 state;
 	/* [0x4] CPU request to change DMA state */
 	u32 change_state;
-	u32 reserved0[19];
+	u32 reserved0;
+	u32 err_log_mask;
+	u32 reserved1[17];
 	/* [0x54] M2S packet length configuration */
 	u32 cfg_len;
-	u32 reserved1[42];
+	u32 reserved2[42];
 };
 
 struct udma_m2s_rd {
@@ -265,10 +267,12 @@ struct udma_s2m {
 	u32 state;
 	/* [0x4] CPU request to change DMA state */
 	u32 change_state;
-	u32 reserved0[18];
+	u32 reserved0;
+	u32 err_log_mask;
+	u32 reserved1[16];
 	/* [0x50] Stream interface configuration */
 	u32 stream_cfg;
-	u32 reserved1[43];
+	u32 reserved2[43];
 };
 
 struct udma_s2m_rd {
@@ -417,6 +421,17 @@ struct udma_s2m_regs_v4 {
 /* Stop all internal engines */
 #define UDMA_M2S_CHANGE_STATE_ABORT (1 << 2)
 
+/* Ring ID m2s error */
+#define UDMA_M2S_ERR_LOG_MASK_PREF_RING_ID (1 << 17)
+/* Ring ID s2m error */
+#define UDMA_S2M_ERR_LOG_MASK_PREF_RING_ID (1 << 11)
+
+/* Interrupt controller level ring id m2s error */
+#define INT_CONTROL_GRP_UDMA_M2S_PREF_RING_ID (1 << 11)
+/* Interrupt controller level ring id s2m error */
+#define INT_CONTROL_GRP_UDMA_S2M_PREF_RING_ID (1 << 2)
+
+
 struct iofic_grp_ctrl {
 	/* [0x0] Interrupt Cause Register */
 	u32 int_cause_grp;
@@ -445,7 +460,7 @@ struct iofic_grp_ctrl {
 };
 
 union iofic_regs {
-	struct iofic_grp_ctrl ctrl[0];
+	struct iofic_grp_ctrl ctrl[16];
 	u32 reserved0[0x400 >> 2];
 };
 

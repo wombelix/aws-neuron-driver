@@ -18,6 +18,8 @@
 #include "putils.h"
 #include "tdma.h"
 
+#define V1_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 120)
+
 struct neuron_dm_special_mmap_ent dm_mmap_special_v1[] = {
 	{NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
 	{NEURON_DM_BLOCK_TPB,   1, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
@@ -58,12 +60,11 @@ static int ndhal_register_funcs_inf1(void) {
  * 
  * @param nd - Neuron device which will be reset by the thread.
  */
-static int nr_initiate_reset_v1(struct neuron_device *nd)
+static int nr_initiate_reset_v1(struct neuron_device *nd, uint32_t nc_map)
 {
 	if (no_reset)
 		return 0;
 
-	uint32_t nc_map = nd->nr.req_pending_head->nc_map;
 	int ret = nr_initiate_reset_via_fw(nd, nc_map, 0);
 	if (ret) {
 		return ret;
@@ -72,14 +73,14 @@ static int nr_initiate_reset_v1(struct neuron_device *nd)
 	return 0;
 }
 
-static int nr_initiate_reset_v1_qemu(struct neuron_device *nd)
+static int nr_initiate_reset_v1_qemu(struct neuron_device *nd, uint32_t nc_map)
 {
 	return 0;
 }
 
-static int nr_initiate_reset_v1_emu(struct neuron_device *nd)
+static int nr_initiate_reset_v1_emu(struct neuron_device *nd, uint32_t nc_map)
 {
-	return nr_initiate_reset_v1(nd);
+	return nr_initiate_reset_v1(nd, nc_map);
 }
 
 /**
@@ -119,6 +120,15 @@ static int nr_wait_for_reset_completion_v1_emu(struct neuron_device *nd)
 	return nr_wait_for_reset_completion_v1(nd);
 }
 
+/**
+ * nr_post_reset_config() - perform and post reset configuration needed
+ * 
+ * @param nd - Neuron device which will be reset by the thread.
+ */
+static int nr_post_reset_config_v1(struct neuron_device *nd, bool reset_successful)
+{
+	return 0;
+}
 
 /* TOPSP Functions */
 /**
@@ -308,6 +318,10 @@ static void mpset_set_dram_and_mpset_info_v1(struct mempool_set *mpset, u64 *dev
 	device_dram_addr[1] = P_0_DRAM_1_BASE;
 	device_dram_size[0] = P_0_DRAM_0_SIZE;
 	device_dram_size[1] = P_0_DRAM_1_SIZE;
+	ndhal->ndhal_mpset.device_dram_effective_base_addr[0] = device_dram_addr[0];
+	ndhal->ndhal_mpset.device_dram_effective_base_addr[1] = device_dram_addr[1];
+	ndhal->ndhal_mpset.device_dram_end_addr[0] = device_dram_addr[0] + device_dram_size[0];
+	ndhal->ndhal_mpset.device_dram_end_addr[1] = device_dram_addr[1] + device_dram_size[1];
 }
 
 /**
@@ -886,6 +900,11 @@ static int ncdev_bar_write_data_v1(struct neuron_device *nd, u8 bar, u64 *reg_ad
 	return 0;
 }
 
+static void ncdev_get_default_tpbs_for_hbm_v1(u32 hbm_index, u32 tpbs[MAX_NC_PER_DEVICE], u32 *tpb_count)
+{
+	// Unimplemented for v1 - can be implemented if required
+	*tpb_count = 0;
+}
 
 /* UDMA Functions */
 /**
@@ -931,7 +950,7 @@ static void ndma_get_wait_for_completion_time_v1(u32 count, bool async, u64 *fir
 	*following_wait_time = (est_wait_time * 100) - *first_wait_time;
 
 	// for some reason getting a timeout tools pipeline, so bumping wait by 10x 
-	// https://t.corp.amazon.com/P99249422/communication
+	// https://tiny.amazon.com/9xmp72cm
 	*following_wait_time *= 10;
 }
 
@@ -1075,6 +1094,69 @@ static int ndma_get_m2m_barrier_type_v1(bool set_dmb)
 }
 
 /**
+ * ndma_get_engines_with_host_connectivity - get DMA engines for a particular HBM index which have host connectivity
+ */
+static void ndma_get_engines_with_host_connectivity_v1(u32 hbm_index, u32 engines[NUM_DMA_ENG_PER_DEVICE], u32 *num_engines)
+{
+	// Unimplemented for v1, can implement if required.
+	*num_engines = 0;
+}
+
+
+/* POD Functions */
+/**
+ * npe_pod_info() - return information about the pod the instance belongs to
+ *
+ * @param pod_type - type of pod the instance belongs to or NONE if not part of a pod
+ * @param pod_id   - unique id of the pod
+ * @param pod_sz   - size of the pod.  0 if not a pod
+ *
+ */
+static int npe_pod_info_v1(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
+{
+	*pod_type = NEURON_POD_TYPE_NONE;
+	*pod_sz = 0;
+	return 0;
+}
+
+/**
+ * npe_pod_status() - return status information about the pod the instance belongs to
+ *
+ * @param pod_state - state/outcome of the pod's election process
+ * @param node_id   - node id within the pod
+ *
+ */ 
+static int npe_pod_status_v1(u32 *pod_state, u8 *node_id)
+{
+	*pod_state = NEURON_POD_E_STATE_STANDALONE;
+	*node_id = -1;
+	return 0;
+}
+
+/**
+ * npe_pod_ctrl() - control the state of the pode
+ *
+ * @param pod_ctrl  - control operation to perform
+ * @param pod_state - state/outcome of the pod's election process
+ *
+ */
+static int npe_pod_ctrl_v1(u32 pod_ctrl, u32 *pod_state)
+{
+	*pod_state = NEURON_POD_E_STATE_STANDALONE;
+	return 0;
+}
+
+/**
+ * ndhal_ext_cleanup_v1() - cleanup any extended resources`
+ *
+ */
+static void ndhal_ext_cleanup_v1(void)
+{
+	return;
+}
+
+
+/**
  * static asserts to valid static const sizes work across versions
  *
  */
@@ -1113,7 +1195,9 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_address_map.dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
 	ndhal->ndhal_address_map.dma_eng_per_nc = V1_DMA_ENG_PER_NC;
 	ndhal->ndhal_address_map.dram_channels = V1_MAX_DRAM_CHANNELS;
+	ndhal->ndhal_reset.initiate_max_wait_time = V1_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
+	ndhal->ndhal_reset.nr_post_reset_config = nr_post_reset_config_v1;
 	ndhal->ndhal_topsp.ts_nq_init = ts_nq_init_v1;
 	ndhal->ndhal_topsp.ts_nq_destroy_one = ts_nq_destroy_one_v1;
 	ndhal->ndhal_topsp.ts_nq_get_nqid = ts_nq_get_nqid_v1;
@@ -1123,6 +1207,7 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_nq.nnq_get_nqid = nnq_get_nqid_v1;
 	ndhal->ndhal_nq.nnq_set_hwaddr = nnq_set_hwaddr_v1;
 	ndhal->ndhal_mpset.mp_min_alloc_size = mempool_min_alloc_size;
+	ndhal->ndhal_mpset.small_pool_supported = false; // doesn't make sense to have separate small allocations genpool since memory on v1 is less
 	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v1;
 	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v1;
 	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v1;
@@ -1154,6 +1239,8 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v1;
 	ndhal->ndhal_cdev.ncdev_quiesce_exec_on_proc_exit = ncdev_quiesce_exec_on_proc_exit_v1;
 	ndhal->ndhal_cdev.ncdev_bar_write_data = ncdev_bar_write_data_v1;
+	ndhal->ndhal_cdev.ncdev_logical_to_physical_nc_map = NULL;
+	ndhal->ndhal_cdev.ncdev_get_default_tpbs_for_hbm = ncdev_get_default_tpbs_for_hbm_v1;
 	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set = udma_m2s_data_rd_cfg_boundaries_set_v1;
 	ndhal->ndhal_udma.num_beats = 1024; // >= UDMA_REV_ID_4
 	ndhal->ndhal_udma.udma_q_config = udma_q_config_v1;
@@ -1163,6 +1250,11 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_ndma.ndma_init = ndma_init_v1;
 	ndhal->ndhal_ndma.ndma_is_bar0_write_blocked = ndma_is_bar0_write_blocked_v1;
 	ndhal->ndhal_ndma.ndma_get_m2m_barrier_type = ndma_get_m2m_barrier_type_v1;
+	ndhal->ndhal_ndma.ndma_get_engines_with_host_connectivity = ndma_get_engines_with_host_connectivity_v1;
+    ndhal->ndhal_npe.npe_pod_info = npe_pod_info_v1;
+    ndhal->ndhal_npe.npe_pod_status = npe_pod_status_v1;
+    ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v1;
+    ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v1;
 
 	if (narch_is_qemu()) {
 		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v1_qemu;

@@ -5,6 +5,9 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/version.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#include <linux/kernel_read_file.h>
+#endif
 
 #include "sdma.h"
 #include "notific.h"
@@ -21,13 +24,24 @@
 #include "../neuron_sysfs_metrics.h"
 #include "../neuron_ring.h"
 #include "../neuron_mempool.h"
+#include "neuron_pelect.h"
 
 #define NR_RESET_RETRY_SLEEP_MS 100
+#define V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 300)
 
-// TOP SP addresses are sparse on chip adjust ot accommodate the table macro
+// For v3/testing
 //
-#define V3_TOP_SP_GRP1_BASE   V3_TOP_SP_0_BASE
-#define V3_TOP_SP_GRP2_BASE   (V3_TOP_SP_10_BASE - 10 * V3_TOP_SP_SIZE)
+int force_die_flip = 0;
+module_param(force_die_flip, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(force_die_flip, "Force Neuron Core Mapping APIs to give back DIE flip mappings");
+
+// TOP SP addresses are sparse on chip adjust to accommodate the table macro
+//
+#define V3_TOP_SP_GRP1_BASE V3_TOP_SP_0_BASE
+#define V3_TOP_SP_GRP2_BASE (V3_TOP_SP_10_BASE - 8 * V3_TOP_SP_DIST)
+
+#define V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET V3_PCIE_BAR0_TOP_SP_0_OFFSET
+#define V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET (V3_PCIE_BAR0_TOP_SP_10_OFFSET - 8 * V3_TOP_SP_SIZE)
 
 struct neuron_dm_special_mmap_ent dm_mmap_special_v3[] = {
 	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
@@ -39,49 +53,50 @@ struct neuron_dm_special_mmap_ent dm_mmap_special_v3[] = {
 	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   6, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
 	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   7, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
 
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 6, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 7, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 8, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 9, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   1, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   2, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   3, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   4, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   5, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   6, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   7, NEURON_DM_RESOURCE_SBUF, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, 0, V3_PCIE_BAR0_TPB_SBUF_SIZE),
 
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 10, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 11, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 12, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 13, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 14, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 15, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 16, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 17, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 18, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 19, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 6, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 7, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
 
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 6, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 7, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 8, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 9, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP,  8, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP,  9, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 10, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 11, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 12, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 13, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 14, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 15, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST,  V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
 
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 10, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 11, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 12, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 13, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 14, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 15, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 16, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 17, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 18, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 19, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 6, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 7, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_GRP1_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP,  8, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP,  9, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 10, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 11, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 12, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 13, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 14, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TOPSP, 15, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_GRP2_OFFSET, V3_TOP_SP_DIST, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
 	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
 };
 
@@ -146,6 +161,54 @@ static int ndhal_register_funcs_trn2(void) {
 	return 0;
 }
 
+static bool ndhal_instance_type_pod(void)
+{
+	static bool instance_type_is_pod = false;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+#define NEURON_TRN2P_INSTANCE_NAME "trn2p.48xlarge" 
+#define NEURON_TRN2U_INSTANCE_NAME "trn2u.48xlarge" 
+	static bool initialized = false;
+	ssize_t len;
+	ssize_t file_size;
+	void *buf = NULL;
+
+	if (initialized) {
+		return instance_type_is_pod;
+	}
+
+	initialized = true;
+
+	buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
+
+	if (buf == NULL) {
+		pr_err("failed to allocate buffer to read instance type");
+		goto done;
+	}
+
+	len = kernel_read_file_from_path("/sys/class/dmi/id/product_name",
+									 0, &buf, 64, &file_size, READING_UNKNOWN);
+
+	if (!len) {
+		pr_err("read instance type failed");
+		goto done;
+	}
+		
+	if ((strncmp(buf, NEURON_TRN2P_INSTANCE_NAME, sizeof(NEURON_TRN2P_INSTANCE_NAME)-1) == 0) ||
+	    (strncmp(buf, NEURON_TRN2U_INSTANCE_NAME, sizeof(NEURON_TRN2U_INSTANCE_NAME)-1) == 0)) {
+		instance_type_is_pod = true;
+	}
+
+done:
+	if (buf) {
+		kfree(buf);
+	}
+#endif
+
+	return instance_type_is_pod;
+}
+
+
+
 /* Device Reset Functions */
 /**
  * nr_get_tpb_reset_map() - generates a the reset map of all resources associated with resetting a particular TPB
@@ -186,12 +249,11 @@ static void nr_get_tpb_reset_map(uint32_t nc_map, uint32_t *tpb_reset_map)
  * 
  * @param nd - Neuron device which will be reset by the thread.
  */
-static int nr_initiate_reset_v3(struct neuron_device *nd)
+static int nr_initiate_reset_v3(struct neuron_device *nd, uint32_t nc_map)
 {
 	if (no_reset)
 		return 0;
 
-	uint32_t nc_map = nd->nr.req_pending_head->nc_map;
 	uint32_t tpb_reset_map = 0;
 	nr_get_tpb_reset_map(nc_map, &tpb_reset_map);
 
@@ -203,12 +265,11 @@ static int nr_initiate_reset_v3(struct neuron_device *nd)
 	return 0;
 }
 
-static int nr_initiate_reset_v3_qemu(struct neuron_device *nd)
+static int nr_initiate_reset_v3_qemu(struct neuron_device *nd, uint32_t nc_map)
 {
 	if (no_reset)
 		return 0;
 
-    uint32_t nc_map = nd->nr.req_pending_head->nc_map;
     uint32_t tpb_reset_map = 0;
     nr_get_tpb_reset_map(nc_map, &tpb_reset_map);
 	volatile void *addr = nd->npdev.bar0 + V3_PCIE_BAR0_APB_IO_0_OFFSET + V3_APB_IO_0_USER_SE_0_RESERVED2_RELBASE + 0x10;
@@ -217,9 +278,9 @@ static int nr_initiate_reset_v3_qemu(struct neuron_device *nd)
 	return 0; 
 }
 
-static int nr_initiate_reset_v3_emu(struct neuron_device *nd)
+static int nr_initiate_reset_v3_emu(struct neuron_device *nd, uint32_t nc_map)
 {
-	return nr_initiate_reset_v3(nd);
+	return nr_initiate_reset_v3(nd, nc_map);
 }
 
 /**
@@ -274,6 +335,22 @@ static int nr_wait_for_reset_completion_v3_qemu(struct neuron_device *nd)
 static int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
 {
 	return nr_wait_for_reset_completion_v3(nd);
+}
+
+/**
+ * nr_post_reset_config() - perform and post reset configuration needed
+ * 
+ * @param nd - Neuron device which will be reset by the thread.
+ * @param reset_successful - device reset was successful
+ */
+static int nr_post_reset_config_v3(struct neuron_device *nd, bool reset_successful)
+{
+	if (!ndhal_instance_type_pod()) {
+		return 0;
+	}
+
+	npe_election_exec(nd, reset_successful);
+	return 0;
 }
 
 
@@ -499,6 +576,10 @@ static void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *dev
 		device_dram_size[2] = V3_HBM_ACTIVE_SIZE;
 		device_dram_size[3] = V3_HBM_ACTIVE_SIZE;
 	}
+	int i;
+	for (i = 0; i < mpset->num_channels; i++) {
+		ndhal->ndhal_mpset.device_dram_end_addr[i] = device_dram_addr[i] + device_dram_size[i];
+	}
 }
 
 // Upper 16MB is used internally by the firmware, don't use it in the allocation pool
@@ -549,6 +630,7 @@ static int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct memp
 				return -EINVAL;
 			}
 		}
+		ndhal->ndhal_mpset.device_dram_effective_base_addr[channel] = device_dram_addr[channel] + MEMPOOL_CARVEOUT_SIZE;
 	}
 	
 	return 0;
@@ -707,6 +789,7 @@ static void ndmar_set_model_started_v3(struct neuron_device *nd, phys_addr_t pa,
 
 
 /* FWIO Functions */
+
 
 /**
  * neighbor id mapping
@@ -1173,9 +1256,11 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
  *           - Version 6 of the runtime requires ham notification support,
  *              + new V2 reset api for single-tpb reset + new notification init API with force mem realloc/resize.
  *           - Version 7 of the runtime requires udma queue size support for non power of 2 rings + dmabuf support.
+ *           - Version 8 of the runtime needs Neuron Core remapping support.
+ *           - Version 9 of the runtime requres seng swap support and dieflip.
  */
 #define V3_RT_MIN_COMPATIBLE_VERSION 5
-#define V3_RT_MAX_COMPATIBLE_VERSION 7
+#define V3_RT_MAX_COMPATIBLE_VERSION 9
 /**
  * ncdev_compatible_version() - fill in the compatible version of the RT with the current driver version
  * 
@@ -1267,6 +1352,12 @@ static int ncdev_bar_write_data_v3(struct neuron_device *nd, u8 bar, u64 *reg_ad
 	return 0;
 }
 
+static void ncdev_get_default_tpbs_for_hbm_v3(u32 hbm_index, u32 tpbs[MAX_NC_PER_DEVICE], u32 *tpb_count)
+{
+	tpbs[0] = hbm_index * 2;
+	tpbs[1] = (hbm_index * 2) + 1;
+	*tpb_count = 2;
+}
 
 /* UDMA Functions */
 #define UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY (1 << 16)
@@ -1324,7 +1415,7 @@ static void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *fir
 	*following_wait_time = (est_wait_time * 100) - *first_wait_time;
 
 	// for some reason getting a timeout when staging some of BERT training graphs.
-	// https://t.corp.amazon.com/P55240908
+	// https://tiny.amazon.com/8jw7wl18
 	// In the meantime make the timeout 100x the original
 	*following_wait_time *= 100;
 }
@@ -1387,6 +1478,7 @@ static int ndma_init_v3(void __iomem *bar0, struct udma *udma, int eng_id)
 	const bool h2d_1 = eng_id == V3_H2D_1_IDX;
 
 	uint64_t seng_udma_relbase;
+	uint64_t se_user_fis_relbase = 0;
 	if (h2d_0 || d2h_0) {
 		seng_udma_relbase = (h2d_0 ? V3_APB_IO_0_H2D_UDMA_BASE : V3_APB_IO_0_D2H_UDMA_BASE);
 		seng_udma_relbase = seng_udma_relbase - V3_APB_IO_0_BASE + V3_PCIE_BAR0_APB_IO_0_OFFSET;
@@ -1399,15 +1491,31 @@ static int ndma_init_v3(void __iomem *bar0, struct udma *udma, int eng_id)
 		if (seng_id == 0) {
 			seng_udma_relbase = V3_APB_SE_0_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
 			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_0_BASE + V3_PCIE_BAR0_APB_SE_0_OFFSET;
+			se_user_fis_relbase = V3_PCIE_BAR0_APB_SE_0_OFFSET +
+				V3_APB_SE_0_USER_FIS_SDMA_0_OFFSET +
+				V3_APB_SE_USER_FIS_SDMA_0_FIS_0_USER_ERRTRIG_OFFSET +
+				(eng_id_within_seng * V3_APB_SE_USER_FIS_SDMA_0_SIZE);
 		} else if (seng_id == 1) {
 			seng_udma_relbase = V3_APB_SE_1_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
 			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_1_BASE + V3_PCIE_BAR0_APB_SE_1_OFFSET;
+			se_user_fis_relbase = V3_PCIE_BAR0_APB_SE_1_OFFSET +
+				V3_APB_SE_1_USER_FIS_SDMA_0_OFFSET +
+				V3_APB_SE_USER_FIS_SDMA_0_FIS_0_USER_ERRTRIG_OFFSET +
+				(eng_id_within_seng * V3_APB_SE_USER_FIS_SDMA_0_SIZE);
 		} else if (seng_id == 2) {
 			seng_udma_relbase = V3_APB_SE_2_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
 			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_2_BASE + V3_PCIE_BAR0_APB_SE_2_OFFSET;
+			se_user_fis_relbase = V3_PCIE_BAR0_APB_SE_2_OFFSET +
+				V3_APB_SE_2_USER_FIS_SDMA_0_OFFSET +
+				V3_APB_SE_USER_FIS_SDMA_0_FIS_0_USER_ERRTRIG_OFFSET +
+				(eng_id_within_seng * V3_APB_SE_USER_FIS_SDMA_0_SIZE);
 		} else {
 			seng_udma_relbase = V3_APB_SE_3_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
 			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_3_BASE + V3_PCIE_BAR0_APB_SE_3_OFFSET;
+			se_user_fis_relbase = V3_PCIE_BAR0_APB_SE_3_OFFSET +
+				V3_APB_SE_3_USER_FIS_SDMA_0_OFFSET +
+				V3_APB_SE_USER_FIS_SDMA_0_FIS_0_USER_ERRTRIG_OFFSET +
+				(eng_id_within_seng * V3_APB_SE_USER_FIS_SDMA_0_SIZE);
 		}
 	}
 
@@ -1425,6 +1533,11 @@ static int ndma_init_v3(void __iomem *bar0, struct udma *udma, int eng_id)
 	if (ret) {
 		pr_err("SDMA ENG:%d init failed\n", eng_id);
 		goto done;
+	}
+
+	if (eng_id < V3_NUM_SENG_DMA_PER_DEVICE) {
+		void __iomem *user_fis_base = (void __iomem *)bar0 + se_user_fis_relbase;
+		udma_m2m_mask_ring_id_error(udma, user_fis_base);
 	}
 
 done:
@@ -1535,6 +1648,162 @@ static int ndma_get_m2m_barrier_type_v3(bool set_dmb)
 		return UDMA_M2M_BARRIER_NONE;
 }
 
+#define NC_MAPPING_MAX_CORE_COUNT_V3 128
+static const struct neuron_ioctl_nc_map_entry nc_mapping_v0_seng_swap[] = {
+	{ .device_id = 0,  .device_nc_idx = 4 }, { .device_id = 0,  .device_nc_idx = 5 }, { .device_id = 0,  .device_nc_idx = 6 }, { .device_id = 0,  .device_nc_idx = 7 }, { .device_id = 0,  .device_nc_idx = 2 }, { .device_id = 0,  .device_nc_idx = 3  }, { .device_id = 0,  .device_nc_idx = 0 }, { .device_id = 0,  .device_nc_idx = 1 }, // ND0
+	{ .device_id = 1,  .device_nc_idx = 2 }, { .device_id = 1,  .device_nc_idx = 3 }, { .device_id = 1,  .device_nc_idx = 0 }, { .device_id = 1,  .device_nc_idx = 1 }, { .device_id = 1,  .device_nc_idx = 4 }, { .device_id = 1,  .device_nc_idx = 5  }, { .device_id = 1,  .device_nc_idx = 6 }, { .device_id = 1,  .device_nc_idx = 7 }, // ND1
+	{ .device_id = 2,  .device_nc_idx = 4 }, { .device_id = 2,  .device_nc_idx = 5 }, { .device_id = 2,  .device_nc_idx = 6 }, { .device_id = 2,  .device_nc_idx = 7 }, { .device_id = 2,  .device_nc_idx = 2 }, { .device_id = 2,  .device_nc_idx = 3  }, { .device_id = 2,  .device_nc_idx = 0 }, { .device_id = 2,  .device_nc_idx = 1 }, // ND2
+	{ .device_id = 3,  .device_nc_idx = 2 }, { .device_id = 3,  .device_nc_idx = 3 }, { .device_id = 3,  .device_nc_idx = 0 }, { .device_id = 3,  .device_nc_idx = 1 }, { .device_id = 3,  .device_nc_idx = 4 }, { .device_id = 3,  .device_nc_idx = 5  }, { .device_id = 3,  .device_nc_idx = 6 }, { .device_id = 3,  .device_nc_idx = 7 }, // ND3
+	{ .device_id = 4,  .device_nc_idx = 0 }, { .device_id = 4,  .device_nc_idx = 1 }, { .device_id = 4,  .device_nc_idx = 2 }, { .device_id = 4,  .device_nc_idx = 3 }, { .device_id = 4,  .device_nc_idx = 6 }, { .device_id = 4,  .device_nc_idx = 7  }, { .device_id = 4,  .device_nc_idx = 4 }, { .device_id = 4,  .device_nc_idx = 5 }, // ND4
+	{ .device_id = 5,  .device_nc_idx = 6 }, { .device_id = 5,  .device_nc_idx = 7 }, { .device_id = 5,  .device_nc_idx = 4 }, { .device_id = 5,  .device_nc_idx = 5 }, { .device_id = 5,  .device_nc_idx = 0 }, { .device_id = 5,  .device_nc_idx = 1  }, { .device_id = 5,  .device_nc_idx = 2 }, { .device_id = 5,  .device_nc_idx = 3 }, // ND5
+	{ .device_id = 6,  .device_nc_idx = 0 }, { .device_id = 6,  .device_nc_idx = 1 }, { .device_id = 6,  .device_nc_idx = 2 }, { .device_id = 6,  .device_nc_idx = 3 }, { .device_id = 6,  .device_nc_idx = 6 }, { .device_id = 6,  .device_nc_idx = 7  }, { .device_id = 6,  .device_nc_idx = 4 }, { .device_id = 6,  .device_nc_idx = 5 }, // ND6
+	{ .device_id = 7,  .device_nc_idx = 6 }, { .device_id = 7,  .device_nc_idx = 7 }, { .device_id = 7,  .device_nc_idx = 4 }, { .device_id = 7,  .device_nc_idx = 5 }, { .device_id = 7,  .device_nc_idx = 0 }, { .device_id = 7,  .device_nc_idx = 1  }, { .device_id = 7,  .device_nc_idx = 2 }, { .device_id = 7,  .device_nc_idx = 3 }, // ND7
+	{ .device_id = 8,  .device_nc_idx = 4 }, { .device_id = 8,  .device_nc_idx = 5 }, { .device_id = 8,  .device_nc_idx = 6 }, { .device_id = 8,  .device_nc_idx = 7 }, { .device_id = 8,  .device_nc_idx = 2 }, { .device_id = 8,  .device_nc_idx = 3  }, { .device_id = 8,  .device_nc_idx = 0 }, { .device_id = 8,  .device_nc_idx = 1 }, // ND8
+	{ .device_id = 9,  .device_nc_idx = 2 }, { .device_id = 9,  .device_nc_idx = 3 }, { .device_id = 9,  .device_nc_idx = 0 }, { .device_id = 9,  .device_nc_idx = 1 }, { .device_id = 9,  .device_nc_idx = 4 }, { .device_id = 9,  .device_nc_idx = 5  }, { .device_id = 9,  .device_nc_idx = 6 }, { .device_id = 9,  .device_nc_idx = 7 }, // ND9
+	{ .device_id = 10, .device_nc_idx = 4 }, { .device_id = 10, .device_nc_idx = 5 }, { .device_id = 10, .device_nc_idx = 6 }, { .device_id = 10, .device_nc_idx = 7 }, { .device_id = 10, .device_nc_idx = 2 }, { .device_id = 10, .device_nc_idx = 3  }, { .device_id = 10, .device_nc_idx = 0 }, { .device_id = 10, .device_nc_idx = 1 }, // ND10
+	{ .device_id = 11, .device_nc_idx = 2 }, { .device_id = 11, .device_nc_idx = 3 }, { .device_id = 11, .device_nc_idx = 0 }, { .device_id = 11, .device_nc_idx = 1 }, { .device_id = 11, .device_nc_idx = 4 }, { .device_id = 11, .device_nc_idx = 5  }, { .device_id = 11, .device_nc_idx = 6 }, { .device_id = 11, .device_nc_idx = 7 }, // ND11
+	{ .device_id = 12, .device_nc_idx = 0 }, { .device_id = 12, .device_nc_idx = 1 }, { .device_id = 12, .device_nc_idx = 2 }, { .device_id = 12, .device_nc_idx = 3 }, { .device_id = 12, .device_nc_idx = 6 }, { .device_id = 12, .device_nc_idx = 7  }, { .device_id = 12, .device_nc_idx = 4 }, { .device_id = 12, .device_nc_idx = 5 }, // ND12
+	{ .device_id = 13, .device_nc_idx = 6 }, { .device_id = 13, .device_nc_idx = 7 }, { .device_id = 13, .device_nc_idx = 4 }, { .device_id = 13, .device_nc_idx = 5 }, { .device_id = 13, .device_nc_idx = 0 }, { .device_id = 13, .device_nc_idx = 1  }, { .device_id = 13, .device_nc_idx = 2 }, { .device_id = 13, .device_nc_idx = 3 }, // ND13
+	{ .device_id = 14, .device_nc_idx = 0 }, { .device_id = 14, .device_nc_idx = 1 }, { .device_id = 14, .device_nc_idx = 2 }, { .device_id = 14, .device_nc_idx = 3 }, { .device_id = 14, .device_nc_idx = 6 }, { .device_id = 14, .device_nc_idx = 7  }, { .device_id = 14, .device_nc_idx = 4 }, { .device_id = 14, .device_nc_idx = 5 }, // ND14
+	{ .device_id = 15, .device_nc_idx = 6 }, { .device_id = 15, .device_nc_idx = 7 }, { .device_id = 15, .device_nc_idx = 4 }, { .device_id = 15, .device_nc_idx = 5 }, { .device_id = 15, .device_nc_idx = 0 }, { .device_id = 15, .device_nc_idx = 1  }, { .device_id = 15, .device_nc_idx = 2 }, { .device_id = 15, .device_nc_idx = 3 }, // ND15
+};
+
+#define NC_MAPPING_V0_SENG_SWAP_SIZE (sizeof(nc_mapping_v0_seng_swap) / sizeof(nc_mapping_v0_seng_swap[0]))
+static_assert((NC_MAPPING_V0_SENG_SWAP_SIZE == NC_MAPPING_MAX_CORE_COUNT_V3) && (NC_MAPPING_V0_SENG_SWAP_SIZE <= NEURON_NC_MAP_MAX_ENTRIES));
+static const uint32_t neuron_nc_map_die_flip_mask = 0x6;
+
+static bool ndhal_die_flipped(void)
+{
+	u32 state;
+	u8 node_id;
+
+	if (force_die_flip) {
+		return true;
+	}
+	if (!ndhal_instance_type_pod()) {
+		return false;
+	}
+
+	npe_get_pod_status(&state, &node_id);
+	if ((state == NEURON_POD_E_STATE_SUCCESS) && ((node_id == 1) || (node_id == 2))) {
+		return true;
+	}
+	return false;
+}
+
+static int ncdev_logical_to_physical_nc_map_v3(struct neuron_ioctl_nc_map *map, uint32_t max_num_entries, enum neuron_ioctl_nc_mapping_type version)
+{
+	bool apply_dieflip = ndhal_die_flipped();
+	uint32_t entry_idx;
+	uint32_t entries_to_copy = (max_num_entries < NC_MAPPING_MAX_CORE_COUNT_V3) ? max_num_entries : NC_MAPPING_MAX_CORE_COUNT_V3;
+	const struct neuron_ioctl_nc_map_entry *mapping;
+
+	if (version != NEURON_IOCTL_NC_MAPPING_TYPE_V0) {
+		pr_err("Unsupported Neuron Core Mapping verion %u for v3 arch", version);
+		return -EINVAL;
+	}
+	mapping = nc_mapping_v0_seng_swap;
+
+	for (entry_idx = 0; entry_idx < entries_to_copy; entry_idx++) {
+		uint32_t core_idx = entry_idx;
+		if (apply_dieflip) {
+            core_idx ^= neuron_nc_map_die_flip_mask;
+		}
+		WARN_ONCE(core_idx >= NC_MAPPING_MAX_CORE_COUNT_V3, "core_idx %d > max core count %d", core_idx, NC_MAPPING_MAX_CORE_COUNT_V3);
+		map->mappings[entry_idx] = mapping[core_idx];
+	}
+	map->num_entries = entries_to_copy;
+
+	return 0;
+}
+
+/**
+ * ndma_get_engines_with_host_connectivity - get DMA engines for a particular HBM index which have host connectivity
+ * V3 - only particular DMA engines have host connectivity
+ */
+static void ndma_get_engines_with_host_connectivity_v3(u32 hbm_index, u32 engines[NUM_DMA_ENG_PER_DEVICE], u32 *num_engines)
+{
+	const int num_dma_engines_per_hbm = 32;
+	const int offset = num_dma_engines_per_hbm * hbm_index;
+	const int engines_with_connectivity[] = {4, 5, 6, 7,
+						12, 13, 14, 15,
+						20, 21, 22, 23,
+						28, 29, 30, 31};
+
+	int i = 0;
+	for (i = 0; i<16; i++) {
+		engines[i] = offset + engines_with_connectivity[i];
+	}
+	*num_engines = 16;
+}
+
+
+/* POD Functions */
+/**
+ * npe_pod_info() - return information about the pod the instance belongs to
+ *
+ * @param pod_type - type of pod the instance belongs to or NONE if not part of a pod
+ * @param pod_id   - unique id of the pod
+ * @param pod_sz   - size of the pod.  0 if not a pod
+ *
+ */
+static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
+{
+	if (!ndhal_instance_type_pod()) {
+		*pod_type = NEURON_POD_TYPE_NONE;
+		*pod_sz = 0;
+	} else {
+		*pod_type = NEURON_POD_TYPE_P2P;
+		*pod_sz = 4;
+		npe_get_pod_id(pod_id);
+	}
+	return 0;
+}
+
+/**
+ * npe_pod_status() - return status information about the pod the instance belongs to
+ *
+ * @param pod_state - state/outcome of the pod's election process
+ * @param node_id   - node id within the pod
+ *
+ */ 
+static int npe_pod_status_v3(u32 *pod_state, u8 *node_id)
+{
+	if (!ndhal_instance_type_pod()) {
+		*pod_state = NEURON_POD_E_STATE_STANDALONE;
+		*node_id = -1;
+		return 0;
+	}
+	return npe_get_pod_status(pod_state, node_id);
+}
+
+/**
+ * npe_pod_ctrl() - control the state of the pod
+ *
+ * @param pod_ctrl  - control operation to perform
+ * @param pod_state - state/outcome of the pod's election process
+ *
+ */
+static int npe_pod_ctrl_v3(u32 pod_ctrl, u32 *pod_state)
+{
+	if (!capable(CAP_SYS_RAWIO)) {
+		return -EPERM;
+	}
+
+	return npe_pod_ctrl(pod_ctrl, pod_state);
+}
+
+/**
+ * ndhal_ext_cleanup_v3() - cleanup any extended resources`
+ *
+ */
+static void ndhal_ext_cleanup_v3(void)
+{
+	if (ndhal_instance_type_pod()) {
+    	npe_cleanup();
+	}
+	return;
+}
 
 /**
  * static asserts to valid static const sizes work across versions
@@ -1582,7 +1851,9 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_address_map.ts_per_device = V3_TS_PER_DEVICE;
 	ndhal->ndhal_address_map.dma_eng_per_nc = V3_DMA_ENG_PER_NC;
 	ndhal->ndhal_address_map.dram_channels = V3_MAX_DRAM_CHANNELS;
+	ndhal->ndhal_reset.initiate_max_wait_time = V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
+	ndhal->ndhal_reset.nr_post_reset_config = nr_post_reset_config_v3;
 	ndhal->ndhal_topsp.ts_nq_init = ts_nq_init_v3;
 	ndhal->ndhal_topsp.ts_nq_destroy_one = ts_nq_destroy_one_v3;
 	ndhal->ndhal_topsp.ts_nq_get_nqid = ts_nq_get_nqid_v3;
@@ -1592,6 +1863,7 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_nq.nnq_get_nqid = nnq_get_nqid_v3;
 	ndhal->ndhal_nq.nnq_set_hwaddr = nnq_set_hwaddr_v3;
 	ndhal->ndhal_mpset.mp_min_alloc_size = (mempool_min_alloc_size < 1024) ? 1024 : mempool_min_alloc_size;
+	ndhal->ndhal_mpset.small_pool_supported = true;
 	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v3;
 	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v3;
 	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v3;
@@ -1621,6 +1893,8 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v3;
 	ndhal->ndhal_cdev.ncdev_quiesce_exec_on_proc_exit = ncdev_quiesce_exec_on_proc_exit_v3;
 	ndhal->ndhal_cdev.ncdev_bar_write_data = ncdev_bar_write_data_v3;
+	ndhal->ndhal_cdev.ncdev_logical_to_physical_nc_map = ncdev_logical_to_physical_nc_map_v3;
+	ndhal->ndhal_cdev.ncdev_get_default_tpbs_for_hbm = ncdev_get_default_tpbs_for_hbm_v3;
 	ndhal->ndhal_udma.num_beats = 2296;  // allow up to 288 outstanding writes
 	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set = udma_m2s_data_rd_cfg_boundaries_set_v3;
 	ndhal->ndhal_udma.udma_q_config = udma_q_config_v3;
@@ -1630,7 +1904,11 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_ndma.ndma_init = ndma_init_v3;
 	ndhal->ndhal_ndma.ndma_is_bar0_write_blocked = ndma_is_bar0_write_blocked_v3;
 	ndhal->ndhal_ndma.ndma_get_m2m_barrier_type = ndma_get_m2m_barrier_type_v3;
-
+	ndhal->ndhal_ndma.ndma_get_engines_with_host_connectivity = ndma_get_engines_with_host_connectivity_v3;
+    ndhal->ndhal_npe.npe_pod_info = npe_pod_info_v3;
+    ndhal->ndhal_npe.npe_pod_status = npe_pod_status_v3;
+    ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v3;
+    ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v3;
 
 	if (narch_is_qemu()) {
         ndhal->ndhal_reset.retry_count *= 1000; // wait longer on qemu

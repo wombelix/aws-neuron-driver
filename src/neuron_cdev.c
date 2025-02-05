@@ -150,7 +150,7 @@ static int ncdev_dma_queue_init(struct neuron_device *nd, void *param)
 	else
 		rxc_mc = NULL;
 	ret = ndmar_queue_init(nd, arg.eng_id, arg.qid, arg.tx_desc_count, arg.rx_desc_count, tx_mc,
-			       rx_mc, rxc_mc, arg.axi_port);
+			       rx_mc, rxc_mc, arg.axi_port, false);
 	return ret;
 }
 
@@ -174,7 +174,7 @@ static int ncdev_dma_queue_init_batch_entry(struct neuron_device *nd, struct neu
 	else
 		rxc_mc = NULL;
 	ret = ndmar_queue_init(nd, arg->eng_id, arg->qid, arg->tx_desc_count, arg->rx_desc_count, tx_mc,
-						   rx_mc, rxc_mc, arg->axi_port);
+						   rx_mc, rxc_mc, arg->axi_port, false);
 	return ret;
 }
 
@@ -307,16 +307,6 @@ static int ncdev_dma_queue_release(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 	return ndmar_queue_release(nd, arg.eng_id, arg.qid);
-}
-
-static int ncdev_dma_quiesce_queues(struct neuron_device *nd, void *param)
-{
-	int ret;
-	struct neuron_ioctl_dma_quiesce_queues arg;
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_quiesce_queues*)param, sizeof(arg));
-	if (ret)
-		return ret;
-	return ndhal->ndhal_ndmar.ndmar_quiesce_queues(nd, arg.nc_id, arg.engine_count, arg.queue_mask);
 }
 
 static int ncdev_dma_descriptor_copyout(struct neuron_device *nd, void *param)
@@ -1371,7 +1361,7 @@ static long ncdev_driver_info(unsigned int cmd, void *param)
 			driver_info.size = sizeof(driver_info);
 			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA |
 										 NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT | NEURON_DRIVER_FEATURE_BIG_CORE_MAPS |
-										 NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE;
+										 NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE | NEURON_DRIVER_FEATURE_HBM_SCRUB ;
 
 			return copy_to_user(param, &driver_info, sizeof(driver_info));
 		}
@@ -1953,6 +1943,400 @@ static int ncdev_nc_pid_state_dump(unsigned int cmd, void *param)
 	return ret;
 }
 
+static long ncdev_hbm_scrub_start(struct neuron_device *nd, void *param) {
+	struct neuron_ioctl_hbm_scrub_start arg;
+	int ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_hbm_scrub_start *)param,
+			     sizeof(arg));
+	if (ret) {
+		return ret;
+	}
+	if (arg.hbm_index >= ndhal->ndhal_address_map.dram_channels) {
+		pr_err("HBM scrub: invalid HBM index %d\n", arg.hbm_index);
+		return -1;
+	}
+	const uint64_t transfer_size = MAX_DMA_DESC_SIZE;
+
+	// TODO: re-enable pid check for scrub once we fix
+	// crwl to allow for a bitmap of devices
+
+	uint32_t num_dma_engines = 0;
+	uint32_t dma_engines[NUM_DMA_ENG_PER_DEVICE];
+	ndhal->ndhal_ndma.ndma_get_engines_with_host_connectivity(arg.hbm_index, dma_engines, &num_dma_engines);
+	if (num_dma_engines != 16) {
+		// Any power of 2 should be fine if we update array sizes, but we should test before enabling
+		pr_err("HBM scrub: Unsupported number (%d) of DMA engines\n", num_dma_engines);
+		return -1;
+	}
+
+	struct mem_chunk **rx_mc = nd->hbm_scrub_ctx.rx_mc;
+	struct mem_chunk **tx_mc = nd->hbm_scrub_ctx.tx_mc;
+	struct mem_chunk **completion_mc_ptr = &(nd->hbm_scrub_ctx.completion_marker_buf[arg.hbm_index]);
+	struct mem_chunk **hostbuf_mc = nd->hbm_scrub_ctx.hostbuf_mc;
+	*completion_mc_ptr = NULL;
+	void **completion_bufs[16];
+	uint32_t *buf = NULL;
+	int i = 0;
+	for (i = 0; i < num_dma_engines; i++) {
+		rx_mc[dma_engines[i]] = NULL;
+		tx_mc[dma_engines[i]] = NULL;
+		hostbuf_mc[dma_engines[i]] = NULL;
+		completion_bufs[i] = NULL;
+	}
+	int completion_buf_mc_size = DMA_COMPLETION_MARKER_SIZE * 2 * num_dma_engines;
+	ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, completion_buf_mc_size, 0, MEM_LOC_HOST, 0, 0, arg.nc_id, NEURON_MEMALLOC_TYPE_CODE_HOST, completion_mc_ptr);
+	if (ret) {
+		goto scrub_init_fail;
+	}
+	uint64_t buf_num_elem = transfer_size / sizeof(uint32_t);
+	buf = kmalloc(transfer_size, GFP_KERNEL);
+	if (!buf) {
+		ret = -ENOMEM;
+		goto scrub_init_fail;
+	}
+
+	for (i=0; i<buf_num_elem; i++) {
+		buf[i] = arg.init_val;
+	}
+
+	const uint64_t startaddr = ndhal->ndhal_mpset.device_dram_effective_base_addr[arg.hbm_index];
+	uint64_t curaddr = startaddr;
+	const uint64_t endaddr = ndhal->ndhal_mpset.device_dram_end_addr[arg.hbm_index];
+
+	uint32_t num_descs[16] = {0};
+	uint32_t estimated_descs = (endaddr - startaddr) / (transfer_size * 16) + 3; // some extra for host transfers and completion marker
+	uint32_t allocated_descs = ndmar_ring_get_desc_count(estimated_descs);
+	uint64_t ring_size = allocated_descs * sizeof(union udma_desc);
+
+
+	for (i = 0; i<num_dma_engines; i++) {
+		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, transfer_size, 0, MEM_LOC_HOST, 0, 0, arg.nc_id, NEURON_MEMALLOC_TYPE_CODE_HOST, &hostbuf_mc[dma_engines[i]]);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, ring_size, 0, MEM_LOC_HOST, 0, 0, arg.nc_id, NEURON_MEMALLOC_TYPE_DMA_RINGS_HOST, &rx_mc[dma_engines[i]]);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, ring_size, 0, MEM_LOC_HOST, 0, 0, arg.nc_id, NEURON_MEMALLOC_TYPE_DMA_RINGS_HOST, &tx_mc[dma_engines[i]]);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		completion_bufs[i] = (*completion_mc_ptr)->va + (i * DMA_COMPLETION_MARKER_SIZE * 2);
+		uint32_t eng_id = dma_engines[i];
+		uint32_t qid = 0;
+		ret = ndmar_queue_init(nd, eng_id, qid, allocated_descs, allocated_descs, tx_mc[dma_engines[i]],
+					rx_mc[dma_engines[i]], NULL, arg.axi_port, true);
+		if (ret) {
+			pr_err("Failed to initialize DMA queue for engine %d for scrubbing nd%d HBM %d:\n", eng_id, nd->device_index, arg.hbm_index);
+			goto scrub_init_fail;
+		}
+	}
+
+	// hostbuf_mc is used twice - as source at the start of the scrub, and as dest at the end of the scrub
+	// While all the hostbuf_mc's contain the same data (init val), it is safer to have them separate for each engine
+	// because of the write at the end of the scrub
+
+	for (i=0; i<num_dma_engines; i++) {
+		memcpy((hostbuf_mc[dma_engines[i]])->va, buf, transfer_size);
+		uint32_t eng_id = dma_engines[i];
+		uint32_t qid = 0;
+		struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
+		struct ndma_queue *queue = &eng->queues[qid];
+		struct ndma_ring  *ring  = &queue->ring_info;
+		ret = ndma_memcpy64k(eng, ring, hostbuf_mc[dma_engines[i]]->pa, startaddr + i*transfer_size, transfer_size, UDMA_M2M_BARRIER_DMB);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		num_descs[i]++;
+	}
+
+	i = 0;
+	while (curaddr + transfer_size*num_dma_engines + transfer_size <= endaddr) {
+		uint32_t eng_id = dma_engines[i];
+		uint32_t qid = 0;
+		struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
+		struct ndma_queue *queue = &eng->queues[qid];
+		struct ndma_ring  *ring  = &queue->ring_info;
+		ret = ndma_memcpy64k(eng, ring, curaddr, curaddr + transfer_size*num_dma_engines, transfer_size, UDMA_M2M_BARRIER_DMB);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		num_descs[i]++;
+		curaddr += transfer_size;
+		i = (i+1) % num_dma_engines;
+	}
+
+	uint64_t read_addr = endaddr - transfer_size * num_dma_engines;
+
+	for (i=0; i<num_dma_engines; i++) {
+		uint32_t eng_id = dma_engines[i];
+		uint32_t qid = 0;
+		struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
+		struct ndma_queue *queue = &eng->queues[qid];
+		struct ndma_ring  *ring  = &queue->ring_info;
+		ret = ndma_memcpy64k(eng, ring, read_addr + i*transfer_size, hostbuf_mc[dma_engines[i]]->pa, transfer_size, UDMA_M2M_BARRIER_DMB);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		num_descs[i]++;
+	}
+
+	pr_info("Scrubbing nd%d HBM %d\n", nd->device_index, arg.hbm_index);
+
+	for (i = 0; i < num_dma_engines; i++) {
+		uint32_t eng_id = dma_engines[i];
+		uint32_t qid = 0;
+		struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
+		struct ndma_queue *queue = &eng->queues[qid];
+		struct ndma_ring  *ring  = &queue->ring_info;
+		ret = ndma_memcpy_add_completion_desc(eng, ring, completion_bufs[i]);
+		if (ret) {
+			goto scrub_init_fail;
+		}
+		ret = ndmar_queue_copy_start(nd, eng_id, qid, num_descs[i]+1, num_descs[i]+1);
+		if (ret) {
+			pr_err("Failed to initiate DMA on engine %d for scrubbing nd%d HBM %d:\n", eng_id, nd->device_index, arg.hbm_index);
+			goto scrub_init_fail;
+		}
+	}
+
+	kfree(buf);
+	buf = NULL;
+
+	return 0;
+
+scrub_init_fail:
+	if (*completion_mc_ptr != NULL) {
+		mc_free(completion_mc_ptr);
+	}
+	for (i = 0; i<num_dma_engines; i++) {
+		if (rx_mc[dma_engines[i]] != NULL) {
+			mc_free(&(rx_mc[dma_engines[i]]));
+		}
+		if (tx_mc[dma_engines[i]] != NULL) {
+			mc_free(&(tx_mc[dma_engines[i]]));
+		}
+		if (hostbuf_mc[dma_engines[i]] != NULL) {
+			mc_free(&(hostbuf_mc[dma_engines[i]]));
+		}
+	}
+	if (buf != NULL) {
+		kfree(buf);
+	}
+	return ret;
+}
+
+static long ncdev_hbm_scrub_wait_for_cmpl(struct neuron_device *nd, void *param) {
+    struct neuron_ioctl_hbm_scrub_wait arg;
+	int ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_hbm_scrub_wait *)param,
+			     sizeof(arg));
+	if (ret) {
+		return ret;
+	}
+	if (arg.hbm_index >= ndhal->ndhal_address_map.dram_channels) {
+		pr_err("HBM scrub: invalid HBM index %d\n", arg.hbm_index);
+		return -1;
+	}
+	const uint64_t transfer_size = MAX_DMA_DESC_SIZE;
+
+	int num_dma_engines = 0;
+	int dma_engines[NUM_DMA_ENG_PER_DEVICE];
+	ndhal->ndhal_ndma.ndma_get_engines_with_host_connectivity(arg.hbm_index, dma_engines, &num_dma_engines);
+	if (num_dma_engines != 16) {
+		// Any power of 2 should be fine if we update array sizes, but we should test before enabling
+		pr_err("HBM scrub: Unsupported number (%d) of DMA engines\n", num_dma_engines);
+		return -1;
+	}
+
+	struct mem_chunk **rx_mc = nd->hbm_scrub_ctx.rx_mc;
+	struct mem_chunk **tx_mc = nd->hbm_scrub_ctx.tx_mc;
+	struct mem_chunk **completion_mc_ptr = &(nd->hbm_scrub_ctx.completion_marker_buf[arg.hbm_index]);
+	struct mem_chunk **hostbuf_mc = nd->hbm_scrub_ctx.hostbuf_mc;
+	if (*completion_mc_ptr == NULL) {
+		ret = -1;
+		pr_err("Scrub failed for nd%d HBM %d: scrub context corrupted\n", nd->device_index, arg.hbm_index);
+		goto scrub_cleanup;
+	}
+	void **completion_bufs[16];
+	const uint64_t endaddr = ndhal->ndhal_mpset.device_dram_end_addr[arg.hbm_index];
+	const uint64_t hbm_size = endaddr - ndhal->ndhal_mpset.device_dram_effective_base_addr[arg.hbm_index];
+	uint64_t approx_num_desc = hbm_size / (num_dma_engines * transfer_size);
+
+	int i;
+	for (i=0; i<num_dma_engines; i++) {
+		completion_bufs[i] = (*completion_mc_ptr)->va + (i * DMA_COMPLETION_MARKER_SIZE * 2);
+		uint32_t eng_id = dma_engines[i];
+		uint32_t qid = 0;
+		struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
+		struct ndma_queue *queue = &eng->queues[qid];
+		struct ndma_ring  *ring  = &queue->ring_info;
+		ret = ndma_memcpy_wait_for_completion(eng, ring, approx_num_desc, completion_bufs[i], false, true);
+		if (ret) {
+			pr_err("Scrub failed for nd%d HBM %d\n", nd->device_index, arg.hbm_index);
+			goto scrub_cleanup;
+		}
+	}
+
+	ret = 0;
+	pr_info("Scrub completed for nd%d HBM %d\n", nd->device_index, arg.hbm_index);
+
+scrub_cleanup:
+	if (*completion_mc_ptr != NULL) {
+		mc_free(completion_mc_ptr);
+	}
+	for (i=0; i<num_dma_engines; i++) {
+		if (rx_mc[dma_engines[i]] != NULL) {
+			mc_free(&(rx_mc[dma_engines[i]]));
+		}
+		if (tx_mc[dma_engines[i]] != NULL) {
+			mc_free(&(tx_mc[dma_engines[i]]));
+		}
+		if (hostbuf_mc[dma_engines[i]] != NULL) {
+			mc_free(&(hostbuf_mc[dma_engines[i]]));
+		}
+	}
+	return ret;
+}
+
+static long ncdev_get_logical_to_physical_nc_map(void *param) {
+	struct neuron_ioctl_get_logical_to_physical_nc_map arg;
+	struct neuron_ioctl_nc_map *nc_map = NULL;
+	int ret;
+
+	if (ndhal->ndhal_cdev.ncdev_logical_to_physical_nc_map == NULL) {
+		return -ENOTSUPP;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_get_logical_to_physical_nc_map *)param, sizeof(arg));
+	if (ret != 0) {
+		goto done;
+	}
+
+	if (arg.max_map_entries > NEURON_NC_MAP_MAX_ENTRIES) {
+		// Should never get here with a valid runtime.
+		// We should bump compatibility version if we do need to update the
+		// max number of entries (ie we are supporting a new instance type).
+		pr_err("Requested %u Neuron core map entries, but this driver only supports up to %u Neuron core Map entries", arg.max_map_entries, NEURON_NC_MAP_MAX_ENTRIES);
+		ret = -EINVAL;
+		goto done;
+	}
+
+	uint32_t max_entries = arg.max_map_entries;
+	uint32_t map_size = sizeof(struct neuron_ioctl_nc_map) + (max_entries * sizeof(struct neuron_ioctl_nc_map_entry));
+	nc_map = kmalloc(map_size, GFP_KERNEL);
+	if (nc_map == NULL) {
+		pr_err("Failed to allocate memory for Neuron Core map");
+		ret = -ENOMEM;
+		goto done;
+	}
+
+	ret = ndhal->ndhal_cdev.ncdev_logical_to_physical_nc_map(nc_map, max_entries, arg.mapping_version);
+	if (ret != 0) {
+		pr_err("Failed to get Neuron Core mapping");
+		goto done;
+	}
+
+	ret = copy_to_user(arg.map, nc_map, map_size);
+	if (ret != 0) {
+		goto done;
+	}
+
+done:
+	if (nc_map != NULL) {
+		kfree(nc_map);
+	}
+
+	return ret;
+}
+
+static int ncdev_pod_info(unsigned int cmd, void *param)
+{
+	int ret;
+	struct neuron_ioctl_pod_info arg;
+
+	if (cmd != NEURON_IOCTL_POD_INFO) {
+		return -EINVAL;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_info *)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	// sanity check
+	if (arg.sz != sizeof(arg)) {
+		return -EINVAL;
+	}
+
+	memset(&arg, 0, sizeof(arg));
+	arg.sz = sizeof(arg);
+
+	ret = ndhal->ndhal_npe.npe_pod_info( &arg.pod_type, arg.pod_id, &arg.pod_sz);
+
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+static int ncdev_pod_status(unsigned int cmd, void *param)
+{
+	int ret;
+	int cret;
+	struct neuron_ioctl_pod_status arg;
+
+	if (cmd != NEURON_IOCTL_POD_STATUS) {
+		return -EINVAL;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_status*)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	// sanity check
+	if (arg.sz != sizeof(arg)) {
+		return -EINVAL;
+	}
+
+	memset(&arg, 0, sizeof(arg));
+	arg.sz = sizeof(arg);
+
+	// pull pod status before pod info to make sure the pod info is valid
+	//
+	ret = ndhal->ndhal_npe.npe_pod_status( &arg.state, &arg.node_id);
+	ndhal->ndhal_npe.npe_pod_info( &arg.pod_type, arg.pod_id, &arg.pod_sz);
+
+	cret = copy_to_user(param, &arg, sizeof(arg));
+	if (cret != 0) {
+		return cret;
+	}
+	return ret;
+}
+
+static int ncdev_pod_ctrl(unsigned int cmd, void *param)
+{
+	int ret;
+	int cret;
+	struct neuron_ioctl_pod_ctrl arg;
+
+	if (cmd != NEURON_IOCTL_POD_CTRL) {
+		return -EINVAL;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_ctrl*)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	// sanity check
+	if (arg.sz != sizeof(arg)) {
+		return -EINVAL;
+	}
+
+	ret = ndhal->ndhal_npe.npe_pod_ctrl( arg.ctrl, &arg.state);
+
+	cret = copy_to_user(param, &arg, sizeof(arg));
+	if (cret != 0) {
+		return cret;
+	}
+	return ret;
+}
+
 inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
 	if ((cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) || (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK_EXT0)) {
 		return ncdev_crwl_nc_range_mark(filep, cmd, (void *)param);
@@ -1977,6 +2361,14 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 		return ncdev_host_device_id_to_rid_map(cmd, (void*)param);
 	} else if (cmd == NEURON_IOCTL_NC_PID_STATE_DUMP) {
 		return ncdev_nc_pid_state_dump(cmd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_GET_LOGICAL_TO_PHYSICAL_NC_MAP) {
+		return ncdev_get_logical_to_physical_nc_map((void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_POD_INFO)) {
+		return ncdev_pod_info(cmd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_POD_STATUS)) {
+		return ncdev_pod_status(cmd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_POD_CTRL)) {
+		return ncdev_pod_ctrl(cmd, (void *)param);
 	}
 
 	pr_err("invalid misc IOCTL %d (dir=%d, type=%d, nr=%d, size=%d)\n", cmd, _IOC_DIR(cmd),
@@ -2076,7 +2468,8 @@ static long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long para
 	} else if (cmd == NEURON_IOCTL_DMA_DESCRIPTOR_COPYOUT) {
 		return ncdev_dma_descriptor_copyout(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_QUIESCE_QUEUES) {
-		return ncdev_dma_quiesce_queues(nd, (void *)param);
+		pr_err("NEURON_IOCTL_DMA_QUIESCE_QUEUES is no longer supported\n");
+		return -ENOIOCTLCMD;
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC) {
 		return ncdev_mem_alloc(nd, (void *)param);
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_ALLOC_V2MT)) {
@@ -2155,6 +2548,10 @@ static long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long para
 		return ncdev_get_host_device_id(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DUMP_MEM_CHUNKS) {
 		return ncdev_dump_mem_chunks(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_HBM_SCRUB_START) {
+		return ncdev_hbm_scrub_start(nd, (void*)param);
+	} else if (cmd == NEURON_IOCTL_HBM_SCRUB_WAIT) {
+		return ncdev_hbm_scrub_wait_for_cmpl(nd, (void*)param);
 	}
 	// B/W compatibility
 	return ncdev_misc_ioctl(filep, cmd, param);

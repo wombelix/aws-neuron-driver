@@ -13,6 +13,23 @@ enum neuron_driver_feature_flag {
 	NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT = 1ull <<  2, 
 	NEURON_DRIVER_FEATURE_BIG_CORE_MAPS   = 1ull <<  3, 
 	NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE  = 1ull <<  4,
+	NEURON_DRIVER_FEATURE_HBM_SCRUB = 1ull << 5,
+};
+
+// FIXME  this should be more generic - like node type.
+enum {
+	NEURON_POD_TYPE_NONE = 0,
+	NEURON_POD_TYPE_P2P,
+	NEURON_POD_TYPE_SWITCH
+};
+
+enum {
+	NEURON_POD_E_STATE_NOT_STARTED= 0,
+	NEURON_POD_E_STATE_IN_PROGRESS,
+	NEURON_POD_E_STATE_SUCCESS,
+	NEURON_POD_E_STATE_FAILED,
+	NEURON_POD_E_STATE_STANDALONE,
+	NEURON_POD_E_STATE_QUIESCING
 };
 
 #define NEURON_NC_MAP_DEVICE (0xffffffff)
@@ -82,8 +99,11 @@ enum NQ_TYPE {
 
 /**
  * memory mapping enums for selecting what bar0 resources to map.
- * Bar0 mapping is restricted to a limited set of regions, read only
- * via the virtual address.
+ * Bar0 mmapping is restricted to a limited set of regions.
+ * Resources are selected by block type, block id and resource within the block.
+ * TPB 1 State buffer, for example - where type is TPB, block id is 1 and 
+ * resource is state buffer.
+ * NEURON_DM_RESOURCE_ALL resource mapping is restricted to read only.
  *
  */
 enum neuron_dm_block_type {
@@ -93,8 +113,9 @@ enum neuron_dm_block_type {
 };
 
 enum neuron_dm_resource_type {
-   NEURON_DM_RESOURCE_SEMAPHORE = 0,
-   NEURON_DM_RESOURCE_ALL = 1,
+   NEURON_DM_RESOURCE_SEMAPHORE = 0,  // resource to mmap is semaphore region
+   NEURON_DM_RESOURCE_ALL = 1,        // resource to mmap is the entire block (read only). Only available for TOPSP
+   NEURON_DM_RESOURCE_SBUF = 2,       // resource to mmap is state buffer
 };
 
 struct neuron_uuid {
@@ -132,6 +153,21 @@ struct neuron_ioctl_mem_chunk_info {
 	__u64 pa;
 	__u64 size;
 	__u32 mem_type;
+};
+
+// Max number of entries this version of the driver
+// will ever give back to the user
+#define NEURON_NC_MAP_MAX_ENTRIES 128
+enum neuron_ioctl_nc_mapping_type {
+    NEURON_IOCTL_NC_MAPPING_TYPE_V0 = 0,           // seng swap mapping
+};
+struct neuron_ioctl_nc_map_entry {
+    __u32 device_id;
+    __u32 device_nc_idx;
+};
+struct neuron_ioctl_nc_map {
+    __u32 num_entries;
+    struct neuron_ioctl_nc_map_entry mappings[];
 };
 
 /*
@@ -261,15 +297,18 @@ enum {
 // Additional NC storage
 // | NDS_EXT_NC_COUNTER_COUNT | ... | NDS_EXT_NC_COUNTER_COUNT | (x NDS_MAX_NEURONCORE_COUNT) - this will only store the 'overflow' from the original counters
 // | NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT | ... (x NDS_EXT_MAX_NEURONCORE_COUNT)   - this will store complete data for additional NCs (up to a max of 16)
-#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 65
-
+#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 60
 // Index of NC counter extensions start at NDS_NC_COUNTER_COUNT not at 0
 enum {
-	// NDS_EXT_NC_COUNTER_UNUSED = NDS_NC_COUNTER_COUNT,
-	NDS_EXT_NC_COUNTER_COUNT = NDS_EXT_NC_COUNTER_ADDED_RESERVED
+	NDS_EXT_NC_COUNTER_HW_ERR_COLLECTIVES = NDS_NC_COUNTER_COUNT,
+	NDS_EXT_NC_COUNTER_HW_ERR_HBM_UE,
+	NDS_EXT_NC_COUNTER_HW_ERR_NC_UE,
+	NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT,
+	NDS_EXT_NC_COUNTER_LAST,
+	NDS_EXT_NC_COUNTER_COUNT =  NDS_EXT_NC_COUNTER_LAST - NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_ADDED_RESERVED
 };
 
-#define NDS_TOTAL_NC_COUNTER_COUNT (NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT) // 31 original + 65 extended = 96 counters
+#define NDS_TOTAL_NC_COUNTER_COUNT (NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT) // 31 original + 64 extended = 95 counters
 
 typedef struct nds_header {
 	char signature[4];      // Fixed signature: 'n', 'd', 's', 0
@@ -296,15 +335,29 @@ typedef struct nds_header {
 
 // additional NC counter section at the end of all existing structures in the datastore (i.e. after NDS_PROCESS_EXT_INFO)
 // NDS_PROCESS_EXT_INFO_START + NDS_PROCESS_EXT_INFO_SIZE = 44588 (hardcoded because it's easier than to move all the structs here and sizeof them)
-#define NDS_EXT_NEURONCORE_COUNTERS_COUNT (NDS_EXT_NC_COUNTER_COUNT)
-#define NDS_EXT_NEURONCORE_COUNTERS_START (44588)
+#define NDS_EXT_NC_COUNTER_COUNT_OLD (65)
+#define NDS_TOTAL_NC_COUNTER_COUNT_OLD (96)
+
+#define NDS_EXT_NEURONCORE_COUNTERS_SIZE_OLD (NDS_EXT_NC_COUNTER_COUNT_OLD * NDS_MAX_NEURONCORE_COUNT * sizeof(uint64_t))
+#define NDS_EXT_NEURONCORE_NC_DATA_SIZE_OLD	(NDS_TOTAL_NC_COUNTER_COUNT_OLD * NDS_EXT_MAX_NEURONCORE_COUNT * sizeof(uint64_t))
+#define NDS_EXT_SECTION_SIZE_OLD (NDS_EXT_NEURONCORE_COUNTERS_SIZE_OLD + NDS_EXT_NEURONCORE_NC_DATA_SIZE_OLD)
+#define NDS_EXT_OFFSET_OLD (44588)
+
+#define NDS_EXT_ALIGNMENT (64)
+#define NDS_ALIGN(v) ((v) + (-(v) & (NDS_EXT_ALIGNMENT - 1)))
+#define NDS_EXT_OFFSET (NDS_ALIGN(NDS_EXT_OFFSET_OLD + NDS_EXT_SECTION_SIZE_OLD))
+
+#define NDS_EXT_NEURONCORE_COUNTERS_COUNT (NDS_EXT_NC_COUNTER_COUNT) // number of extended counters
+#define NDS_EXT_NEURONCORE_COUNTERS_START (NDS_EXT_OFFSET)
 #define NDS_EXT_NEURONCORE_COUNTERS_SIZE (NDS_EXT_NC_COUNTER_COUNT * NDS_MAX_NEURONCORE_COUNT * sizeof(uint64_t))
 #define NDS_EXT_NEURONCORE_COUNTERS(base_addr, nc_index) ((uint64_t *)(base_addr + NDS_EXT_NEURONCORE_COUNTERS_START) + (nc_index * NDS_EXT_NC_COUNTER_COUNT))
 
-// additional NC data for extra Neuron Cores (12 extra sets which include all the 96 counters)
-#define NDS_EXT_NEURONCORE_NC_DATA_COUNT (NDS_EXT_MAX_NEURONCORE_COUNT)
-#define NDS_EXT_NEURONCORE_NC_DATA_START (NDS_EXT_NEURONCORE_COUNTERS_START + NDS_EXT_NEURONCORE_COUNTERS_SIZE)
-#define NDS_EXT_NEURONCORE_NC_DATA_SIZE (NDS_EXT_MAX_NEURONCORE_COUNT * NDS_TOTAL_NC_COUNTER_COUNT * sizeof(uint64_t))
-#define NDS_EXT_NEURONCORE_NC_DATA(base_addr, nc_index) ((uint64_t *)(base_addr + NDS_EXT_NEURONCORE_NC_DATA_START) + (nc_index * NDS_TOTAL_NC_COUNTER_COUNT))
+// additional NC data for extra Neuron Cores (12 extra sets which include all 95 counters + 1 for padding)
+#define NDS_EXT_NEURONCORE_NC_DATA_PADDING (1) // 1 added as padding for 64 byte alignment per NC
+#define NDS_EXT_NEURONCORE_NC_DATA_COUNT (NDS_TOTAL_NC_COUNTER_COUNT + NDS_EXT_NEURONCORE_NC_DATA_PADDING) // full set of counters (base + extended) + padding
+#define NDS_EXT_NEURONCORE_NC_DATA_START (NDS_ALIGN(NDS_EXT_NEURONCORE_COUNTERS_START + NDS_EXT_NEURONCORE_COUNTERS_SIZE))
+#define NDS_EXT_NEURONCORE_NC_DATA_SIZE (NDS_EXT_MAX_NEURONCORE_COUNT * NDS_EXT_NEURONCORE_NC_DATA_COUNT * sizeof(uint64_t))
+
+#define NDS_EXT_NEURONCORE_NC_DATA(base_addr, nc_index) ((uint64_t *)(base_addr + NDS_EXT_NEURONCORE_NC_DATA_START) + (nc_index * NDS_EXT_NEURONCORE_NC_DATA_COUNT))
 
 #endif  // NEURON_DRIVER_SHARED_H

@@ -30,7 +30,25 @@ MODULE_PARM_DESC(no_reset, "Dont reset device");
 #define NR_RESET_INIT_PRE_WAIT_TIME_INC_MS 2000
 
 #define NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS (NR_RESET_INIT_PRE_WAIT_TIME_INC_MS * 5)
-#define NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 120)
+
+/**
+ * ITER_COAL_REQS - iterate over coalesced reset requests
+ *
+ *     reset requests are coalesced to reduce latency
+ *     caused by performing resets serially. We still need 
+ *     to iterate over the coalesced requests for a variety
+ *     of purposes, so use a macro to make it compact.
+ *
+ *     Iterates from first to last, both inclusive in range
+ */
+#define ITER_COAL_REQS(iter, first, last, statements)   \
+    for (iter = first; ; iter = iter->next) {       	\
+        {statements}                                    \
+        if (iter == last) {                             \
+            break;                                      \
+        }                                               \
+    }
+
 
 int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec) 
 {
@@ -42,54 +60,106 @@ int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec)
 	return jiffies_to_msecs(timeout);
 }
 
+static int nr_call_post_reset_config(struct neuron_device *nd, uint32_t nc_map, bool reset_succeeded)
+{
+	if (nc_map == NEURON_NC_MAP_DEVICE) {
+		return ndhal->ndhal_reset.nr_post_reset_config(nd, reset_succeeded);
+	}
+	return 0;
+}
+
 static int nr_reset_thread_fn(void *arg)
 {
 	int ret;
 	struct neuron_device *nd = (struct neuron_device *)arg;
 
 	while (!kthread_should_stop() && !nd->nr.stop) {
+		volatile struct neuron_reset_request *first_request = NULL;
+		volatile struct neuron_reset_request *last_request = NULL;
+		volatile struct neuron_reset_request *request_iter = NULL;
+		uint32_t nc_map = 0;
+		int coal_cnt = 0;
+		enum neuron_reset_state state;
 		// sleep until there is a request pending or asked to stop
 		wait_event_interruptible(nd->nr.wait_queue, nd->nr.req_pending_head || nd->nr.stop);
 		if (kthread_should_stop() || nd->nr.stop)
 			break;
-		volatile struct neuron_reset_request *req = nd->nr.req_pending_head;
-		enum neuron_reset_state state = NEURON_RESET_STATE_STARTED;
+
+		// get the pending request list as it is now
+		// mutex because nr_start_ncs could be adding a new request in parallel
+		mutex_lock(&nd->nr.nr_lock);
+		first_request = nd->nr.req_pending_head;
+		last_request = nd->nr.req_pending_tail;
+		mutex_unlock(&nd->nr.nr_lock);
+
+		nc_map = first_request->nc_map;
+		if (first_request->request_id != NEURON_RESET_REQUEST_ALL && first_request->next != NULL) {
+			ITER_COAL_REQS(request_iter, first_request, last_request, {
+				coal_cnt++;
+				nc_map |= request_iter->nc_map; 
+			})
+		} else {
+			last_request = first_request;
+		}
+
+		state = NEURON_RESET_STATE_STARTED;
 		nd->nr.reset_start_time = get_jiffies_64();
-		pr_info("nd%d: initiating reset request %u\n", nd->device_index, req->request_id);
-		ret = ndhal->ndhal_reset.nr_initiate_reset(nd);
+
+		if (coal_cnt > 1) {
+			pr_info("nd%d: Coalesced %d reset requests\n", nd->device_index, coal_cnt);
+		}
+		ITER_COAL_REQS(request_iter, first_request, last_request, pr_info("nd%d: initiating reset request %u\n", nd->device_index, request_iter->request_id);)
+
+		ret = ndhal->ndhal_reset.nr_initiate_reset(nd, nc_map);
 		if (ret) {
+			nr_call_post_reset_config(nd, nc_map, false);
+			ITER_COAL_REQS(request_iter, first_request, last_request,
+				pr_info("nd%d: reset request %u failed\n", nd->device_index, request_iter->request_id);)
 			state = NEURON_RESET_STATE_FAILED;
 			nsysfsmetric_inc_reset_fail_count(nd);
-			pr_info("nd%d: reset request %u failed\n", nd->device_index, req->request_id);
 		} else {
 			// If the reset was successfully initiated the 
 			// response we get back is a pass/fail and we don't need to retry.
 			ret = ndhal->ndhal_reset.nr_wait_for_reset_completion(nd);
 			if (ret) {
-				pr_info("nd%d: reset request %u was initiated, but failed to complete\n", nd->device_index, req->request_id);
+				nr_call_post_reset_config(nd, nc_map, false);
+				ITER_COAL_REQS(request_iter, first_request, last_request,
+					pr_info("nd%d: reset request %u was initiated, but failed to complete\n", nd->device_index, request_iter->request_id);)
 				state = NEURON_RESET_STATE_FAILED;
 				nsysfsmetric_inc_reset_fail_count(nd);
 			} else {
-				ret = ndmar_init_ncs(nd, req->nc_map);
+				ret = ndmar_init_ncs(nd, nc_map);
 				if (ret) {
-					pr_info("nd%d: failed to initialize dma after reset\n", nd->device_index);
+					nr_call_post_reset_config(nd, nc_map, false);
+					ITER_COAL_REQS(request_iter, first_request, last_request,
+						pr_info("nd%d: failed to initialize dma after reset\n", nd->device_index);)
 					state = NEURON_RESET_STATE_FAILED;
-					nsysfsmetric_inc_reset_fail_count(nd);
+					nsysfsmetric_inc_reset_fail_count(nd);			
 				} else {
-					pr_info("nd%d: reset request %u completed\n", nd->device_index, req->request_id);
-					state = NEURON_RESET_STATE_COMPLETED;
+					ret = nr_call_post_reset_config(nd, nc_map, true);
+				    if (ret) {
+						ITER_COAL_REQS(request_iter, first_request, last_request,
+					    	pr_info("nd%d: failed to complete post reset configuration\n", nd->device_index);)
+					    state = NEURON_RESET_STATE_FAILED;
+					} else {
+						ITER_COAL_REQS(request_iter, first_request, last_request,
+							pr_info("nd%d: reset request %u completed\n", nd->device_index, request_iter->request_id);)
+						state = NEURON_RESET_STATE_COMPLETED;
+					}
 				}
 			}
 		}
 		nd->nr.reset_end_time = get_jiffies_64();
 		mutex_lock(&nd->nr.nr_lock);
 		// delete from pending list
-		nd->nr.req_pending_head = req->next;
+		nd->nr.req_pending_head = last_request->next;
 		if (!nd->nr.req_pending_head) {
 			nd->nr.req_pending_tail = NULL;
+		} else {
+			nd->nr.req_pending_head->prev = NULL;
 		}
 
-		if (req->request_id == NEURON_RESET_REQUEST_ALL) {
+		if (first_request->request_id == NEURON_RESET_REQUEST_ALL) {
 			// Update the device state based on reset state, then move on
 			// This path is taken by internal driver reset logic, there is no need to move
 			// the request to the completion queue, since waiters will be polling device state instead
@@ -98,19 +168,19 @@ static int nr_reset_thread_fn(void *arg)
 			} else {
 				nd->device_state = NEURON_DEVICE_STATE_INVALID;
 			}
-			kfree((void *)req);
+			kfree((void *)first_request);
 		} else {
 			// add to completed list
-			req->next = NULL;
-			req->prev = nd->nr.req_cmpl_tail;
+			last_request->next = NULL;
+			first_request->prev = nd->nr.req_cmpl_tail;
 			if (nd->nr.req_cmpl_tail) {
-				nd->nr.req_cmpl_tail->next = req;
+				nd->nr.req_cmpl_tail->next = first_request;
 			}
-			nd->nr.req_cmpl_tail = req;
+			nd->nr.req_cmpl_tail = last_request;
 			if (!nd->nr.req_cmpl_head) {
-				nd->nr.req_cmpl_head = req;
+				nd->nr.req_cmpl_head = first_request;
 			}
-			req->ret = state;
+			ITER_COAL_REQS(request_iter, first_request, last_request, request_iter->ret = state;)
 		}
 		mutex_unlock(&nd->nr.nr_lock);
 	}
@@ -212,8 +282,10 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
 	req->nc_map = nc_map;
 	req->ret = NEURON_RESET_STATE_STARTED;
 	req->next = NULL;
+	req->prev = NULL;
 	if (nd->nr.req_pending_tail) {
 		nd->nr.req_pending_tail->next = req;
+		req->prev = nd->nr.req_pending_tail;
 	}
 	nd->nr.req_pending_tail = req;
 	if (!nd->nr.req_pending_head) {
@@ -321,7 +393,7 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
 
 		reset_inc = (reset_inc >= NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS) ? NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS : reset_inc + NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
 
-	} while (ktime_to_ms(ktime_sub(ktime_get(), start_time)) < NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS);
+	} while (ktime_to_ms(ktime_sub(ktime_get(), start_time)) < ndhal->ndhal_reset.initiate_max_wait_time);
 
 	return -1;
 }

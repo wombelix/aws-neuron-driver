@@ -56,8 +56,16 @@ enum {
 	FW_IO_REG_SRAM_ECC_OFFSET = 0x40, // 16 * 4 bytes
 	FW_IO_REG_HBM0_ECC_OFFSET = 0x44, // 17 * 4 bytes
 	FW_IO_REG_HBM1_ECC_OFFSET = 0x48, // 18 * 4 bytes
+	FW_IO_REG_HBM2_ECC_OFFSET = 0x4c, // 19 * 4 bytes
+	FW_IO_REG_HBM3_ECC_OFFSET = 0x50, // 20 * 4 bytes
 
 	FW_IO_REG_METRIC_OFFSET = 0x100, // 0x100 to 0x17F, 128 bytes
+    FW_IO_REG_LH_NEIGHBOR_SERNUM_HI = 0x180, // LH/RH neighbors
+    FW_IO_REG_LH_NEIGHBOR_SERNUM_LO = 0x184, 
+    FW_IO_REG_RH_NEIGHBOR_SERNUM_HI = 0x188, 
+    FW_IO_REG_RH_NEIGHBOR_SERNUM_LO = 0x18c, 
+    FW_IO_REG_POD_ELECTION_STS = 0x190, 
+    FW_IO_REG_POD_ELECTION_NOTICE = 0x194, 
 	FW_IO_REG_RESET_TPB_MAP_OFFSET = 0x1d8,
 	FW_IO_REG_RESET_OFFSET = 0x1ec,
 	FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET = 0x1f4,
@@ -243,7 +251,12 @@ u64 fw_io_get_err_count(struct fw_io_ctx *ctx);
  * fw_io_ecc_read() - Read ECC errors
  * 
  * @param bar: from bar
- * @param ecc_offset: one of FW_IO_REG_SRAM_ECC_OFFSET, FW_IO_REG_HBM0_ECC_OFFSET, and FW_IO_REG_HBM1_ECC_OFFSET
+ * @param ecc_offset: one of
+ *     FW_IO_REG_SRAM_ECC_OFFSET
+ *     FW_IO_REG_HBM0_ECC_OFFSET
+ *     FW_IO_REG_HBM1_ECC_OFFSET
+ *     FW_IO_REG_HBM2_ECC_OFFSET
+ *     FW_IO_REG_HBM3_ECC_OFFSET
  * @param ecc_err_count: output ecc error count
  * 
  * @return 0 on success

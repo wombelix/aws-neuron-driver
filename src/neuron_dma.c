@@ -191,7 +191,7 @@ static inline void ndma_release_dma_ctx( struct ndma_eng *eng, struct ndma_ring 
  *    add a completion entry to the ring 
  *
  */
-static int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *ring, void * completion_buffer)
+int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *ring, void * completion_buffer)
 {
 	int ret = 0;
 	struct udma_ring_ptr completion;
@@ -221,12 +221,7 @@ error:
 	return ret;
 }
 
-
-/**
- * Wait for completion by start transfer of a DMA between two host memory locations and polling
- * on the host memory for the data to be written.
- */
-static int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async)
+int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_d2d)
 {
 	int ret = 0;
 	volatile u32 *dst;
@@ -235,6 +230,10 @@ static int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_rin
 	u64 first_wait_time, wait;
 
 	ndhal->ndhal_ndma.ndma_get_wait_for_completion_time(count, async, &first_wait_time, &wait);
+	if (is_d2d && !async) {
+		first_wait_time = 10; // device-to-device DMA is much faster, just choose a small value independent of number of descriptors
+		wait = wait/20; // can probably be set even lower if required
+	}
 
 	unsigned long one_loop_sleep = 1; // poll every 1 usecs
 	u64 loop = wait / one_loop_sleep + 1;
@@ -277,12 +276,12 @@ error:
 	return ret;
 }
 
-static int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr_t src,
-			  dma_addr_t dst, u32 size, bool set_dmb)
+int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr_t src,
+			  dma_addr_t dst, u32 size, int barrier_type)
 {
 	int ret = -1;
 
-	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, src, dst, size, ndhal->ndhal_ndma.ndma_get_m2m_barrier_type(set_dmb), false);
+	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, src, dst, size, barrier_type, false);
 	if (ret) {
 		pr_err("failed to prepare DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
 		return ret;
@@ -334,7 +333,7 @@ static int ndma_memcpy_chunks( struct ndma_eng *eng, struct ndma_ring *ring, str
 		src_offset = dma_ctx->smove ? src + offset : src;
 		dst_offset = dma_ctx->dmove ? dst + offset : dst;
 
-		ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, done);
+		ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, ndhal->ndhal_ndma.ndma_get_m2m_barrier_type(done));
 		if (ret) { 
 			return ret;
 		}
@@ -374,7 +373,7 @@ static int _ndma_memcpy_wait_for_completion( struct neuron_device *nd, u32 nc_id
 
 	while(true) {
 
-		ret = ndma_memcpy_wait_for_completion(eng, ring, dma_ctx->pending_transfers, dma_ctx->completion_ptr, async);
+		ret = ndma_memcpy_wait_for_completion(eng, ring, dma_ctx->pending_transfers, dma_ctx->completion_ptr, async, false);
 
 		if (ret == 0) 
 			return ret;

@@ -40,7 +40,11 @@ MODULE_PARM_DESC(use_rr, "use readless reads");
 
 int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count)
 {
-	if (ecc_offset != FW_IO_REG_SRAM_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM0_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM1_ECC_OFFSET) {
+	if (ecc_offset != FW_IO_REG_SRAM_ECC_OFFSET &&
+		ecc_offset != FW_IO_REG_HBM0_ECC_OFFSET &&
+		ecc_offset != FW_IO_REG_HBM1_ECC_OFFSET &&
+		ecc_offset != FW_IO_REG_HBM2_ECC_OFFSET &&
+		ecc_offset != FW_IO_REG_HBM3_ECC_OFFSET) {
 		pr_err("wrong ecc offset is given\n");
 		return -EINVAL;
 	}

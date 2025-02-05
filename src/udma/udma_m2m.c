@@ -463,3 +463,43 @@ void udma_m2m_set_axi_error_abort(struct udma *udma)
 	reg_write32(&udma->gen_axi_regs->cfg_1, 0xffffffff);
 }
 
+void udma_m2m_mask_ring_id_error(struct udma *udma, void __iomem *intc_base) {
+	uint32_t ring_id_mask = 0;
+	void __iomem *int_mask_addr = NULL;
+	struct udma_gen_regs_v4 *gen_regs = (struct udma_gen_regs_v4 *)udma->gen_regs;
+
+	// mask ring id errors from the udma secondary intc
+	// tx
+	reg_read32(&gen_regs->interrupt_regs.secondary_iofic_ctrl[0].int_mask_grp, &ring_id_mask);
+	ring_id_mask |= UDMA_M2S_ERR_LOG_MASK_PREF_RING_ID;
+	reg_write32(&gen_regs->interrupt_regs.secondary_iofic_ctrl[0].int_mask_grp, ring_id_mask);
+	reg_write32(&gen_regs->interrupt_regs.secondary_iofic_ctrl[0].int_abort_msk_grp, ring_id_mask);
+	// rx
+	reg_read32(&gen_regs->interrupt_regs.secondary_iofic_ctrl[1].int_mask_grp, &ring_id_mask);
+	ring_id_mask |= UDMA_S2M_ERR_LOG_MASK_PREF_RING_ID;
+	reg_write32(&gen_regs->interrupt_regs.secondary_iofic_ctrl[1].int_mask_grp, ring_id_mask);
+	reg_write32(&gen_regs->interrupt_regs.secondary_iofic_ctrl[1].int_abort_msk_grp, ring_id_mask);
+
+	// mask ring id errors from the top-level intc
+	// tx
+	int_mask_addr = intc_base + 2 * sizeof(struct iofic_grp_ctrl) + offsetof(struct iofic_grp_ctrl, int_mask_grp);
+	reg_read32(int_mask_addr, &ring_id_mask);
+	ring_id_mask |= INT_CONTROL_GRP_UDMA_M2S_PREF_RING_ID;
+	reg_write32(int_mask_addr, ring_id_mask);
+	// // rx
+	int_mask_addr = intc_base + 3 * sizeof(struct iofic_grp_ctrl) + offsetof(struct iofic_grp_ctrl, int_mask_grp);
+	reg_read32(int_mask_addr, &ring_id_mask);
+	ring_id_mask |= INT_CONTROL_GRP_UDMA_S2M_PREF_RING_ID;
+	reg_write32(int_mask_addr, ring_id_mask);
+
+	// mask ring id errors from the error logs
+	// tx
+	reg_read32(&udma->udma_regs_m2s->m2s.err_log_mask, &ring_id_mask);
+	ring_id_mask |= UDMA_M2S_ERR_LOG_MASK_PREF_RING_ID;
+	reg_write32(&udma->udma_regs_m2s->m2s.err_log_mask, ring_id_mask);
+	// rx
+	reg_read32(&udma->udma_regs_s2m->s2m.err_log_mask, &ring_id_mask);
+	ring_id_mask |= UDMA_S2M_ERR_LOG_MASK_PREF_RING_ID;
+	reg_write32(&udma->udma_regs_s2m->s2m.err_log_mask, ring_id_mask);
+}
+

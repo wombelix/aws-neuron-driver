@@ -122,15 +122,5 @@ int nc_get_nq_mem_handle(struct neuron_device *nd, int nc_id, int engine_index, 
  */
 void nc_nq_device_init(struct neuron_device *nd);
 
-/**
- * nc_ds_mmap_offset() - Return mmap offset for the datastore for the given nc.
- *
- * @nc_index: neuroncore index
- * @nd: neuron device
- *
- * Return: offset to be used to mmap in the /dev/ndX file or (u64)(-1) in case of invalid nc index
- */
-u64 nc_ds_mmap_offset(struct neuron_device *nd, u8 nc_index);
-
 
 #endif

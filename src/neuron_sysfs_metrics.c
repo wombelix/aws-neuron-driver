@@ -85,7 +85,11 @@ const static nsysfsmetric_counter_node_info_t status_counter_nodes_info_tbl[] = 
     COUNTER_NODE_INFO("execute_failed_to_queue",     NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE)),
     COUNTER_NODE_INFO("invalid_error",               NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_INVALID)),
     COUNTER_NODE_INFO("unsupported_neff_version",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION)),
-    COUNTER_NODE_INFO("oob_error",                   NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_OOB))
+    COUNTER_NODE_INFO("oob_error",                   NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_OOB)),
+    COUNTER_NODE_INFO("hw_collectives_error",        NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_COLLECTIVES)),
+    COUNTER_NODE_INFO("hw_hbm_ue_error",             NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_HBM_UE)),
+    COUNTER_NODE_INFO("hw_nc_ue_error",              NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_NC_UE)),
+    COUNTER_NODE_INFO("hw_dma_abort_error",          NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT))
 };
 const static int status_counter_nodes_info_tbl_cnt = sizeof(status_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
 
@@ -335,23 +339,19 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
     } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_HBM_UNCORRECTED)) {
         struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
 
+        uint64_t ecc_offset = 0;
         uint32_t total_uncorrected_ecc_err_count = 0;
         uint32_t ecc_err_count = 0;
-        uint64_t ecc_offset = FW_IO_REG_HBM0_ECC_OFFSET;
-        int ret = fw_io_ecc_read(nd->npdev.bar0, ecc_offset, &ecc_err_count);
-        if (ret) {
-            pr_err("sysfs failed to read ECC HBM0 error from FWIO\n");
-        } else if (ecc_err_count != 0xdeadbeef) {
-            total_uncorrected_ecc_err_count += (ecc_err_count & 0x0000ffff);
-        }
-
-        ecc_err_count = 0;
-        ecc_offset = FW_IO_REG_HBM1_ECC_OFFSET;
-        ret = fw_io_ecc_read(nd->npdev.bar0, ecc_offset, &ecc_err_count);
-        if (ret) {
-            pr_err("sysfs failed to read ECC HBM1 error from FWIO\n");
-        } else if (ecc_err_count != 0xdeadbeef) {
-            total_uncorrected_ecc_err_count += (ecc_err_count & 0x0000ffff);
+        uint32_t channel = 0;
+        for (channel = 0; channel < ndhal->ndhal_address_map.dram_channels; channel++) {
+            ecc_offset = FW_IO_REG_HBM0_ECC_OFFSET + channel * sizeof(uint32_t);
+            ecc_err_count = 0;
+            int ret = fw_io_ecc_read(nd->npdev.bar0, ecc_offset, &ecc_err_count);
+            if (ret) {
+                pr_err("sysfs failed to read ECC HBM%u error from FWIO\n", channel);
+            } else if (ecc_err_count != 0xdeadbeef) {
+                total_uncorrected_ecc_err_count += (ecc_err_count & 0x0000ffff);
+            }
         }
 
         len = nsysfsmetric_sysfs_emit(buf, "%u\n", total_uncorrected_ecc_err_count);

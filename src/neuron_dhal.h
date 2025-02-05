@@ -6,6 +6,8 @@
 #include "neuron_mmap.h"
 #include "neuron_sysfs_metrics.h"
 
+extern int force_die_flip;
+
 struct ndhal_address_map {
 	// addresses
 	uint64_t pci_host_base;
@@ -32,9 +34,11 @@ struct ndhal_address_map {
 };
 
 struct ndhal_reset {
+	uint64_t initiate_max_wait_time;
     uint32_t retry_count;
-    int (*nr_initiate_reset) (struct neuron_device *nd);
+    int (*nr_initiate_reset) (struct neuron_device *nd, uint32_t nc_map);
     int (*nr_wait_for_reset_completion) (struct neuron_device *nd);
+	int (*nr_post_reset_config) (struct neuron_device *nd, bool reset_successful);
 };
 
 struct ndhal_topsp {
@@ -58,6 +62,9 @@ struct ndhal_nq {
 
 struct ndhal_mpset {
     int mp_min_alloc_size;
+    u64 device_dram_effective_base_addr[MAX_DRAM_CHANNELS];
+    u64 device_dram_end_addr[MAX_DRAM_CHANNELS];
+    bool small_pool_supported;
     void (*mpset_set_dram_and_mpset_info) (struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size);
     int (*mpset_block_carveout_regions) (struct neuron_device *nd, struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size);
 };
@@ -126,6 +133,8 @@ struct ndhal_cdev {
     void (*ncdev_compatible_version) (struct neuron_ioctl_compatible_version *arg);
     void (*ncdev_quiesce_exec_on_proc_exit) (void);
     int (*ncdev_bar_write_data) (struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count);
+    int (*ncdev_logical_to_physical_nc_map)(struct neuron_ioctl_nc_map *map, uint32_t max_num_entries, enum neuron_ioctl_nc_mapping_type mapping_type);
+    void (*ncdev_get_default_tpbs_for_hbm) (u32 hbm_index, u32 tpbs[MAX_NC_PER_DEVICE], u32 *tpb_count);
 };
 
 struct ndhal_udma {
@@ -142,6 +151,13 @@ struct ndhal_ndma {
     int (*ndma_init) (void __iomem *bar0, struct udma *udma, int eng_id);
     int (*ndma_is_bar0_write_blocked) (u64 off);
     int (*ndma_get_m2m_barrier_type) (bool set_dmb);
+    void (*ndma_get_engines_with_host_connectivity) (u32 hbm_index, u32 engines[NUM_DMA_ENG_PER_DEVICE], u32 *num_engines);
+};
+
+struct ndhal_npe {
+	int (*npe_pod_info)( u8 *pod_type, u8 *pod_id, u8 *pod_sz);
+	int (*npe_pod_status)( u32 *pod_state, u8 *node_id);
+	int (*npe_pod_ctrl)( u32 pod_ctrl, u32 *pod_state);
 };
 
 struct neuron_dhal {
@@ -163,6 +179,8 @@ struct neuron_dhal {
     struct ndhal_cdev ndhal_cdev;
     struct ndhal_udma ndhal_udma;
     struct ndhal_ndma ndhal_ndma;
+	struct ndhal_npe ndhal_npe;
+    void (*ndhal_ext_cleanup) (void);
 };
 
 extern struct neuron_dhal *ndhal;       // ndhal is a global structure shared by all available neuron devices
@@ -178,6 +196,12 @@ extern struct neuron_dhal *ndhal;       // ndhal is a global structure shared by
  * @return int 0 for success, negative for failures
  */
 int neuron_dhal_init(unsigned int pci_device_id);
+
+/**
+ * @brief Cleanup any ndhal related resources prior to 
+ *
+ */
+void neuron_dhal_cleanup(void);
 
 /**
  * @brief Clean up ndhal

@@ -127,6 +127,11 @@ static const nmetric_def_t nmetric_defs[] = {
 	// counter metrics continue
 	NMETRIC_COUNTER_DEF(18, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_OOB, NDS_NC_COUNTER_OOB),
 
+	NMETRIC_COUNTER_DEF(19, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_HW_ERR_COLLECTIVES, NDS_EXT_NC_COUNTER_HW_ERR_COLLECTIVES),
+	NMETRIC_COUNTER_DEF(20, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_HW_ERR_HBM_UE, NDS_EXT_NC_COUNTER_HW_ERR_HBM_UE),
+	NMETRIC_COUNTER_DEF(21, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_HW_ERR_NC_UE, NDS_EXT_NC_COUNTER_HW_ERR_NC_UE),
+	NMETRIC_COUNTER_DEF(22, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_HW_ERR_DMA_ABORT, NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT),
+
 	// bitmap metrics
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_FEATURE_BITMAP, NDS_ND_COUNTER_FEATURE_BITMAP),
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_UNUSED, NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP),
@@ -141,7 +146,7 @@ static const int nmetric_count = sizeof(nmetric_defs) / sizeof(nmetric_def_t);
 // AND don't forget to increase the NMETRIC_..._COUNT in neuron_metrics.h
 #define NMETRIC_INSTANCE_ID_IDX		0
 #define NMETRIC_DRIVER_VERS_IDX 	1
-#define NMETRIC_FW_IO_ERR_IDX		(nmetric_count - 1)
+#define NMETRIC_FW_IO_ERR_IDX		17
 
 struct nmetric_cw_metric {
 	u8 id;
@@ -702,9 +707,6 @@ static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metric
 static int nmetric_thread_fn(void *arg)
 {
 	struct neuron_device *nd = (struct neuron_device *)arg;
-	u64 curr[NMETRIC_COUNTER_COUNT]; // metrics for the current session so far
-	u64 prev[NMETRIC_COUNTER_COUNT]; // recorded metrics from the last post
-	u64 freed[NMETRIC_COUNTER_COUNT]; // cache holding metrics that were freed before the posting period was reached
 	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
 	u64 curr_feature_bitmap;  // feature_bitmap for the current session
 	u64 freed_feature_bitmap; // cache hold the feature_bitmap that was freed before the posting period was reached
@@ -713,9 +715,9 @@ static int nmetric_thread_fn(void *arg)
 	u8 tick = 0;
 
 	// initialize all aggregation buffers
-	memset(prev, 0, nmetric_counters_buf_size);
-	memset(curr, 0, nmetric_counters_buf_size);
-	memset(freed, 0, nmetric_counters_buf_size);
+	memset(nd->metrics.neuron_aggregation.prev, 0, nmetric_counters_buf_size);
+	memset(nd->metrics.neuron_aggregation.curr, 0, nmetric_counters_buf_size);
+	memset(nd->metrics.neuron_aggregation.freed, 0, nmetric_counters_buf_size);
 	memset(component_versions, 0, nmetric_versions_buf_size);
 	curr_feature_bitmap = 0;
 	freed_feature_bitmap = 0;
@@ -730,12 +732,12 @@ static int nmetric_thread_fn(void *arg)
 
 		// aggregate and post metrics
 		neuron_ds_acquire_lock(&nd->datastore);
-		nmetric_full_aggregate(nd, curr, &curr_feature_bitmap, const_u64_metrics, tick);
-		nmetric_cache_shared_bufs(nd, freed, component_versions, &freed_feature_bitmap, freed_const_u64_metrics, tick);
+		nmetric_full_aggregate(nd, nd->metrics.neuron_aggregation.curr, &curr_feature_bitmap, const_u64_metrics, tick);
+		nmetric_cache_shared_bufs(nd, nd->metrics.neuron_aggregation.freed, component_versions, &freed_feature_bitmap, freed_const_u64_metrics, tick);
 		neuron_ds_release_lock(&nd->datastore);
 
-		nmetric_post_metrics(nd, curr, prev, freed, component_versions, curr_feature_bitmap, freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick);
-		nmetric_start_new_session(nd, curr, prev, freed, &curr_feature_bitmap, &freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick); // reset all current metrics for this tick
+		nmetric_post_metrics(nd, nd->metrics.neuron_aggregation.curr, nd->metrics.neuron_aggregation.prev, nd->metrics.neuron_aggregation.freed, component_versions, curr_feature_bitmap, freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick);
+		nmetric_start_new_session(nd, nd->metrics.neuron_aggregation.curr, nd->metrics.neuron_aggregation.prev, nd->metrics.neuron_aggregation.freed, &curr_feature_bitmap, &freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick); // reset all current metrics for this tick
 		tick = (tick + 1) % POST_TICK_COUNT;
 	}
 	return 0;

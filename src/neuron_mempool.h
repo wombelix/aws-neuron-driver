@@ -49,7 +49,8 @@ struct mempool {
 	u32 dram_channel; // DRAM channel valid only if location is device
 	u32 dram_region; // DRAM region valid only if location is device
 
-	struct gen_pool *gen_pool; // backing gen_pool allocator
+	struct gen_pool *gen_pool; // main gen pool
+	struct gen_pool *gen_pool_small; // small gen pool for small allocations to avoid fragmentation, may be NULL
 
 	size_t region_size; // size of the initial region
 	size_t allocated_size; // total allocated memory size in bytes
@@ -124,6 +125,7 @@ struct mem_chunk {
 
 	struct mempool *mp; // backpointer to mp
 	struct mempool_set *mpset; // back pointer to mpset
+	struct gen_pool *gen_pool; // pointer to genpool
 
 	u32 dram_channel; // DRAM channel
 	u32 dram_region; // TDRAM region

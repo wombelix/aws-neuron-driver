@@ -8,12 +8,12 @@
 
 #define MAX_CHILD_NODES_NUM	    32
 #define NON_NDS_COUNTER_COUNT   64
-#define MAX_METRIC_ID           (NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT + NON_NDS_COUNTER_COUNT)
+#define MAX_METRIC_ID           (NDS_ND_COUNTER_COUNT + NDS_EXT_NC_COUNTER_LAST + NON_NDS_COUNTER_COUNT)
 #define MAX_COUNTER_ATTR_TYPE_COUNT	3
 
 #define NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(nds_id) (nds_id)
-#define NDS_ND_COUNTER_ID_TO_SYSFS_METRIC_ID(nds_id) (nds_id + NDS_NC_COUNTER_COUNT)
-#define NON_NDS_ID_TO_SYSFS_METRIC_ID(non_nds_id)    (non_nds_id + NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT)
+#define NDS_ND_COUNTER_ID_TO_SYSFS_METRIC_ID(nds_id) (nds_id + NDS_EXT_NC_COUNTER_LAST)
+#define NON_NDS_ID_TO_SYSFS_METRIC_ID(non_nds_id)    (non_nds_id + NDS_ND_COUNTER_COUNT + NDS_EXT_NC_COUNTER_LAST)
 
 #define ATTR_INFO(_attr_name, _metric_id, _attr_type) { \
     .attr_name = _attr_name,                            \

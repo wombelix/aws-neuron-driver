@@ -43,6 +43,11 @@
  */
 #define REG_SDMA_EVENT_ACCEL_OFFSET 0x0
 
+/* tdma_model_robert_txdf:
+ *        0:9 - overhead_beats_outstanding
+ */
+#define REG_SDMA_MODEL_ROBERT_TXDF 0x800
+
 /** Initialize the SDMA.
  *
  * @param[in,out] sdma  - SDMA handle to initialize
@@ -66,6 +71,9 @@ static inline int sdma_init_engine(void __iomem *regs_base)
 
 	// enable event acceleration
 	reg_write32(regs_base + REG_SDMA_EVENT_ACCEL_OFFSET, 1);
+
+	// adjust number of beats outstanding config for backpressure
+	reg_write32(regs_base + REG_SDMA_MODEL_ROBERT_TXDF, 0x26);
 
 	return 0;
 }

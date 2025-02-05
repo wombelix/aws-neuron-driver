@@ -45,7 +45,7 @@ static struct ndma_ring *ndmar_get_ring(struct ndma_queue *queue)
 	return &queue->ring_info;
 }
 
-static u32 ndmar_ring_get_desc_count(u32 v)
+u32 ndmar_ring_get_desc_count(u32 v)
 {
 	if (v < 32) {
 		return 64;
@@ -120,7 +120,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 
 int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_count,
 		     u32 rx_desc_count, struct mem_chunk *tx_mc, struct mem_chunk *rx_mc,
-		     struct mem_chunk *rxc_mc, u32 port)
+		     struct mem_chunk *rxc_mc, u32 port, bool allocatable)
 {
 	int ret = -1;
 	struct ndma_eng *eng;
@@ -173,7 +173,7 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 		ndmar_ring_set_mem_chunk(eng, qid, rxc_mc, port, NEURON_DMA_QUEUE_TYPE_COMPLETION);
 	}
 
-	ret = udma_m2m_init_queue(&eng->udma, qid, tx_desc_count, rx_desc_count, false, tx_mc != NULL ? &ring->tx : NULL,
+	ret = udma_m2m_init_queue(&eng->udma, qid, tx_desc_count, rx_desc_count, allocatable, tx_mc != NULL ? &ring->tx : NULL,
 				  rx_mc != NULL ? &ring->rx : NULL, rxc_mc != NULL ? &ring->rxc : NULL);
 
 done:
@@ -205,7 +205,7 @@ void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 				continue;
 			}
 
-			ret = ndmar_queue_init(nd, eng_id, qid, desc_count, desc_count, mc, mc, NULL, 0);
+			ret = ndmar_queue_init(nd, eng_id, qid, desc_count, desc_count, mc, mc, NULL, 0, false);
 			// ignore the error and continue to reset other queues.
 			if (ret)
 				pr_err("nd%d:dma%d:q%d failed to reset (%d)", nd->device_index, eng_id, qid, ret);

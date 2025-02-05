@@ -14,7 +14,7 @@ enum neuron_arch {
 	NEURON_ARCH_V1 = 1,
 	NEURON_ARCH_V2 = 2,
 	NEURON_ARCH_V3 = 3,
-	NEURON_ARCH_NUM = 4
+	NEURON_ARCH_NUM
 };
 
 /**

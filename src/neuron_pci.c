@@ -170,12 +170,16 @@ static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 	u8 revision;
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &revision);
 
-	if (device == TRN1_DEVICE_ID0 || device == INF2_DEVICE_ID0) {
-		arch = NEURON_ARCH_V2;
-	} else if (device == TRN2_DEVICE_ID0) {
-		arch = NEURON_ARCH_V3;
-	} else {
-		arch = NEURON_ARCH_V1;
+	switch(device) {
+		case TRN1_DEVICE_ID0:
+		case INF2_DEVICE_ID0:
+			arch = NEURON_ARCH_V2;
+			break;
+		case TRN2_DEVICE_ID0:
+			arch = NEURON_ARCH_V3;
+			break;
+		default:
+			arch = NEURON_ARCH_V1;
 	}
 	narch_init(arch, revision);
 }
@@ -380,6 +384,7 @@ int neuron_pci_module_init(void)
 
 void neuron_pci_module_exit(void)
 {
+	neuron_dhal_cleanup();
 	pci_unregister_driver(&neuron_pci_driver);
 	neuron_dhal_free();
 }

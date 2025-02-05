@@ -13,6 +13,8 @@
 
 struct neuron_device;
 
+#define DMA_COMPLETION_MARKER_SIZE sizeof(u32)
+
 /**
  * ndma_memcpy_mc() - Copy data from a memory to another memory chunk.
  *
@@ -148,5 +150,28 @@ bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa);
  * @return int 
  */
 int ndma_bar0_blocked_one_engine(u64 base, u64 off);
+
+/**
+ * ndma_memcpy64k - create one descriptor (size must be <= 64K)
+ * 
+ */
+
+int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr_t src,
+			  dma_addr_t dst, u32 size, int barrier_type);
+
+/*
+ * ndma_memcpy_add_completion_desc()
+ *
+ *    add a completion entry to the ring 
+ *
+ */
+int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *ring, void * completion_buffer);
+
+/**
+ * Wait for completion by start transfer of a DMA between two host memory locations and polling
+ * on the host memory for the data to be written.
+ */
+int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_d2d);
+
 
 #endif

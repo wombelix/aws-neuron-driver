@@ -460,6 +460,45 @@ struct neuron_ioctl_host_device_id_to_rid_map {
 	__u32   host_did_to_rid_map[NEURON_IOCTL_MAX_DEVICES];   // [out] device to routing id map
 };
 
+struct neuron_ioctl_hbm_scrub_start {
+	__u32 nc_id;
+	__u32 hbm_index;
+	__u32 axi_port;
+	__u32 init_val;
+};
+
+struct neuron_ioctl_hbm_scrub_wait {
+	__u32 nc_id;
+	__u32 hbm_index;
+};
+
+struct neuron_ioctl_get_logical_to_physical_nc_map {
+	struct neuron_ioctl_nc_map *map;
+	__u32 max_map_entries;
+	__u32 mapping_version; // this is of type enum neuron_ioctl_nc_mapping_type
+};
+
+struct neuron_ioctl_pod_info {
+	__u16 sz; 			// [in] structure size for versioning.
+	__u8 pod_type; 		// [out] 0:NONE 1:P2P 2:SWITCH
+	__u8 pod_id[256]; 	// [out] unique id across all instances within a pod
+	__u8 pod_sz; 		// [out] size of the pod
+};
+
+struct neuron_ioctl_pod_status {
+	__u16 sz;           // [in] structure size for versioning.
+	__u8 pod_id[256];   // [out]  unique id across all instances within a pod
+	__u32 state;		// [out] current pod election state
+	__u8 pod_type;      // [out] 0:NONE 1:P2P 2:SWITCH
+	__u8 pod_sz;        // [out] size of the pod
+	__u8 node_id;       // [out] Relative intra pod node id
+};
+
+struct neuron_ioctl_pod_ctrl {
+	__u16 sz;           // [in] structure size for versioning.
+	__u32 ctrl;		    // [in] control
+	__u32 state;		// [out] current pod election state
+};
 
 #define NEURON_IOCTL_BASE 'N'
 
@@ -631,7 +670,18 @@ struct neuron_ioctl_host_device_id_to_rid_map {
 
 #define NEURON_IOCTL_NC_PID_STATE_DUMP _IOWR(NEURON_IOCTL_BASE, 117, struct neuron_ioctl_nc_pid_state_dump)
 
+#define NEURON_IOCTL_HBM_SCRUB_START _IOWR(NEURON_IOCTL_BASE, 118, struct neuron_ioctl_hbm_scrub_start) 
+#define NEURON_IOCTL_HBM_SCRUB_WAIT _IOWR(NEURON_IOCTL_BASE, 119, struct neuron_ioctl_hbm_scrub_wait) 
+
+#define NEURON_IOCTL_GET_LOGICAL_TO_PHYSICAL_NC_MAP _IOWR(NEURON_IOCTL_BASE, 120, struct  neuron_ioctl_get_logical_to_physical_nc_map)
+
+#define NEURON_IOCTL_POD_INFO _IOWR(NEURON_IOCTL_BASE, 121, struct neuron_ioctl_pod_info)
+
+#define NEURON_IOCTL_POD_STATUS _IOWR(NEURON_IOCTL_BASE, 122, struct neuron_ioctl_pod_status)
+
+#define NEURON_IOCTL_POD_CTRL _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl)
+
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
-#define NEURON_IOCTL_MAX 118
+#define NEURON_IOCTL_MAX 124
 
 #endif

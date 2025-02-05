@@ -3,7 +3,6 @@
 #include "neuron_arch.h"
 #include "neuron_dhal.h"
 
-
 struct neuron_dhal *ndhal = NULL;
 
 static DEFINE_MUTEX(ndhal_init_lock);   // mutex lock to ensure single init of ndhal
@@ -51,8 +50,18 @@ int neuron_dhal_init(unsigned int pci_device_id) {
     return ret;
 }
 
+void neuron_dhal_cleanup(void)
+{
+    if (ndhal) {
+    	if (ndhal->ndhal_ext_cleanup) {
+    		ndhal->ndhal_ext_cleanup();
+		}
+	}
+}
+
 void neuron_dhal_free(void)
 {
-    if (ndhal)
+    if (ndhal) {
         kfree(ndhal);
+	}
 }

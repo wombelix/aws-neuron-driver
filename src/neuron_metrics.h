@@ -37,7 +37,7 @@
 #define NMETRIC_CONSTANTS_COUNT	2
 
 // Number of metrics of type NMETRIC_TYPE_COUNTER + the special case (type NMETRIC_TYPE_FW_IO_ERR)
-#define NMETRIC_COUNTER_COUNT	19
+#define NMETRIC_COUNTER_COUNT	23
 
 // Number of metrics of type NMETRIC_TYPE_BITMAP
 #define NMETRIC_BITMAP_COUNT 1
@@ -73,6 +73,9 @@ struct nmetric_aggregation_thread {
 	struct task_struct *thread; // aggregation thread that sends metrics every ~5 minutes
 	wait_queue_head_t wait_queue;
 	volatile bool running; // if cleared, thread would exit the loop
+	u64 curr[NMETRIC_COUNTER_COUNT]; // metrics for the current session so far
+	u64 prev[NMETRIC_COUNTER_COUNT]; // recorded metrics from the last post
+	u64 freed[NMETRIC_COUNTER_COUNT]; // cache holding metrics that were freed before the posting period was reached
 };
 
 struct neuron_metrics {

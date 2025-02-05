@@ -170,12 +170,13 @@ int ndmar_eng_set_state(struct neuron_device *nd, int eng_id, u32 state);
  * @rx_mc: Memory chunk backing RX queue
  * @rxc_mc: Memory chunk backing RX completion queue
  * @port: AXI port.
+ * @allocatable: whether new descriptors can be added post queue init
  *
  * Return: 0 if queue init succeeds, a negative error code otherwise.
  */
 int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_count,
 		     u32 rx_desc_count, struct mem_chunk *tx_mc, struct mem_chunk *rx_mc,
-		     struct mem_chunk *rxc_mc, u32 port);
+		     struct mem_chunk *rxc_mc, u32 port, bool allocatable);
 
 /**
  * ndmar_queue_release() - Release a DMA queue.
@@ -283,5 +284,7 @@ int ndmar_queue_get_state(struct neuron_device *nd, int eng_id, int qid,
  * Return: 0 on success, a negative error code otherwise
  */
 int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid);
+
+u32 ndmar_ring_get_desc_count(u32 v);
 
 #endif

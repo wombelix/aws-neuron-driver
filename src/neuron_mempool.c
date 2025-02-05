@@ -59,11 +59,20 @@ static u32 mem_alloc_type_to_sysfs_counter[] = {
 int mempool_min_alloc_size = PAGE_SIZE; // always allocate on mmap() boundary
 int mempool_host_memory_size = 32 * 1024 * 1024;
 
+ulong mempool_small_pool_size = 1ull << 30; // 1 GB
+ulong mempool_small_alloc_max = 512 * 1024; // device allocations less than this size should be allocated in gen_pool_small, or gen_pool only if gen_pool_small has no memory
+
 module_param(mempool_min_alloc_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(mempool_min_alloc_size, "Minimum size for memory allocation");
 
 module_param(mempool_host_memory_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(mempool_host_memory_size, "Host memory to reserve(in bytes)");
+
+module_param(mempool_small_pool_size, ulong, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(mempool_small_pool_size, "Size of genpool for small allocations (in bytes)");
+
+module_param(mempool_small_alloc_max, ulong, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(mempool_small_alloc_max, "Threshold (in bytes) for deciding if an allocation is small");
 
 #ifdef CONFIG_FAULT_INJECTION
 DECLARE_FAULT_ATTR(neuron_fail_mc_alloc);
@@ -126,6 +135,22 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 			      u64 start_addr, size_t pool_size,	u32 dram_channel, u32 dram_region)
 {
 	int ret;
+	ulong small_pool_size = mempool_small_pool_size;
+	size_t main_pool_size;
+	u64 small_pool_start_addr;
+	if (mempool_small_pool_size >= pool_size) {
+		small_pool_size = 0;
+		pr_warn_once("small genpool size %lu is invalid, skipping small genpool\n", mempool_small_pool_size);
+	}
+	if (mempool_small_pool_size > 0 && (mempool_small_pool_size % mempool_min_alloc_size)) {
+		small_pool_size = 0;
+		pr_warn_once("small genpool size %lu is not a multiple of mempool_min_alloc_size %u, skipping small genpool\n", mempool_small_pool_size, mempool_min_alloc_size);
+	}
+	if (!ndhal->ndhal_mpset.small_pool_supported) {
+		small_pool_size = 0;
+	}
+	main_pool_size = pool_size - small_pool_size;
+	small_pool_start_addr = start_addr + main_pool_size;
 
 	// refuse to load with invalid memory alloc configuration
 	BUG_ON(mempool_min_alloc_size < PAGE_SIZE);
@@ -142,17 +167,32 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
 
-	ret = gen_pool_add_virt(mp->gen_pool, start_addr | GENPOOL_DEVMEM_BASE, start_addr, pool_size, -1);
+	ret = gen_pool_add_virt(mp->gen_pool, start_addr | GENPOOL_DEVMEM_BASE, start_addr, main_pool_size, -1);
 	if (ret) {
 		gen_pool_destroy(mp->gen_pool);
 		return ret;
 	}
 
+	if (small_pool_size > 0) {
+		mp->gen_pool_small = gen_pool_create(ilog2(ndhal->ndhal_mpset.mp_min_alloc_size), -1);
+		if (mp->gen_pool_small == NULL) {
+			gen_pool_destroy(mp->gen_pool);
+			return -ENOMEM;
+		}
+
+		ret = gen_pool_add_virt(mp->gen_pool_small, small_pool_start_addr | GENPOOL_DEVMEM_BASE, small_pool_start_addr, small_pool_size, -1);
+		if (ret) {
+			gen_pool_destroy(mp->gen_pool);
+			gen_pool_destroy(mp->gen_pool_small);
+			return ret;
+		}
+	} else {
+		mp->gen_pool_small = NULL;
+	}
 
 	snprintf(mp->name, sizeof(mp->name), "device mempool [%d:%d]", dram_channel, dram_region);
 	mp->region_size = pool_size;
 	mp->initialized = 1;
-
 
 	return 0;
 }
@@ -205,6 +245,7 @@ static int mp_init_hrm_pool(struct mempool *mp, struct mempool_set *mpset,
 	mp->mpset = mpset;
 	mp->mem_location = MEM_LOC_HOST;
 	mp->gen_pool = gen_pool_create(ilog2(mempool_min_alloc_size), -1);
+	mp->gen_pool_small = NULL; // one unified mempool for host
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
 	mp->page_va_array = kzalloc(sizeof(void *) * page_count, GFP_KERNEL);
@@ -260,11 +301,14 @@ static void mp_destroy_gen_pool(struct mempool *mp)
 	if (!mp->initialized)
 		return;
 
-	if (mp->gen_pool == NULL)
-		return;
-
-	gen_pool_destroy(mp->gen_pool);
-	mp->gen_pool = NULL;
+	if (mp->gen_pool != NULL) {
+		gen_pool_destroy(mp->gen_pool);
+		mp->gen_pool = NULL;
+	}
+	if (mp->gen_pool_small != NULL) {
+		gen_pool_destroy(mp->gen_pool_small);
+		mp->gen_pool_small = NULL;
+	}
 }
 
 /**
@@ -521,6 +565,8 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	struct mem_chunk *mc;
 	struct mempool *mp = NULL;
 	struct mempool_set *mpset = &nd->mpset;
+	struct gen_pool *pool = NULL;
+	struct gen_pool *alt_pool = NULL;
 	int ret = 0;
 
 	*result = NULL;
@@ -577,6 +623,7 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 					continue;
 				mp = &mpset->mp_hrm[i];
 				mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
+				mc->gen_pool = mp->gen_pool;
 				if (mc->va) {
 					// failed dma_alloc_coherent() above will generate a dump in dmesg
 					// to make sure we don't chase the wrong leads in the future make clear
@@ -598,7 +645,15 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 			goto exit;
 		}
 
-		if (align) {
+		if (mp->gen_pool_small != NULL && size <= mempool_small_alloc_max) {
+			pool = mp->gen_pool_small;
+			alt_pool = mp->gen_pool;
+		} else {
+			pool = mp->gen_pool;
+			alt_pool = mp->gen_pool_small;
+		}
+
+		if (align > PAGE_SIZE) {
 
 			if (align > INT_MAX) {
 				pr_err("alignment value not supported %llu\n", align);
@@ -606,26 +661,49 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 				goto exit;
 			}
 			struct genpool_data_align align_data = { .align = align};
-			mc->va = (void *)gen_pool_alloc_algo(mp->gen_pool, size,
+			mc->va = (void *)gen_pool_alloc_algo(pool, size,
 							     gen_pool_first_fit_align, &align_data);
-			mc->pa = gen_pool_virt_to_phys(mp->gen_pool, (unsigned long) mc->va);
+			if (mc->va == NULL && alt_pool != NULL) {
+				bool pool_is_main = (pool == mp->gen_pool);
+				pr_warn_once("no space in %s genpool for HBM %d, needed %lld (alignment %lld), trying %s genpool\n", pool_is_main ? "main":"small",
+					channel, size, align, pool_is_main ? "small":"main");
+				mc->va = (void *)gen_pool_alloc_algo(alt_pool, size,
+							     gen_pool_first_fit_align, &align_data);
+				mc->gen_pool = alt_pool;
+			} else {
+				mc->gen_pool = pool;
+			}
+			mc->pa = gen_pool_virt_to_phys(mc->gen_pool, (unsigned long) mc->va);
 			if ((((align-1) & mc->pa) != 0) || mc->va == NULL){
-				pr_err("Aligned memory allocation failed! size: 0x%llx, alignmnet: 0x%llx\n", size, align);
+				pr_err("Aligned memory allocation failed! size: 0x%llx, alignment: 0x%llx\n", size, align);
 				if (mc->va != NULL) {
-					gen_pool_free(mp->gen_pool, (unsigned long)mc->va, size);
+					gen_pool_free(mc->gen_pool, (unsigned long)mc->va, size);
 				}
 				ret = -ENOMEM;
 				goto exit;
 			}
 		} else {
-			mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
+			mc->va = gen_pool_dma_alloc(pool, size, &mc->pa);
+			if (mc->va == NULL && alt_pool != NULL) {
+				bool pool_is_main = (pool == mp->gen_pool);
+				pr_warn_once("no space in %s genpool for HBM %d, needed %lld, trying %s genpool\n", pool_is_main ? "main":"small",
+					channel, size, pool_is_main ? "small":"main");
+				mc->va = gen_pool_dma_alloc(alt_pool, size, &mc->pa);
+				mc->gen_pool = alt_pool;
+			} else {
+				mc->gen_pool = pool;
+			}
 		}
 		if (mc->va) {
 			mp->allocated_size += size;
 		} else {
-			pr_info("%s total %ld occupied %ld needed %lld available %ld\n", mp->name,
-				mp->region_size, mp->allocated_size, size,
-				gen_pool_avail(mp->gen_pool));
+			if (mp->gen_pool_small == NULL) {
+				pr_info("%s total %ld occupied %ld needed %lld available - main gen pool %ld\n", mp->name,
+					mp->region_size, mp->allocated_size, size, gen_pool_avail(mp->gen_pool));
+			} else {
+				pr_info("%s total %ld occupied %ld needed %lld available - main gen pool %ld, small gen pool %ld\n", mp->name,
+					mp->region_size, mp->allocated_size, size, gen_pool_avail(mp->gen_pool), gen_pool_avail(mp->gen_pool_small));
+			}
 			pr_info("device regions %d occupied %lld\n", mpset->mp_device_num_regions,
 				mpset->device_mem_size);
 		}
@@ -727,7 +805,7 @@ void mc_free(struct mem_chunk **mcp)
 	nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, counter, nc, mc->size, false);
 	if (mc->mem_location == MEM_LOC_HOST) {
 		if (mc->mp) {
-			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
+			gen_pool_free(mc->gen_pool, (u64)mc->va, mc->size);
 			mc->mp->allocated_size -= mc->size;
 		} else {
 			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~ndhal->ndhal_address_map.pci_host_base);
@@ -737,7 +815,7 @@ void mc_free(struct mem_chunk **mcp)
 	} else if (mc->mem_location == MEM_LOC_DEVICE) {
 		struct mempool *mp;
 		mp = &mpset->mp_device[mc->dram_channel][mc->dram_region];
-		gen_pool_free(mp->gen_pool, (u64)mc->va, mc->size);
+		gen_pool_free(mc->gen_pool, (u64)mc->va, mc->size);
 		mp->allocated_size -= mc->size;
 		mpset->device_mem_size -= mc->size;
 		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, mc->nc_id, mc->size, false);

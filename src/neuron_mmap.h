@@ -14,7 +14,11 @@
 #include <linux/sched.h>
 #include "neuron_mempool.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+#ifndef RHEL_RELEASE_VERSION
+#define RHEL_RELEASE_VERSION(a,b) 1
+#endif
+
+#if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 5)))
 static inline void vm_flags_set(struct vm_area_struct *vma, vm_flags_t flags)
 {
     vma->vm_flags |= flags;
@@ -63,6 +67,7 @@ struct neuron_dm_special_mmap_ent {
 
 #define DM_SPECIAL_MM_ENT_(blk, blk_id, res, blk_mmoff, blk_baroff, blk_mmsz, blk_sz, res_off, res_sz)  \
 						{blk, blk_id, res, (blk_mmoff) + (blk_mmsz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
+
 /**
  * nmmap_create_node - Creates a memory map node that can be used by external drivers
  * like EFA

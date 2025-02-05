@@ -267,11 +267,19 @@ void udma_iofic_error_ints_unmask_one(struct iofic_grp_ctrl *iofic_ctrl, uint32_
 
 /**
  * udma_m2m_set_axi_error_abort() - Program axi error detection.
- * Needed to trigger udma abort for v2: https://issues.amazon.com/issues/NRT-315
+ * Needed to trigger udma abort for v2: https://tiny.amazon.com/tbm9ad1i
  *
  * @udma: udma data structure
  */
 void udma_m2m_set_axi_error_abort(struct udma *udma);
+
+/**
+ * udma_m2m_mask_ring_id_error() - Mask out error detection on invalid ring ids
+ *
+ * @udma: udma data structure
+ * @intc_base: interrupt controller base
+ */
+void udma_m2m_mask_ring_id_error(struct udma *udma, void __iomem *intc_base);
 
 /**
  * udma_state_set() - Change the UDMA's state

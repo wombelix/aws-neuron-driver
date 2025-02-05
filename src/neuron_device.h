@@ -61,6 +61,13 @@ enum neuron_device_state {
 	NEURON_DEVICE_STATE_INVALID = 2
 };
 
+struct neuron_hbm_scrub_ctx {
+	struct mem_chunk *rx_mc[NUM_DMA_ENG_PER_DEVICE];
+	struct mem_chunk *tx_mc[NUM_DMA_ENG_PER_DEVICE];
+	struct mem_chunk *completion_marker_buf[MAX_DRAM_CHANNELS]; // one memchunk shared by all DMA engines for an HBM to reduce internal fragmentation
+	struct mem_chunk *hostbuf_mc[NUM_DMA_ENG_PER_DEVICE];
+};
+
 struct neuron_device {
 	struct pci_dev *pdev;
 	int device_index;
@@ -108,6 +115,8 @@ struct neuron_device {
 	struct nsysfsmetric_metrics sysfs_metrics;
 	
 	struct neuron_log_obj log_obj; // logging object
+
+	struct neuron_hbm_scrub_ctx hbm_scrub_ctx;
 };
 
 #endif
