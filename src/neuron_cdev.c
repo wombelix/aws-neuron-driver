@@ -1595,24 +1595,31 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	dev = &devnodes[iminor(inode)];
 	nd = dev->ndev;
 
+	mutex_lock(&dev->ncdev_lock);
+	dev->open_count++;
+	mutex_unlock(&dev->ncdev_lock);
+
 	// wait for device init to complete.
 	// TODO: implement some better wait system than schedule()
 	while (nd->device_state == NEURON_DEVICE_STATE_RESET) {
 		schedule();
 	}
 	if (nd->device_state == NEURON_DEVICE_STATE_INVALID) {
+		mutex_lock(&dev->ncdev_lock);
+		dev->open_count--;
+		mutex_unlock(&dev->ncdev_lock);
 		pr_err("nd%d is in an invalid state", nd->device_index);
 		return -EINVAL;
 	}
 
 	mutex_lock(&dev->ncdev_lock);
 	if (!npid_attach(nd)) {
+		dev->open_count--;
 		pr_err("nd%d: pid %d failed to open\n", nd->device_index, task_tgid_nr(current));
 		npid_print_usage(nd);
 		mutex_unlock(&dev->ncdev_lock);
 		return -EBUSY;
 	}
-	dev->open_count++;
 	mutex_unlock(&dev->ncdev_lock);
 	filep->private_data = dev;
 	return 0;
@@ -1715,7 +1722,13 @@ static ssize_t device_reset_show(struct device *dev, struct device_attribute *at
 static ssize_t driver_reset_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	int minor = MINOR(dev->devt);
-	reset_ret = nr_start_ncs(devnodes[minor].ndev, NEURON_NC_MAP_DEVICE, NEURON_RESET_REQUEST_ALL);
+	struct ncdev *devnode = &devnodes[minor];
+
+	mutex_lock(&devnode->ncdev_lock);
+	if (devnode->open_count == 0) { // only trigger sysfs reset if the device is not opened by app
+		nr_start_ncs(devnode->ndev, NEURON_NC_MAP_DEVICE, NEURON_RESET_REQUEST_ALL);
+	}
+	mutex_unlock(&devnode->ncdev_lock);
 
 	return count;
 }

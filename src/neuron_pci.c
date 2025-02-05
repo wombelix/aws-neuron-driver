@@ -14,6 +14,7 @@
 #include <linux/atomic.h>
 #include <linux/version.h>
 #include <linux/delay.h>
+#include <linux/umh.h>
 
 #include "neuron_device.h"
 #include "neuron_ds.h"
@@ -60,6 +61,18 @@ static struct pci_device_id neuron_pci_dev_ids[] = {
 #define pci_info(pdev, fmt, arg...) dev_info(&(pdev)->dev, fmt, ##arg)
 #endif
 
+int dup_helper_enable = 1;
+module_param(dup_helper_enable, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(dup_helper_enable, "enable duplicate routing id unload helper");
+
+int wc_enable = 1;
+module_param(wc_enable, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(wc_enable, "enable write combining");
+
+// count of duplicate routing IDs encountered
+//
+static atomic_t dup_rid_cnt = ATOMIC_INIT(0);
+
 // number of devices managed
 static atomic_t device_count = ATOMIC_INIT(0);
 
@@ -74,6 +87,53 @@ struct neuron_device *neuron_pci_get_device(u8 device_index)
 	BUG_ON(device_index >= MAX_NEURON_DEVICE_COUNT);
 	return neuron_devices[device_index];
 }
+
+
+/**
+ * neuron_pci_handle_dup_routing_id()
+ *
+ *
+ */
+static int neuron_pci_handle_dup_routing_id(void)
+{
+	int  ret = -ENODEV;
+	int  dup_cnt;
+	char cmd[256];
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+	dup_cnt = atomic_fetch_add(1, &dup_rid_cnt);
+#else
+	dup_cnt = atomic_add_return(1, &dup_rid_cnt) - 1;
+#endif 
+
+	// If this is the first dup encounted, unload the driver
+	//
+	if ((dup_cnt == 0) && dup_helper_enable) {
+		pr_err("scheduling unload of %s due to duplicate routing id\n", module_name(THIS_MODULE));
+
+		int n = snprintf(cmd, sizeof(cmd), "sleep 10;/sbin/modprobe -r %s", module_name(THIS_MODULE));
+		if (n > sizeof(cmd)) {
+			pr_err("unable to schedule driver unload cmd buffer len exceeded\n");
+			return -EINVAL;
+		}
+		char *argv[] = 		  { "/bin/sh",
+								"-c",
+								cmd,
+								NULL};
+		static char *envp[] = { "HOME=/",
+								"TERM=linux",
+								"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
+								NULL};
+
+		ret = call_usermodehelper( argv[0], argv, envp, UMH_WAIT_EXEC);
+		if (ret)
+			pr_err("unable to schedule driver unload. Error: %d\n", ret);
+	}
+
+
+	return ret;
+}
+
 
 static int neuron_pci_device_init(struct neuron_device *nd)
 {
@@ -275,7 +335,10 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	if (ret == 0) {
 		nd->npdev.bar4_pa = pci_resource_start(dev, BAR4);
 		if (nd->npdev.bar4_pa) {
-			nd->npdev.bar4 = pci_iomap(dev, BAR4, pci_resource_len(dev, BAR4));
+			if (wc_enable)
+				nd->npdev.bar4 = pci_iomap_wc(dev, BAR4, pci_resource_len(dev, BAR4));
+			else
+				nd->npdev.bar4 = pci_iomap(dev, BAR4, pci_resource_len(dev, BAR4));
 			nd->npdev.bar4_size = pci_resource_len(dev, BAR4);
 		}
 	}
@@ -306,6 +369,15 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		nd->device_index = v2_routing_id_to_user_id[routing_id];
 		// TODO temporary for the bringup, remove
 		printk("** BDF: %2.2x:%2.2x.%x => nd[%d] (routing id: %u)\n", dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), nd->device_index, routing_id);
+		
+		// protection against duplicate IDs - doesn't provide 100% protection in multi-threaded device discovery
+		if (neuron_devices[nd->device_index] != NULL) {
+			pr_err("duplicate routing id %u found\n", routing_id);
+			neuron_pci_handle_dup_routing_id();
+			ret = -ENODEV;
+			goto fail_bar2_resource;
+		}
+
 	}
 
 	ret = neuron_pci_device_init(nd);
