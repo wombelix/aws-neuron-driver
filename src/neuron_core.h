@@ -142,17 +142,21 @@ int nc_nq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
 void nc_nq_destroy_all(struct neuron_device *nd);
 
 /**
- * nc_nq_mmap() - mmap the notification queue into process address space.
+ * nc_hm_mmap_offset() - Return mmap offset for given memory chunk.
  *
+ * @mc: memory chunk which needs to be mapped
+ *
+ * Return: offset to be used to mmap in the /dev/ndX file.
+ */
+u64 nc_hm_mmap_offset(struct mem_chunk *mc);
+
+/**
+ * nc_mmap() - mmap a range into userspace
  * @nd: neuron device
- * @nc_id: core index in the device
- * @eng_index: notification engine index in the core
- * @nq_type: type of the notification queue
  * @vma: mmap area.
  *
  * Return: 0 on success, a negative error code otherwise.
  */
-int nc_nq_mmap(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type,
-	       struct vm_area_struct *vma);
+int nc_mmap(struct neuron_device *nd, struct vm_area_struct *vma);
 
 #endif

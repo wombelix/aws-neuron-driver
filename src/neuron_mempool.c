@@ -192,6 +192,8 @@ int mpset_device_init(struct mempool_set *mpset, int num_channels, int num_regio
 		}
 	}
 
+	atomic_set(&mpset->freed, 0);
+
 	return 0;
 
 fail:
@@ -216,7 +218,7 @@ static void mpset_free_host_memory(struct mempool_set *mpset)
 			write_lock(&mpset->rblock);
 			mc_remove_node(&mpset->root, mc);
 			write_unlock(&mpset->rblock);
-			if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE) {
+			if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
 				dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa);
 			} else {
 				kfree(mc->va);
@@ -255,9 +257,9 @@ struct mem_chunk *mpset_search_mc(struct mempool_set *mp, phys_addr_t pa)
 	while (node) {
 		struct mem_chunk *mc = rb_entry(node, struct mem_chunk, node);
 
-		if ((mc->pa <= pa) && ((mc->pa + mc->size) >= pa)) {
+		if (pa >= mc->pa && pa < (mc->pa + mc->size)) {
 			return mc;
-		} else if (mc->pa > pa) {
+		} else if (pa < mc->pa) {
 			node = node->rb_left;
 		} else {
 			node = node->rb_right;
@@ -292,7 +294,11 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 
 	mutex_lock(&mpset->lock);
 	if (location == MEM_LOC_HOST) {
-		if (size > MEMPOOL_KMALLOC_MAX_SIZE) {
+		// kmalloc uses compound pages which cant be mmmaped(), to avoid applications knowing
+		// about kmalloc vs dma_alloc, use dma_alloc() for any PAGE_SIZE allocations
+		// since mmap() can make request only of multiple of PAGE_SIZE.
+		// TODO - get rid of kmalloc() and always use dma_alloc()
+		if (size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(size, PAGE_SIZE)) {
 			dma_addr_t addr;
 			mc->va = dma_alloc_coherent(mpset->pdev, size, &addr,
 						    GFP_KERNEL | GFP_DMA32);
@@ -377,7 +383,7 @@ void mc_free(struct mem_chunk **mcp)
 		write_lock(&mpset->rblock);
 		mc_remove_node(&mpset->root, mc);
 		write_unlock(&mpset->rblock);
-		if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE) {
+		if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
 			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa);
 		} else {
 			kfree(mc->va);

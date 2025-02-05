@@ -28,6 +28,12 @@ struct neuron_ioctl_device_init {
 	__u32 mem_regions; // [in] How many regions to create in the device memory
 };
 
+struct neuron_ioctl_mem_get_info {
+	__u64 mem_handle; // [in] Memory handle of the allocated memory.
+	__u64 *mmap_offset; // [out] offset where this mem can be mmapped
+	__u64 *pa; // [out] Physical address of the memory
+};
+
 struct neuron_ioctl_mem_get_pa {
 	__u64 mem_handle; // [in] Memory handle of the allocated memory.
 	__u64 *pa; // [out] Physical address of the memory
@@ -241,6 +247,11 @@ struct neuron_ioctl_device_info {
  *  This can be used by applications to DMA.
  */
 #define NEURON_IOCTL_MEM_GET_PA _IOR(NEURON_IOCTL_BASE, 25, struct neuron_ioctl_mem_get_pa *)
+
+/** Returns information of given memory_handle such as PA and mmap offset.
+ *  This can be used by applications to DMA.
+ */
+#define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_mem_get_info *)
 
 
 /** Initialize DMA engine. */

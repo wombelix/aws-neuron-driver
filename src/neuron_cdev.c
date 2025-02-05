@@ -35,7 +35,7 @@ static struct class *neuron_dev_class;
 struct ncdev {
 	int minor;
 	int open_count; // number of times this node is opened.
-	struct cdev *cdev;
+	struct cdev cdev;
 	struct neuron_device *ndev; // neuron device associated with this device node.
 };
 
@@ -316,6 +316,36 @@ static int ncdev_mem_get_pa(void *param)
 	else
 		pa = mc->pa;
 	return copy_to_user(mem_get_pa_arg.pa, &pa, sizeof(u64));
+}
+
+static int ncdev_mem_get_info(void *param)
+{
+	struct neuron_ioctl_mem_get_info arg;
+	struct mem_chunk *mc;
+	u64 pa, mmap_offset;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
+	if (mc->mem_location == MEM_LOC_HOST)
+		pa = mc->pa | PCIEX8_0_BASE;
+	else
+		pa = mc->pa;
+
+
+	ret = copy_to_user(arg.pa, &pa, sizeof(pa));
+	if (ret)
+		return ret;
+
+	if (arg.mmap_offset) {
+		mmap_offset = nc_hm_mmap_offset(mc);
+		ret = copy_to_user(arg.mmap_offset, &mmap_offset, sizeof(mmap_offset));
+	}
+
+	return ret;
 }
 
 static int ncdev_mem_free(struct neuron_device *nd, void *param)
@@ -847,6 +877,7 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	    cmd == NEURON_IOCTL_DMA_QUEUE_RELEASE || cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS ||
 	    cmd == NEURON_IOCTL_MEM_ALLOC || cmd == NEURON_IOCTL_MEM_FREE ||
 	    cmd == NEURON_IOCTL_MEM_COPY || cmd == NEURON_IOCTL_MEM_GET_PA ||
+	    cmd == NEURON_IOCTL_MEM_GET_INFO ||
 	    cmd == NEURON_IOCTL_BAR_WRITE || cmd == NEURON_IOCTL_POST_METRIC ||
 	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT || cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY) {
 		if (nd->current_pid != task_tgid_nr(current)) {
@@ -890,6 +921,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_dma_descriptor_copyout(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC) {
 		return ncdev_mem_alloc(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_MEM_GET_INFO) {
+		return ncdev_mem_get_info((void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_PA) {
 		return ncdev_mem_get_pa((void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_FREE) {
@@ -962,12 +995,11 @@ static int ncdev_close(struct inode *inode, struct file *filep)
 	return ncdev_device_release(dev, nd);
 }
 
+
 static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
 {
 	struct ncdev *ncd;
 	struct neuron_device *nd;
-	int ret, nc_id, eng_index, nq_type;
-	u64 offset;
 
 	ncd = filep->private_data;
 	if (ncd == NULL) {
@@ -977,13 +1009,8 @@ static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
 	if (nd == NULL) {
 		return -EINVAL;
 	}
-	offset = vma->vm_pgoff * PAGE_SIZE;
-	ret = nc_get_nq_from_mmap_offset(offset, &nc_id, &eng_index, &nq_type);
-	if (ret) {
-		return ret;
-	}
 
-	return nc_nq_mmap(nd, nc_id, eng_index, nq_type, vma);
+	return nc_mmap(nd, vma);
 }
 
 static struct file_operations ncdev_fops = {
@@ -997,22 +1024,16 @@ static struct file_operations ncdev_fops = {
 #define NEURON_MAX_DEV_NAME 32
 int ncdev_create_device_node(struct neuron_device *ndev)
 {
-	int ret, minor;
-	struct cdev *cdev;
+	int ret, minor = ndev->device_index;
 	dev_t devno;
 	struct device *device = NULL;
+	struct cdev *cdev = &devnodes[minor].cdev;
 	char dev_name[NEURON_MAX_DEV_NAME];
 
-	snprintf(dev_name, sizeof(dev_name), "neuron%d", ndev->device_index);
-
-	minor = ndev->device_index;
-	devnodes[ndev->device_index].minor = minor;
+	snprintf(dev_name, sizeof(dev_name), "neuron%d", minor);
+	devnodes[minor].minor = minor;
 
 	devno = MKDEV(major, minor);
-	cdev = cdev_alloc();
-	if (cdev == NULL) {
-		return -1;
-	}
 	cdev_init(cdev, &ncdev_fops);
 	cdev->owner = THIS_MODULE;
 
@@ -1020,11 +1041,9 @@ int ncdev_create_device_node(struct neuron_device *ndev)
 	ret = cdev_add(cdev, devno, 1);
 	if (ret < 0) {
 		pr_err("failed to register character device %s\n", dev_name);
-		cdev_del(cdev);
 		return -1;
 	}
 
-	devnodes[minor].cdev = cdev;
 	devnodes[minor].ndev = ndev;
 
 	device = device_create(neuron_dev_class, NULL, /* no parent device */
@@ -1039,7 +1058,7 @@ int ncdev_create_device_node(struct neuron_device *ndev)
 		return ret;
 	}
 
-	ndev->cdev = &devnodes[minor];
+	ndev->ncdev = &devnodes[minor];
 	return 0;
 }
 
@@ -1051,7 +1070,7 @@ int ncdev_delete_device_node(struct neuron_device *ndev)
 	minor = devnodes[ndev->device_index].minor;
 	devno = MKDEV(major, minor);
 	device_destroy(neuron_dev_class, devno);
-	cdev_del(devnodes[minor].cdev);
+	cdev_del(&devnodes[minor].cdev);
 	memset(&devnodes[ndev->device_index], 0, sizeof(devnodes[0]));
 
 	return 0;

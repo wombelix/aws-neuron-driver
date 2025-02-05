@@ -38,7 +38,7 @@ struct neuron_device {
 	int current_pid_open_count;
 	u8 architecture;
 
-	void *cdev; // chardev created for this devices
+	void *ncdev; // chardev created for this devices
 
 	struct neuron_pci_device npdev;
 
