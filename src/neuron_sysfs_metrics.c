@@ -8,6 +8,7 @@
 #include <linux/pci.h>
 #include <linux/sysfs.h>
 #include <linux/slab.h>
+#include <linux/version.h>
 
 #include "neuron_device.h"
 #include "neuron_ds.h"
@@ -47,6 +48,17 @@
     .attr_info_tbl = MEM_USAGE_COUNTER_ATTR_INFO_TBL(_metric_id)\
 }
 
+/*
+ * Linux kernel supports sysfs_emit starting from v5.10-rc1.
+ * For older kernel versions, use scnprintf.
+ * https://github.com/torvalds/linux/commit/2efc459d06f1630001e3984854848a5647086232
+ */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+#define nsysfsmetric_sysfs_emit(buf, ...) scnprintf((buf), PAGE_SIZE, __VA_ARGS__)
+#else
+#define nsysfsmetric_sysfs_emit(buf, ...) sysfs_emit((buf), __VA_ARGS__)
+#endif
+
 bool nsysfsmetric_notify = false;
 
 struct metric_attribute {
@@ -72,7 +84,8 @@ const static nsysfsmetric_counter_node_info_t status_counter_nodes_info_tbl[] = 
     COUNTER_NODE_INFO("resource_nc_error",           NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_RESOURCE_NC)),
     COUNTER_NODE_INFO("execute_failed_to_queue",     NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE)),
     COUNTER_NODE_INFO("invalid_error",               NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_INVALID)),
-    COUNTER_NODE_INFO("unsupported_neff_version",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION))
+    COUNTER_NODE_INFO("unsupported_neff_version",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION)),
+    COUNTER_NODE_INFO("oob_error",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_OOB))
 };
 const static int status_counter_nodes_info_tbl_cnt = sizeof(status_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
 
@@ -211,6 +224,32 @@ static void nsysfsmetric_get_neuron_architecture(struct nsysfsmetric_metrics *sy
     snprintf(arch, NEURON_ARCH_MAX_LEN, "%s%s", arch_prefix, arch_suffix);
 }
 
+static u64 nsysfsmetric_sum_device_mem_categories(struct nsysfsmetric_metrics *sysfs_metrics, 
+                                                  int attr_type,
+                                                  int nc_id)
+{
+    u64 total_device_mem = 0;
+
+    int metric_id = 0;
+    for (metric_id = NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_MEM_USAGE_CODE_DEVICE); 
+       metric_id < NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_MEM_USAGE_MISC_DEVICE); 
+       metric_id++) {
+        switch (attr_type) {
+            case TOTAL:
+                total_device_mem += sysfs_metrics->nrt_metrics[metric_id][nc_id].total;
+                break;
+            case PRESENT:
+                total_device_mem += sysfs_metrics->nrt_metrics[metric_id][nc_id].present;	
+                break;
+            case PEAK:
+                total_device_mem += sysfs_metrics->nrt_metrics[metric_id][nc_id].peak;	
+                break;
+        }
+    }
+
+    return total_device_mem;
+}
+
 static ssize_t nsysfsmetric_show_nrt_total_metrics(struct nsysfsmetric_metrics *sysfs_metrics,
                                                 struct metric_attribute *attr,
                                                 char *buf)
@@ -221,8 +260,14 @@ static ssize_t nsysfsmetric_show_nrt_total_metrics(struct nsysfsmetric_metrics *
         pr_err("invalid metric_id %d or nc_id %d of attr_type TOTAL\n", attr->metric_id, attr->nc_id);
         return 0;
     }
-    u64 count = sysfs_metrics->nrt_metrics[attr->metric_id][attr->nc_id].total;
-    len = sprintf(buf, "%llu\n", count);
+
+    u64 val = 0;
+    if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_DEVICE_MEM)) {
+        val = nsysfsmetric_sum_device_mem_categories(sysfs_metrics, TOTAL, attr->nc_id);
+    } else {
+        val = sysfs_metrics->nrt_metrics[attr->metric_id][attr->nc_id].total;
+    }
+    len = nsysfsmetric_sysfs_emit(buf, "%llu\n", val);
 
     return len;
 }
@@ -237,8 +282,14 @@ static ssize_t nsysfsmetric_show_nrt_present_metrics(struct nsysfsmetric_metrics
         pr_err("invalid metric_id %d or nc_id %d of attr_type PRESENT\n", attr->metric_id, attr->nc_id);
         return 0;
     }
-    u64 count = sysfs_metrics->nrt_metrics[attr->metric_id][attr->nc_id].present;
-    len = sprintf(buf, "%llu\n", count);
+
+    u64 val = 0;
+    if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_DEVICE_MEM)) {
+        val = nsysfsmetric_sum_device_mem_categories(sysfs_metrics, PRESENT, attr->nc_id);
+    } else {
+        val = sysfs_metrics->nrt_metrics[attr->metric_id][attr->nc_id].present;
+    }
+    len = nsysfsmetric_sysfs_emit(buf, "%llu\n", val);
 
     return len;
 }
@@ -254,8 +305,13 @@ static ssize_t nsysfsmetric_show_nrt_peak_metrics(struct nsysfsmetric_metrics *s
         return 0;
     }
 
-    u64 count = sysfs_metrics->nrt_metrics[attr->metric_id][attr->nc_id].peak;
-    len = sprintf(buf, "%llu\n", count);
+    u64 val = 0;
+    if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_DEVICE_MEM)) {
+        val = nsysfsmetric_sum_device_mem_categories(sysfs_metrics, PEAK, attr->nc_id);
+    } else {
+        val = sysfs_metrics->nrt_metrics[attr->metric_id][attr->nc_id].peak;
+    }
+    len = nsysfsmetric_sysfs_emit(buf, "%llu\n", val);
 
     return len;
 }
@@ -271,12 +327,12 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
         || attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NEURON_DEVICE_NAME)) {
         char neuron_arch[NEURON_ARCH_MAX_LEN];
         nsysfsmetric_get_neuron_architecture(sysfs_metrics, attr, attr->metric_id, neuron_arch);
-        len = sprintf(buf, "%s\n", neuron_arch);
+        len = nsysfsmetric_sysfs_emit(buf, "%s\n", neuron_arch);
     } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NOTIFY_DELAY)) {
         if (nsysfsmetric_notify)
-            len = sprintf(buf, "0\n");
+            len = nsysfsmetric_sysfs_emit(buf, "0\n");
         else
-            len = sprintf(buf, "-1\n");
+            len = nsysfsmetric_sysfs_emit(buf, "-1\n");
     } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_SRAM_UNCORRECTED)) {
         struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
         uint64_t ecc_offset = FW_IO_REG_SRAM_ECC_OFFSET;
@@ -288,7 +344,7 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
         } else if (ecc_err_count == 0xdeadbeef) {
             ecc_err_count = 0;
         }
-        len = sprintf(buf, "%u\n", ecc_err_count & 0x0000ffff);
+        len = nsysfsmetric_sysfs_emit(buf, "%u\n", ecc_err_count & 0x0000ffff);
     } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_HBM_UNCORRECTED)) {
         struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
 
@@ -311,7 +367,7 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
             total_uncorrected_ecc_err_count += (ecc_err_count & 0x0000ffff);
         }
 
-        len = sprintf(buf, "%u\n", total_uncorrected_ecc_err_count);
+        len = nsysfsmetric_sysfs_emit(buf, "%u\n", total_uncorrected_ecc_err_count);
     } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_SERIAL_NUMBER)) {
         struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
         uint64_t serial_number = 0;
@@ -321,9 +377,9 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
           || (serial_number & 0xffffffff) == 0xdeadbeef
           || (serial_number == 0)) {
             pr_err("sysfs failed to read serial number from FWIO\n");
-            len = sprintf(buf, "\n");
+            len = nsysfsmetric_sysfs_emit(buf, "\n");
         } else {
-            len = sprintf(buf, "%016llx\n", serial_number);
+            len = nsysfsmetric_sysfs_emit(buf, "%016llx\n", serial_number);
         }
     } else {
         pr_err("cannot show sysfs metrics for nc_id=%d, metric_id=%d of attr_type OTHER \n", attr->nc_id, attr->metric_id);

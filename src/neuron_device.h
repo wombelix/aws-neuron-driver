@@ -8,7 +8,8 @@
 
 // Maximum neuron devices supported on a system.
 #define MAX_NEURON_DEVICE_COUNT 64
-#define MAX_NC_PER_DEVICE 4 //for v1 4 and v2 2
+#define MAX_NC_PER_DEVICE 8
+#define MAX_TS_PER_DEVICE 16
 
 #include "neuron_arch.h"
 #include "neuron_mempool.h"
@@ -22,8 +23,6 @@
 #include "neuron_ds.h"
 #include "neuron_metrics.h"
 #include "neuron_sysfs_metrics.h"
-#include "v1/address_map.h"
-#include "v2/address_map.h"
 
 #ifndef static_assert
 #define static_assert(expr, ...)
@@ -37,6 +36,7 @@
 #define INF1_DEVICE_ID3 0x7067
 #define INF2_DEVICE_ID0 0x7264
 #define TRN1_DEVICE_ID0 0x7164
+#define TRN2_DEVICE_ID0 0x7364
 
 // Global host memory buf size used for memset the device memory
 #define MEMSET_HOST_BUF_SIZE MAX_DMA_DESC_SIZE // guessed optimal DMA transfer and PCIe TLP size.
@@ -82,7 +82,7 @@ struct neuron_device {
 	// memory chunk allocated for notification queue in each neuron core.
 	struct mem_chunk *nq_mc[MAX_NC_PER_DEVICE][MAX_NQ_SUPPORTED];
 	// memory chunk allocated for notification queue in each TOP_SP.
-	struct mem_chunk *ts_nq_mc[V2_TS_PER_DEVICE][MAX_NQ_SUPPORTED];
+	struct mem_chunk *ts_nq_mc[MAX_TS_PER_DEVICE][MAX_NQ_SUPPORTED];
 
 	// memory chunk for setting device mem
 	struct mem_chunk *memset_mc;

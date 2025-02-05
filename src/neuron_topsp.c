@@ -32,37 +32,11 @@
 
 #include <linux/kernel.h>
 
-#include "v2/address_map.h"
-#include "v2/notific.h"
-
 #include "neuron_mempool.h"
 #include "neuron_mmap.h"
 #include "neuron_device.h"
 #include "neuron_arch.h"
 #include "neuron_dhal.h"
-
-u8 ts_nq_get_nqid(struct neuron_device *nd, u8 index, u32 nq_type)
-{
-	u8 nq_id = 0;
-	nq_id = (nq_type * V2_MAX_NQ_QUEUES) + index; // for v2 nq is based on queue
-	return nq_id;
-}
-
-void ts_nq_set_hwaddr(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_type, u32 size,
-			     u64 queue_pa)
-{
-	void *apb_base;
-	u32 low, high;
-
-	apb_base = nd->npdev.bar0 + notific_get_relative_offset_topsp(ts_id);
-
-	low = (u32)(queue_pa & 0xffffffff);
-	high = (u32)(queue_pa >> 32U);
-
-	notific_write_nq_base_addr_hi(apb_base, index, high);
-	notific_write_nq_base_addr_lo(apb_base, index, low);
-	notific_write_nq_f_size(apb_base, index, size);
-}
 
 int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type)
 {
@@ -71,14 +45,14 @@ int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type)
 	if (nd == NULL || ts_id >= ndhal->ndhal_address_map.ts_per_device)
 		return -EINVAL;
 
-	nq_id = ts_nq_get_nqid(nd, eng_index, nq_type);
+	nq_id = ndhal->ndhal_topsp.ts_nq_get_nqid(nd, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
 	if (nd->ts_nq_mc[ts_id][nq_id] == NULL)
 		return 0;
 
-	ts_nq_set_hwaddr(nd, ts_id, eng_index, nq_type, 0, 0);
+	ndhal->ndhal_topsp.ts_nq_set_hwaddr(nd, ts_id, eng_index, nq_type, 0, 0);
 
 	mc_free(&nd->ts_nq_mc[ts_id][nq_id]);
 	return 0;

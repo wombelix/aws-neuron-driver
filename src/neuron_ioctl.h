@@ -362,11 +362,11 @@ struct neuron_ioctl_device_bdf {
 };
 
 struct neuron_ioctl_device_bdf_ext {
-	__u32 nd_index;
-	__u32 domain;
-	__u32 bus_number;
-	__u8 slot;
-	__u8 func;
+	__u32 nd_index;   // [in] (container) relative device index 
+	__u32 domain;     // [out] pci domain 
+	__u32 bus_number; // [out] pci bus number
+	__u8 slot;        // [out] pci slot number
+	__u8 func;        // [out] pci function number
 };
 
 struct neuron_ioctl_resource_mmap_info  {
@@ -411,11 +411,30 @@ struct neuron_ioctl_mem_get_mc_mmap_info {
 	__u64 size;          // [out] size of memory allocated for this mc
 };
 
+struct neuron_ioctl_mem_get_mc_mmap_info_v2 {
+	__u64 pa;        	 // [in] location in device memory the caller want MC info on.
+	__u64 mmap_offset;   // [out] mmap() offset for this mc
+	__u64 size;          // [out] size of memory allocated for this mc
+	__u64 mem_handle;    // [out] Memory handle of the allocated memory.
+};
+
 struct neuron_ioctl_printk {
 	void *buffer; // [in] the error buffer in user space
 	__u32 size;   // [in] size of the error buffer including null terminator
 	__u32 action; // [in] additional action to perform
 };
+
+struct neuron_ioctl_host_device_id {
+	__u32 host_device_id;    // [out] host device id for this device
+};
+
+// arbitrary large enough space for device to routing id map
+#define NEURON_IOCTL_MAX_DEVICES 64
+struct neuron_ioctl_host_device_id_to_rid_map {
+	__u32   count; // [out] number of entries in the routing id map
+	__u32   host_did_to_rid_map[NEURON_IOCTL_MAX_DEVICES];   // [out] device to routing id map
+};
+
 
 #define NEURON_IOCTL_BASE 'N'
 
@@ -568,6 +587,7 @@ struct neuron_ioctl_printk {
 
 /** for a given mem address, return the MC info */
 #define NEURON_IOCTL_MEM_MC_GET_INFO  _IOWR(NEURON_IOCTL_BASE, 111, struct neuron_ioctl_mem_get_mc_mmap_info)
+#define NEURON_IOCTL_MEM_MC_GET_INFO_V2  _IOWR(NEURON_IOCTL_BASE, 111, struct neuron_ioctl_mem_get_mc_mmap_info_v2)
 
 /** request mmap info for a given resource  */
 #define NEURON_IOCTL_RESOURCE_MMAP_INFO _IOWR(NEURON_IOCTL_BASE, 112, struct neuron_ioctl_resource_mmap_info)
@@ -575,7 +595,13 @@ struct neuron_ioctl_printk {
 /** Logs an error message to kernel logs/serial console  */
 #define NEURON_IOCTL_PRINTK _IOW(NEURON_IOCTL_BASE, 113, struct neuron_ioctl_printk)
 
+/** return the host device id for the device */
+#define NEURON_IOCTL_HOST_DEVICE_ID _IOR(NEURON_IOCTL_BASE, 114, struct neuron_ioctl_host_device_id)
+
+/** return the host device id for the device */
+#define NEURON_IOCTL_HOST_DEVICE_ID_TO_RID_MAP _IOWR(NEURON_IOCTL_BASE, 115, struct neuron_ioctl_host_device_id_to_rid_map)
+
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
-#define NEURON_IOCTL_MAX 114
+#define NEURON_IOCTL_MAX 116
 
 #endif

@@ -20,12 +20,6 @@
 #include <linux/types.h>
 #include <linux/delay.h>
 
-#include "v1/address_map.h"
-#include "v1/putils.h"
-
-#include "v2/address_map.h"
-#include "v2/notific.h"
-
 #include "neuron_mempool.h"
 #include "neuron_mmap.h"
 #include "neuron_topsp.h"

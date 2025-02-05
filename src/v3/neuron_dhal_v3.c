@@ -24,62 +24,127 @@
 
 #define NR_RESET_RETRY_SLEEP_MS 100
 
-struct neuron_dm_special_mmap_ent dm_mmap_special_v2[] = {
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, V2_MMAP_TPB_OFFSET, V2_PCIE_BAR0_TPB_0_OFFSET,   V2_MMAP_TPB_SIZE, V2_MMAP_NC_EVENT_OFFSET, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TPB,   1, NEURON_DM_RESOURCE_SEMAPHORE, V2_MMAP_TPB_OFFSET, V2_PCIE_BAR0_TPB_0_OFFSET,   V2_MMAP_TPB_SIZE, V2_MMAP_NC_EVENT_OFFSET, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
-	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
+// TOP SP addresses are sparse on chip adjust ot accommodate the table macro
+//
+#define V3_TOP_SP_GRP1_BASE   V3_TOP_SP_0_BASE
+#define V3_TOP_SP_GRP2_BASE   (V3_TOP_SP_10_BASE - 10 * V3_TOP_SP_SIZE)
+
+struct neuron_dm_special_mmap_ent dm_mmap_special_v3[] = {
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   1, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   2, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   3, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   4, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   5, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   6, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT_( NEURON_DM_BLOCK_TPB,   7, NEURON_DM_RESOURCE_SEMAPHORE, V3_MMAP_TPB_0_BASE, V3_PCIE_BAR0_TPB_0_OFFSET, V3_PCIE_BAR0_TPB_DIST, V3_PCIE_BAR0_TPB_SIZE, V3_MMAP_NC_EVENT_OFFSET, V3_MMAP_NC_SEMA_SIZE),
+
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 6, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 7, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 8, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 9, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 10, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 11, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 12, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 13, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 14, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 15, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 16, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 17, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 18, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 19, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
 	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
 };
 
-struct ncdev_mem_region ncdev_mem_regions_v2[] = {
-	{ V2_MMAP_TPB_OFFSET, V2_MMAP_TPB_SIZE * V2_MMAP_TPB_COUNT },
-	{ V2_TOP_SP_0_BASE, V2_TOP_SP_0_SIZE * V2_TS_PER_DEVICE },
+struct ncdev_mem_region ncdev_mem_regions_v3[] = {
+	{ V3_MMAP_TPB_0_BASE, V3_MMAP_NC_SIZE },    // FIXME this is inefficient this may need a routine to slice and range check
+	{ V3_MMAP_TPB_1_BASE, V3_MMAP_NC_SIZE },
+	{ V3_MMAP_TPB_2_BASE, V3_MMAP_NC_SIZE },
+	{ V3_MMAP_TPB_3_BASE, V3_MMAP_NC_SIZE },
+	{ V3_MMAP_TPB_4_BASE, V3_MMAP_NC_SIZE },
+	{ V3_MMAP_TPB_5_BASE, V3_MMAP_NC_SIZE },
+	{ V3_MMAP_TPB_6_BASE, V3_MMAP_NC_SIZE },
+	{ V3_MMAP_TPB_7_BASE, V3_MMAP_NC_SIZE },
+	{ V3_TOP_SP_0_BASE, V3_TOP_SP_SIZE },       // could flatten TOP_SP
+	{ V3_TOP_SP_1_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_2_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_3_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_4_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_5_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_6_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_7_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_8_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_9_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_10_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_11_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_12_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_13_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_14_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_15_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_16_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_17_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_18_BASE, V3_TOP_SP_SIZE },
+	{ V3_TOP_SP_19_BASE, V3_TOP_SP_SIZE },
+	{ V3_HBM_0_BASE, V3_HBM_ACTIVE_SIZE },
+	{ V3_HBM_1_BASE, V3_HBM_ACTIVE_SIZE },
+	{ V3_HBM_2_BASE, V3_HBM_ACTIVE_SIZE },
+	{ V3_HBM_3_BASE, V3_HBM_ACTIVE_SIZE },
+	{ V3_PREPROC_0_BASE, V3_PREPROC_SIZE},
+	{ V3_PREPROC_1_BASE, V3_PREPROC_SIZE},
+	{ V3_PREPROC_2_BASE, V3_PREPROC_SIZE},
+	{ V3_PREPROC_3_BASE, V3_PREPROC_SIZE},
 	{ NCDEV_MEM_REGION_INVALID, 0 },
 };
 
-u64 ncdev_bar0_write_blocked_addrs_v2[] = {
-	V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET,
-	V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET,
-	V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET,
-	V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET,
-	V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET
+u64 ncdev_bar0_write_blocked_addrs_v3[] = {
+	V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET,
+	V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET,
+	V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET,
+	V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET,
+	V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET
 	MMAP_BAR0_APB_MISC_RAM_INVALID,
 };
 
-static int ndhal_register_funcs_trn1(void) {
+static int ndhal_register_funcs_trn2(void) {
 	if (!ndhal) {
-		pr_err("ndhal is null. Can't register functions for trn1.");
-		return -EINVAL;
-	}
-	ndhal->ndhal_sysfs_metrics.arch_nd_type_suffix = "v2";
-	ndhal->ndhal_sysfs_metrics.arch_nc_type_suffix = "v2";
-	ndhal->ndhal_sysfs_metrics.arch_instance_suffix = "Trn1";
-	ndhal->ndhal_sysfs_metrics.arch_device_name_suffix = "Trainium1";
-	return 0;
-}
-
-static int ndhal_register_funcs_inf2(void) {
-	if (!ndhal) {
-		pr_err("ndhal is null. Can't register functions for inf2.");
+		pr_err("ndhal is null. Can't register functions for trn2.");
 		return -EINVAL;
 	}
 	ndhal->ndhal_sysfs_metrics.arch_nd_type_suffix = "v3";
-	ndhal->ndhal_sysfs_metrics.arch_nc_type_suffix = "v2";
-	ndhal->ndhal_sysfs_metrics.arch_instance_suffix = "Inf2";
-	ndhal->ndhal_sysfs_metrics.arch_device_name_suffix = "Inferentia2";
+	ndhal->ndhal_sysfs_metrics.arch_nc_type_suffix = "v3";
+	ndhal->ndhal_sysfs_metrics.arch_instance_suffix = "Trn2";
+	ndhal->ndhal_sysfs_metrics.arch_device_name_suffix = "Trainium2";
 	return 0;
 }
 
-
 /* Device Reset Functions */
+/**
+ * nr_get_tpb_reset_map() - generates a the reset map of all resources associated with resetting a particular TPB
+ *
+ *   Map is as follows:
+ *       8x TPBs            bits 0-7
+ *       8x SDMA groups     bits 8-15  (16 per group)
+ *       8x TOPSP groups    bits 16-23 (2 per group)
+ *       8x CC TOP groups   bits 24-31 (2 per group)
+ *
+ * / Break down mappings from bv: 8x TPBs, 8x SDMA groups (16 per group)
+    // 8x TOP_SP groups (2 per group), 8x CC_TOP Q7's (2 Q7's per group)
+    uint8_t tpb_bv = reset_unit_index_bv & 0xFFU;
+    uint8_t sdma_bv = (reset_unit_index_bv >> 8) & 0xFFU;
+    uint8_t top_sp_bv = (reset_unit_index_bv >> 16) & 0xFFU;
+    uint8_t cc_top_bv = (reset_unit_index_bv >> 24) & 0xFU; // Note: 4b here instead of 8b
+ *
+ */
 static void nr_get_tpb_reset_map(uint32_t nc_map, uint32_t *tpb_reset_map)
 {
-	int i, j;
+	int i;
 
 	// Build the tpb reset map if we are not performing a device reset
 	if (nc_map != NEURON_NC_MAP_DEVICE) {
@@ -87,11 +152,8 @@ static void nr_get_tpb_reset_map(uint32_t nc_map, uint32_t *tpb_reset_map)
 			if ((1 << i) & nc_map) {
 				// Add this tpb to the reset map
 				*tpb_reset_map |= (1 << i);
-				int ts_per_nc = V2_TS_PER_DEVICE / V2_NC_PER_DEVICE;
-				// Add all top sps owned by this tpb to the reset map
-				for (j = i * ts_per_nc; j < (i + 1) * ts_per_nc; j++) {
-					*tpb_reset_map |= (1 << (8 + j));
-				}
+				*tpb_reset_map |= (1 << (i+8));   // SDMA group for this core
+				*tpb_reset_map |= (1 << (i+16));  // TOP SP group for this core
 			}
 		}
 	}
@@ -102,7 +164,7 @@ static void nr_get_tpb_reset_map(uint32_t nc_map, uint32_t *tpb_reset_map)
  * 
  * @param nd - Neuron device which will be reset by the thread.
  */
-int nr_initiate_reset_v2(struct neuron_device *nd)
+int nr_initiate_reset_v3(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
@@ -119,29 +181,20 @@ int nr_initiate_reset_v2(struct neuron_device *nd)
 	return 0;
 }
 
-int nr_initiate_reset_v2_qemu(struct neuron_device *nd)
+int nr_initiate_reset_v3_qemu(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
 
-	volatile void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
+	volatile void *addr = nd->npdev.bar0 + V3_PCIE_BAR0_APB_IO_0_OFFSET + V3_APB_IO_0_USER_SE_0_RESERVED2_RELBASE + 0x10;
 	writel(1, (volatile uint32_t *)addr);  
-
-	uint32_t nc_map = nd->nr.req_pending_head->nc_map;
-	uint32_t tpb_reset_map = 0;
-	nr_get_tpb_reset_map(nc_map, &tpb_reset_map);
-
-	int ret = nr_initiate_reset_via_fw(nd, nc_map, tpb_reset_map);
-	if (ret) {
-		return ret;
-	}
 
 	return 0; 
 }
 
-int nr_initiate_reset_v2_emu(struct neuron_device *nd)
+int nr_initiate_reset_v3_emu(struct neuron_device *nd)
 {
-	return nr_initiate_reset_v2(nd);
+	return nr_initiate_reset_v3(nd);
 }
 
 /**
@@ -149,20 +202,20 @@ int nr_initiate_reset_v2_emu(struct neuron_device *nd)
  * 
  * @param nd - Neuron device which will be reset by the thread.
  */
-int nr_wait_for_reset_completion_v2(struct neuron_device *nd)
+int nr_wait_for_reset_completion_v3(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
 
 	int i;
-	void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET + V2_APB_IOFAB_RELBASE + V2_APB_IOFAB_MISC_RAM_RELBASE + V2_FW_IO_REG_FW_STATUS_OFFSET;
+	void *addr = nd->npdev.bar0 + V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + V2_FW_IO_REG_FW_STATUS_OFFSET; // FIXME in reset.h abstract and move to somewhere in v3
 
 	for (i = 0; i < ndhal->ndhal_reset.retry_count; i++) {
 		bool reset_in_progress = true;
 		u32 status;
 
 		if (ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, &status, 1, false) == 0)
-			reset_in_progress = status & V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK;
+			reset_in_progress = status & V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK; // FIXME in reset.h abstract and move to somewhere in v3
 		if (!reset_in_progress)
 			return 0;
 		if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i)) 
@@ -171,13 +224,13 @@ int nr_wait_for_reset_completion_v2(struct neuron_device *nd)
 	return -1;
 }
 
-int nr_wait_for_reset_completion_v2_qemu(struct neuron_device *nd)
+int nr_wait_for_reset_completion_v3_qemu(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
 
 	int i;
-	void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
+	void *addr = nd->npdev.bar0 + V3_PCIE_BAR0_APB_IO_0_OFFSET + V3_APB_IO_0_USER_SE_0_RESERVED2_RELBASE + 0x10;
 
 	for (i = 0; i < ndhal->ndhal_reset.retry_count; i++) {
 		bool reset_in_progress = true;
@@ -193,9 +246,9 @@ int nr_wait_for_reset_completion_v2_qemu(struct neuron_device *nd)
 	return -1;   
 }
 
-int nr_wait_for_reset_completion_v2_emu(struct neuron_device *nd)
+int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
 {
-	return nr_wait_for_reset_completion_v2(nd);
+	return nr_wait_for_reset_completion_v3(nd);
 }
 
 
@@ -208,10 +261,10 @@ int nr_wait_for_reset_completion_v2_emu(struct neuron_device *nd)
  * @nq_type: type of the notification queue
  * @return u8: notification queue index
  */
-u8 ts_nq_get_nqid_v2(struct neuron_device *nd, u8 index, u32 nq_type)
+u8 ts_nq_get_nqid_v3(struct neuron_device *nd, u8 index, u32 nq_type)
 {
 	u8 nq_id = 0;
-	nq_id = (nq_type * V2_MAX_NQ_QUEUES) + index;
+	nq_id = (nq_type * V3_MAX_NQ_QUEUES) + index;
 	return nq_id;
 }
 
@@ -225,13 +278,13 @@ u8 ts_nq_get_nqid_v2(struct neuron_device *nd, u8 index, u32 nq_type)
  * @size: size of queue in bytes
  * @queue_pa: physical address of the notification queue
  */
-void ts_nq_set_hwaddr_v2(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_type, u32 size,
+void ts_nq_set_hwaddr_v3(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_type, u32 size,
 			     u64 queue_pa)
 {
 	void *apb_base;
 	u32 low, high;
 
-	apb_base = nd->npdev.bar0 + notific_get_relative_offset_topsp_v2(ts_id);
+	apb_base = nd->npdev.bar0 + notific_get_relative_offset_topsp_v3(ts_id);
 
 	low = (u32)(queue_pa & 0xffffffff);
 	high = (u32)(queue_pa >> 32U);
@@ -258,7 +311,7 @@ void ts_nq_set_hwaddr_v2(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_ty
  *
  * Return: 0 on if initialization succeeds, a negative error code otherwise.
  */
-int ts_nq_init_v2(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
+int ts_nq_init_v3(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
 				u32 on_host_memory, u32 dram_channel, u32 dram_region,
 				bool force_alloc_mem, struct mem_chunk **nq_mc, u64 *mmap_offset)
 {
@@ -271,19 +324,20 @@ int ts_nq_init_v2(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type,
 	if (nd == NULL || ts_id >= ndhal->ndhal_address_map.ts_per_device)
 		return -EINVAL;
 
-	u8 nq_id = ts_nq_get_nqid_v2(nd, eng_index, nq_type);
+	u8 nq_id = ts_nq_get_nqid_v3(nd, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
 	struct mem_chunk *mc = nd->ts_nq_mc[ts_id][nq_id];
 	if (mc == NULL || force_alloc_mem) {
 		struct mem_chunk *_mc = NULL;
-		u32 nc_id = ts_id / (V2_TS_PER_DEVICE / V2_NC_PER_DEVICE);
+		u32 nc_id = ts_id / V3_TS_PER_NC;
+
 		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
 				   dram_channel, dram_region, nc_id, &_mc);
 		if (ret)
 			return ret;
-		ts_nq_set_hwaddr_v2(nd, ts_id, eng_index, nq_type, size, _mc->pa);
+		ts_nq_set_hwaddr_v3(nd, ts_id, eng_index, nq_type, size, _mc->pa);
 		nd->ts_nq_mc[ts_id][nq_id] = _mc;
 		if (mc) {
 			mc_free(&mc);
@@ -305,7 +359,7 @@ int ts_nq_init_v2(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type,
  * @ts_id: topsp id
  *
  */
-void ts_nq_destroy_one_v2(struct neuron_device *nd, u8 ts_id)
+void ts_nq_destroy_one_v3(struct neuron_device *nd, u8 ts_id)
 {
 	u8 eng_index;
 	u8 nq_type;
@@ -325,9 +379,9 @@ void ts_nq_destroy_one_v2(struct neuron_device *nd, u8 ts_id)
  * @param nc_id - neuron core index
  * @return void* - semaphore base address
  */
-void *nc_get_semaphore_base_v2(struct neuron_device *nd, u8 nc_id)
+void *nc_get_semaphore_base_v3(struct neuron_device *nd, u8 nc_id)
 {
-	return nd->npdev.bar0 + V2_PCIE_BAR0_TPB_0_OFFSET + (V2_PCIE_BAR0_TPB_0_SIZE * nc_id);
+	return nd->npdev.bar0 + V3_PCIE_BAR0_TPB_0_OFFSET + (V3_PCIE_BAR0_TPB_DIST * nc_id);
 }
 
 /**
@@ -338,10 +392,9 @@ void *nc_get_semaphore_base_v2(struct neuron_device *nd, u8 nc_id)
  * @param event_index - event index
  * @return void* - event address
  */
-void *nc_get_event_addr_v2(struct neuron_device *nd, u8 nc_id, u16 event_index)
+void *nc_get_event_addr_v3(struct neuron_device *nd, u8 nc_id, u16 event_index)
 {
-	void *base = nd->npdev.bar0 + V2_PCIE_BAR0_TPB_0_OFFSET +
-			   (V2_PCIE_BAR0_TPB_0_SIZE * nc_id) + ndhal->ndhal_address_map.mmap_nc_event_offset;
+	void * base = nd->npdev.bar0 + V3_PCIE_BAR0_TPB_0_OFFSET + (V3_PCIE_BAR0_TPB_DIST * nc_id) + ndhal->ndhal_address_map.mmap_nc_event_offset;
 	return (base + (event_index * NC_EVENT_SIZE));
 }
 
@@ -356,9 +409,9 @@ void *nc_get_event_addr_v2(struct neuron_device *nd, u8 nc_id, u16 event_index)
  * @param nq_type: type of the notification queue
  * @return u8: notification queue id
  */
-u8 nnq_get_nqid_v2(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
+u8 nnq_get_nqid_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
 {
-    return (nq_type * V2_MAX_NQ_QUEUES) + index;
+	return (nq_type * V3_MAX_NQ_QUEUES) + index;
 }
 
 /**
@@ -371,14 +424,14 @@ u8 nnq_get_nqid_v2(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
  * @param size: size of queue in bytes
  * @param queue_pa: physical address of the queue
  */
-void nnq_set_hwaddr_v2(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type, u32 size, u64 queue_pa)
+void nnq_set_hwaddr_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type, u32 size, u64 queue_pa)
 {
 	void *apb_base;
 	if (nq_type == NQ_TYPE_TRACE_DMA) {
-		apb_base = nd->npdev.bar0 + notific_get_relative_offset_sdma_v2(nc_id, index);
+		apb_base = nd->npdev.bar0 + notific_get_relative_offset_sdma_v3(nc_id, index);
 		index = 0; //in the block write it on queue 0 as the base is different
 	} else {
-		apb_base = nd->npdev.bar0 + notific_get_relative_offset_v2(nc_id);
+		apb_base = nd->npdev.bar0 + notific_get_relative_offset_v3(nc_id);
 	}
 
 	u32 low = (u32)(queue_pa & 0xffffffff);
@@ -400,22 +453,34 @@ void nnq_set_hwaddr_v2(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type
  * @param device_dram_addr: DRAM Channel 0 and 1's addresses
  * @param device_dram_size: DRAM Channel 0 and 1's sizes
  */
-void mpset_set_dram_and_mpset_info_v2(struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
+void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
 {
-	mpset->num_channels = V2_MAX_DRAM_CHANNELS;
+	mpset->num_channels = V3_MAX_DRAM_CHANNELS;
 	mpset->mp_device_num_regions = 1;
-	device_dram_addr[0] = V2_HBM_0_BASE;
-	device_dram_addr[1] = V2_HBM_1_BASE;
-	device_dram_size[0] = V2_HBM_0_SIZE;
-	device_dram_size[1] = V2_HBM_1_SIZE;
+	device_dram_addr[0] = V3_HBM_0_BASE;
+	device_dram_addr[1] = V3_HBM_1_BASE;
+	device_dram_addr[2] = V3_HBM_2_BASE;
+	device_dram_addr[3] = V3_HBM_3_BASE;
+
+	if (narch_is_qemu()) {
+		const u64 msize = ndhal->ndhal_pci.dram_bar_size / 4;
+		device_dram_size[0] = msize;
+		device_dram_size[1] = msize;
+		device_dram_size[2] = msize;
+		device_dram_size[3] = msize;
+	} else {
+		device_dram_size[0] = V3_HBM_ACTIVE_SIZE;
+		device_dram_size[1] = V3_HBM_ACTIVE_SIZE;
+		device_dram_size[2] = V3_HBM_ACTIVE_SIZE;
+		device_dram_size[3] = V3_HBM_ACTIVE_SIZE;
+	}
 }
 
 // Upper 16MB is used internally by the firmware, don't use it in the allocation pool
 #define MEMPOOL_CARVEOUT_SIZE 0x1000000 // 16MB
 /**
  * mpset_block_carveout_regions() 
- *          - in v2, block carve out regions: Upper 16 MB is used internally by firmware
- *          - in v1, do nothing and just return 0 
+ *          - in v3, block carve out regions: Upper 16 MB is used internally by firmware
  * 
  * @param nd: neuron device
  * @param mpset: pointer to mpset
@@ -424,14 +489,14 @@ void mpset_set_dram_and_mpset_info_v2(struct mempool_set *mpset, u64 *device_dra
  * @param region_sz: region size
  * @return int: 0 on success, o/w on failure
  */
-int mpset_block_carveout_regions_v2(struct neuron_device *nd, struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
+int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
 {
 	int ret;
 	u64 region_sz;
 	int channel = 0, region = 0;
 
 	/*
-	*  Block carve out regions: Upper 16 MB is used internally by firmware for trainuim
+	*  Block carve out regions: Upper 16 MB is used internally by firmware for trainuim2
 	*
 	*  Ideally we would carve out by simply changing the start address of the chunk;
 	*  however, that breaks aligned allocation in 4.x kernel versions (fixed in 5.x).
@@ -460,7 +525,7 @@ int mpset_block_carveout_regions_v2(struct neuron_device *nd, struct mempool_set
 			}
 		}
 	}
-
+	
 	return 0;
 }
 
@@ -475,9 +540,16 @@ int mpset_block_carveout_regions_v2(struct neuron_device *nd, struct mempool_set
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA engine id
  */
-uint32_t ndmar_get_h2t_eng_id_v2(struct neuron_device *nd, uint32_t nc_id)
+uint32_t ndmar_get_h2t_eng_id_v3(struct neuron_device *nd, uint32_t nc_id)
 {
-	return (nc_id == 0) ? V2_D2H_IDX : V2_H2D_IDX;
+	const uint32_t h2d_dma_eng_id[V3_NUM_H2D_DMA_PER_DEVICE] = {
+		V3_D2H_0_IDX,
+		V3_H2D_0_IDX, 
+		V3_D2H_1_IDX,
+		V3_H2D_1_IDX
+		};      
+	const uint32_t seng_id = nc_id / V3_NC_PER_SENG;
+	return h2d_dma_eng_id[seng_id];
 }
 
 /** 
@@ -486,9 +558,10 @@ uint32_t ndmar_get_h2t_eng_id_v2(struct neuron_device *nd, uint32_t nc_id)
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA queue id
  */
-int ndmar_get_h2t_qid_v2(uint32_t nc_id)
+int ndmar_get_h2t_qid_v3(uint32_t nc_id)
 {
-	return 0;
+ 	// on V3 on h2t engines are shared between 2 cores so we give the even core queue 0 and the odd core queue 1
+	return nc_id % V3_NC_PER_SENG;
 }
 
 /** 
@@ -499,20 +572,23 @@ int ndmar_get_h2t_qid_v2(uint32_t nc_id)
  * @param q_id:  queue id
  * Return true if this is an h2t queue
  */
-bool ndmar_is_h2t_q_v2(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
+bool ndmar_is_h2t_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
 {
-	return (nd->ndma_engine[eng_id].used_for_h2t && (q_id == 0));
+	return (nd->ndma_engine[eng_id].used_for_h2t && ((q_id == 0) || (q_id == 1)));
 }
 
 /**
  * nr_init_h2t_eng() - return true if the h2t dma should be initialized
+ *     h2t dma is shared by adjacent cores so only have the even nc init the engine
  * 
  * @param nd_idx - index of the core that owns the h2t 
  * @param nc_map - map of all cores being reset
  */
-bool nr_init_h2t_eng_v2( int nc_idx, uint32_t nc_map)
+bool nr_init_h2t_eng_v3( int nc_idx, uint32_t nc_map)
 {
-	return true;
+	if ((nc_idx % 2 == 0) &&((nc_map ==  NEURON_NC_MAP_DEVICE) || (nc_map & (1 << nc_idx))))
+		return true;
+	return false;
 }
 
 /**
@@ -521,11 +597,14 @@ bool nr_init_h2t_eng_v2( int nc_idx, uint32_t nc_map)
  * @param eng_id: the DMA engine id
  * @param q_id: the DMA queue id
  */
-bool ndmar_is_nx_ring_v2(uint32_t eng_id, uint32_t q_id)
+bool ndmar_is_nx_ring_v3(uint32_t eng_id, uint32_t q_id)
 {
-	// the last queue is reserved for collectives, 
-	// and the second to last queue in DMA engines 0-10 are reserved for NX cores
-	return (q_id == (V2_DMA_QUEUE_PER_ENG - 2)) && ((eng_id % V2_DMA_ENG_PER_NC) < (V2_TPB_ENG_PER_NC + V2_TS_PER_DEVICE));
+	// for v3 the last queue is reserved for collectives, and the second
+	// to last queue in engs 0-4 and 7-8 are reserved for NX cores
+	return (q_id == (V3_DMA_QUEUE_PER_ENG - 2)) &&
+		(((eng_id % V3_DMA_ENG_PER_NC) < V3_TPB_ENG_PER_NC) ||
+		((eng_id % V3_DMA_ENG_PER_NC) == 7 ||
+		(eng_id % V3_DMA_ENG_PER_NC) == 8 ));
 }
 
 /**
@@ -538,19 +617,19 @@ bool ndmar_is_nx_ring_v2(uint32_t eng_id, uint32_t q_id)
  *
  * Return: 0 if queue release succeeds, a negative error code otherwise.
  */
-int ndmar_quiesce_queues_v2(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask)
+int ndmar_quiesce_queues_v3(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask)
 {
 	if (engine_count > DMA_QUIESCE_MAX_ENG)
 		return -EINVAL;
 
-	u32 start_eng = nc_id * V2_DMA_ENG_PER_NC;
+	u32 start_eng = nc_id * V3_DMA_ENG_PER_NC;
 	u32 eng_id;
-	for (eng_id = 0; eng_id < V2_DMA_ENG_PER_NC; eng_id++) {
+	for (eng_id = 0; eng_id < V3_DMA_ENG_PER_NC; eng_id++) {
 		int qid;
 		struct ndma_eng *eng  = ndmar_acquire_engine(nd, start_eng + eng_id);
 		if (eng == NULL)
 			return -EINVAL;
-		for (qid = 0; qid < V2_MAX_DMA_RINGS; qid++) {
+		for (qid = 0; qid < V3_MAX_DMA_RINGS; qid++) {
 			u32 mask = 0x1 << qid;
 			// check if only the specific queues were requested
 			if (engine_count > 0) {
@@ -585,14 +664,14 @@ int ndmar_quiesce_queues_v2(struct neuron_device *nd, u32 nc_id, u32 engine_coun
  *
  * Return: None
  */
-void ndmar_set_model_started_v2(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc)
+void ndmar_set_model_started_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc)
 {
 	return;
 }
 
 
 /* FWIO Functions */
-const int trn1_32xl_neigbor_ids[16][4] = {
+const int trn2_32xl_neigbor_ids[16][4] = {
 	{12, 3, 4, 1},   // neuron device 0
 	{13, 0, 5, 2},   // neuron device 1
 	{14, 1, 6, 3},   // neuron device 2
@@ -611,30 +690,6 @@ const int trn1_32xl_neigbor_ids[16][4] = {
 	{11, 14, 3, 12}  // neuron device 15
 };
 
-const int inf2_48xl_neighbor_ids[12][2] = {
-	{11, 1}, // neuron device 0
-	{0, 2},  // neuron device 1
-	{1, 3},  // neuron device 2
-	{2, 4},  // neuron device 3
-	{3, 5},  // neuron device 4
-	{4, 6},  // neuron device 5
-	{5, 7},  // neuron device 6
-	{6, 8},  // neuron device 7
-	{7, 9},  // neuron device 8
-	{8, 10}, // neuron device 9
-	{9, 11}, // neuron device 10
-	{10, 0}  // neuron device 11
-};
-
-const int *inf2_24xl_neighbor_ids[6] = {
-	(int[]){1},     // neuron device 0
-	(int[]){0, 2},  // neuron device 1
-	(int[]){1, 3},  // neuron device 2
-	(int[]){2, 4},  // neuron device 3
-	(int[]){3, 5},  // neuron device 4
-	(int[]){4}      // neuron device 5
-};
-
 /**
  * fw_io_topology() - Discovers devices connected to the given device.
  *
@@ -647,9 +702,9 @@ const int *inf2_24xl_neighbor_ids[6] = {
  * @return int: 0 on success. -1 on failure
  *
  */
-int fw_io_topology_v2(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
+int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
 {
-	// V2 does not have the device support to detect east/west/south/north neighbors like V1,
+	// V3 does not have Pacific support to detect east/west/south/north neighbors like V1,
 	// so its topology is hardcoded based on instance type.
 	*count = 0;
 
@@ -657,26 +712,14 @@ int fw_io_topology_v2(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 
 		return 0;
 
 	switch (pdev_index) {
-		case TRN1_DEVICE_ID0: // Trn1
-			if (total_neuron_devices % 16 == 0) { // Trn1.32xl
+		case TRN2_DEVICE_ID0: // Trn2
+			if (total_neuron_devices % 16 == 0) {
 				int i;
 				*count = 4;
-				memcpy(connected_device_ids, trn1_32xl_neigbor_ids[device_id % 16], (*count) * sizeof(int));
+				memcpy(connected_device_ids, trn2_32xl_neigbor_ids[device_id % 16], (*count) * sizeof(int));
 				for ( i=0; i < *count; i++) {
 					connected_device_ids[i] |= (0x10 & device_id);
 				}
-			}
-			break;
-		case INF2_DEVICE_ID0: // Inf2
-			if (total_neuron_devices == 12) { // Inf2.48xl
-				*count = 2;
-				memcpy(connected_device_ids, inf2_48xl_neighbor_ids[device_id], (*count) * sizeof(int));
-			} else if (total_neuron_devices == 6) { // Inf2.24xl
-				if (device_id == 0 || device_id == 5)
-					*count = 1;
-				else
-					*count = 2;
-				memcpy(connected_device_ids, inf2_24xl_neighbor_ids[device_id], (*count) * sizeof(int));
 			}
 			break;
 		default:
@@ -692,9 +735,11 @@ int fw_io_topology_v2(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 
  * 
  * @return int: 0 on success. -1 on failure
  */
-int fw_io_register_readless_read_region_v2(struct fw_io_ctx *ctx, void __iomem *bar0, u64 bar0_size, void __iomem *bar2, u64 bar2_size)
+int fw_io_register_readless_read_region_v3(struct fw_io_ctx *ctx, void __iomem *bar0, u64 bar0_size, void __iomem *bar2, u64 bar2_size)
 {
-	if (fw_io_register_read_region(ctx, bar0, bar0_size, V2_MMAP_TPB_OFFSET)) {
+	// NOTE: V3 bar0->device physical mapping is non contiguous so restrict the RR window.
+	//
+	if (fw_io_register_read_region(ctx, bar0, V3_PCIE_BAR0_APB_IO_0_SIZE, V3_APB_IO_0_BASE)) {
 		pr_err("failed to register readless read BAR0 region\n");
 		return -1;
 	}
@@ -712,7 +757,7 @@ int fw_io_register_readless_read_region_v2(struct fw_io_ctx *ctx, void __iomem *
  * 
  * @return int: 0 on success, -1 on failure
  */
-int fw_io_read_csr_array_v2(void **ptrs, u32 *values, u32 num_csrs, bool operational)
+int fw_io_read_csr_array_v3(void **ptrs, u32 *values, u32 num_csrs, bool operational)
 {
 	if (num_csrs > FW_IO_MAX_READLESS_READ_REGISTER_COUNT)
 		return -EINVAL;
@@ -736,7 +781,7 @@ int fw_io_read_csr_array_v2(void **ptrs, u32 *values, u32 num_csrs, bool operati
  *
  * Return: 0 if read succeeds, a negative error code otherwise.
  */
-inline int reg_read32_array_v2(void **addr, u32 *value, u32 num_values)
+inline int reg_read32_array_v3(void **addr, u32 *value, u32 num_values)
 {
 	int ret;
 	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(addr, value, num_values, true);
@@ -747,7 +792,7 @@ inline int reg_read32_array_v2(void **addr, u32 *value, u32 num_values)
 	return ret;
 }
 
-inline int reg_read32_array_v2_qemu_emu(void **addr, u32 *value, u32 num_values)
+inline int reg_read32_array_v3_qemu_emu(void **addr, u32 *value, u32 num_values)
 {
 	int i;
 	for (i = 0; i < num_values; i++) {
@@ -766,13 +811,18 @@ inline int reg_read32_array_v2_qemu_emu(void **addr, u32 *value, u32 num_values)
  * @param offset: offset of BAR4
  * @return int: 0 on success; negative on failure
  */
-int mmap_get_bar4_offset_v2(u64 start_addr, u64 size, u64 *offset)
+int mmap_get_bar4_offset_v3(u64 start_addr, u64 size, u64 *offset)
 {
-	if (start_addr >= V2_HBM_0_BASE && start_addr + size < V2_HBM_0_BASE + V2_HBM_0_SIZE)
+	u64 hbm_dist = narch_is_qemu() ? (ndhal->ndhal_pci.dram_bar_size / 4) : V3_HBM_SIZE;
+
+	if (start_addr >= V3_HBM_0_BASE && start_addr + size < V3_HBM_0_BASE + V3_HBM_ACTIVE_SIZE)
 		*offset = start_addr;
-	else if (start_addr >= V2_HBM_1_BASE && start_addr + size < V2_HBM_1_BASE + V2_HBM_1_SIZE)
-		// The 64GB - 80GB range is mapped to 16GB - 32GB on bar4
-		*offset = start_addr - V2_HBM_1_BASE + V2_HBM_0_SIZE;
+	else if (start_addr >= V3_HBM_1_BASE && start_addr + size < V3_HBM_1_BASE + V3_HBM_ACTIVE_SIZE)
+		*offset = start_addr - V3_HBM_1_BASE + hbm_dist;
+	else if (start_addr >= V3_HBM_2_BASE && start_addr + size < V3_HBM_2_BASE + V3_HBM_ACTIVE_SIZE)
+		*offset = start_addr - V3_HBM_2_BASE + hbm_dist * 2;
+	else if (start_addr >= V3_HBM_3_BASE && start_addr + size < V3_HBM_3_BASE + V3_HBM_ACTIVE_SIZE)
+		*offset = start_addr - V3_HBM_3_BASE + hbm_dist * 3;
 	else
 		return -EINVAL;
 	return 0;
@@ -781,11 +831,11 @@ int mmap_get_bar4_offset_v2(u64 start_addr, u64 size, u64 *offset)
 
 /* Sysfs Metrics Functions */
 // sysfs root node's attrs and its child nodes' attrs
-static nsysfsmetric_attr_info_t root_info_node_attrs_info_tbl_v2[] = {
+static nsysfsmetric_attr_info_t root_info_node_attrs_info_tbl_v3[] = {
     ATTR_INFO("notify_delay", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_NOTIFY_DELAY), OTHER),
     ATTR_INFO("serial_number", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_SERIAL_NUMBER), OTHER),
 };
-static int root_info_node_attrs_info_tbl_cnt_v2 = sizeof(root_info_node_attrs_info_tbl_v2) / sizeof(nsysfsmetric_attr_info_t);
+static int root_info_node_attrs_info_tbl_cnt_v3 = sizeof(root_info_node_attrs_info_tbl_v3) / sizeof(nsysfsmetric_attr_info_t);
 
 /**
  * nsysfsmetric_add_ecc_nodes() - add neuron{0, 1, ...}/stats/hardware/{sram_ecc_uncorrected, mem_ecc_uncorrected} to sysfs directory
@@ -796,9 +846,9 @@ static int root_info_node_attrs_info_tbl_cnt_v2 = sizeof(root_info_node_attrs_in
  * @param attr_info_tbl: the ecc attributes as an array
  * @return int 0 on success; otherwise on failure
  * 
- * Note: ecc errors are only supported by sysfs for V2. TODO: V1 support will be added 
+ * Note: ecc errors are only supported by sysfs for V2/3. TODO: V1 support will be added 
  */
-int nsysfsmetric_add_ecc_nodes_v2(struct nsysfsmetric_metrics *metrics, 
+int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics, 
                                   struct nsysfsmetric_node *stats_node,
                                   int ecc_attrs_info_tbl_cnt,
                                   const nsysfsmetric_attr_info_t *ecc_attrs_info_tbl)
@@ -820,9 +870,9 @@ int nsysfsmetric_add_ecc_nodes_v2(struct nsysfsmetric_metrics *metrics,
  * @param dev: PCI device whose resources were previously reserved by pci_request_region()
  * @param bar: BAR to be reserved
  * 
- * for V2, this function is dummy
+ * for V3, this function is dummy
  */
-int neuron_pci_release_bar_v2(struct pci_dev *dev, int bar)
+int neuron_pci_release_bar_v3(struct pci_dev *dev, int bar)
 {
 	if (bar != ndhal->ndhal_pci.apb_bar && bar != ndhal->ndhal_pci.axi_bar && bar != ndhal->ndhal_pci.dram_bar) {
 		pci_info(dev, "invalid BAR%d\n", bar);
@@ -844,7 +894,7 @@ int neuron_pci_release_bar_v2(struct pci_dev *dev, int bar)
  * @param res_name: Name to be associated with resource.
  * @return int: Returns 0 on success, otherwise failure
  */
-int neuron_pci_reserve_bar_v2(struct pci_dev *dev, int bar, const char *res_name)
+int neuron_pci_reserve_bar_v3(struct pci_dev *dev, int bar, const char *res_name)
 {
 	int ret;
 
@@ -876,7 +926,7 @@ int neuron_pci_reserve_bar_v2(struct pci_dev *dev, int bar, const char *res_name
  * @param bar_size: size of BAR
  * @return int: Returns 0 on success, otherwise failure
  */
-int neuron_pci_set_npdev_v2(struct pci_dev *dev,
+int neuron_pci_set_npdev_v3(struct pci_dev *dev,
                             int bar,
                             const char *res_name,
                             phys_addr_t *bar_pa,
@@ -955,26 +1005,25 @@ static int neuron_pci_handle_dup_routing_id(void)
 	return ret;
 }
 
-// for V2 rename Neuron devices for better customer experience.
-// see internal documentation: TRN1-Discovery
+// for V3 rename Neuron devices for better customer experience.
+// see internal documentation: TRN2-Discovery
 // map routing id to user id:
-// const u32 v2_routing_id_to_user_id[MAX_NEURON_DEVICE_COUNT] = { FIXME NEED NEW MAPPING
-static const u32 v2_routing_id_to_user_id[] = {
+static const u32 v3_routing_id_to_user_id[] = {
 	0,   4,  1,  5,
 	3,   7,  2,  6,
 	12,  8, 13,  9,
 	15, 11, 14, 10 };
 
-#define V2_ROUTING_ID_TBL_SZ  (sizeof(v2_routing_id_to_user_id) / sizeof(v2_routing_id_to_user_id[0]))
+#define V3_ROUTING_ID_TBL_SZ  (sizeof(v3_routing_id_to_user_id) / sizeof(v3_routing_id_to_user_id[0]))
 
 static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
 {
-	u32 user_id_base = v2_routing_id_to_user_id[ routing_id % V2_ROUTING_ID_TBL_SZ];
-	return user_id_base + (routing_id / V2_ROUTING_ID_TBL_SZ) * V2_ROUTING_ID_TBL_SZ;
+	u32 user_id_base = v3_routing_id_to_user_id[ routing_id % V3_ROUTING_ID_TBL_SZ];
+	return user_id_base + (routing_id / V3_ROUTING_ID_TBL_SZ) * V3_ROUTING_ID_TBL_SZ;
 }
 
 /**
- * neuron_pci_get_device_id() - get device id from the device and set nd->device_index
+ * neuron_pci_get_device_id() - get device id from pacific and set nd->device_index
  * 
  * @param dev: PCI device
  * @param nd: neuron device
@@ -982,7 +1031,7 @@ static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
  * 
  * for V1, this function is dummy
  */
-int neuron_pci_get_device_id_v2(struct neuron_device *nd, struct pci_dev *dev)
+int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev *dev)
 {
 	int ret = 0;
 	int i;
@@ -1002,17 +1051,13 @@ int neuron_pci_get_device_id_v2(struct neuron_device *nd, struct pci_dev *dev)
 		return -ENODEV;
 	}
 
-	// TODO - this should be a "valid routing_id check for both TRN1 & INF2
+	// TODO - this should be a "valid routing_id check for TRN2 
 	if (routing_id < 0 || routing_id >= MAX_NEURON_DEVICE_COUNT) {
 		pr_err("Invalid device index %u", routing_id);
 		return -ENODEV;
 	}
 
-	// TODO - TRN1 and INF2 mappings are different - likely all of this and the INF1 should be encapsulated.
-	if (nd->pdev->device == TRN1_DEVICE_ID0)
-		nd->device_index = neuron_pci_routing_id_to_user_id(routing_id);
-	else
-		nd->device_index = routing_id;
+	nd->device_index = neuron_pci_routing_id_to_user_id(routing_id);
 
 	pr_err("** BDF: %2.2x:%2.2x.%x => nd[%d] (routing id: %u)\n", dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), nd->device_index, routing_id);
 
@@ -1034,7 +1079,7 @@ int neuron_pci_get_device_id_v2(struct neuron_device *nd, struct pci_dev *dev)
  * @return int: Returns 0 on success, otherwise failure
  */
 int 
-neuron_pci_device_id_to_rid_map_v2(uint32_t * count, uint32_t * did_to_rid_map)
+neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 {
 	int i;
 
@@ -1073,17 +1118,17 @@ neuron_pci_device_id_to_rid_map_v2(uint32_t * count, uint32_t * did_to_rid_map)
  *              + new V2 reset api for single-tpb reset + new notification init API with force mem realloc/resize.
  *           - Version 7 of the runtime requires udma queue size support for non power of 2 rings + dmabuf support.
  */
-#define V2_RT_MIN_COMPATIBLE_VERSION 5
-#define V2_RT_MAX_COMPATIBLE_VERSION 7
+#define V3_RT_MIN_COMPATIBLE_VERSION 5
+#define V3_RT_MAX_COMPATIBLE_VERSION 7
 /**
  * ncdev_compatible_version() - fill in the compatible version of the RT with the current driver version
  * 
  * @param arg: min and max compatible versions to be filled in
  */
-void ncdev_compatible_version_v2(struct neuron_ioctl_compatible_version *arg)
+void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *arg)
 {
-	arg->min = V2_RT_MIN_COMPATIBLE_VERSION;
-	arg->max = V2_RT_MAX_COMPATIBLE_VERSION;
+	arg->min = V3_RT_MIN_COMPATIBLE_VERSION;
+	arg->max = V3_RT_MAX_COMPATIBLE_VERSION;
 }
 
 /**
@@ -1105,9 +1150,9 @@ void ncdev_compatible_version_v2(struct neuron_ioctl_compatible_version *arg)
  *      state would be cleared out.
  * 
  */
-void ncdev_quiesce_exec_on_proc_exit_v2(void)
+void ncdev_quiesce_exec_on_proc_exit_v3(void)
 {
-	// for V2, the 1 second DMA queisce delay in flush was eliminated to improve nrt_init performance
+	// for V3, the 1 second DMA queisce delay in flush was eliminated to improve nrt_init performance
 	return;
 }
 
@@ -1124,10 +1169,10 @@ void ncdev_quiesce_exec_on_proc_exit_v2(void)
  * V1:
  *    For BAR0 the addresses are passed as array(random access).
  *    For BAR2 a single address is provided and driver does sequential writes.
- * V2:
+ * V2/3:
  *    Only BAR0 is used right now. TODO: change runtime ioctl
 */
-int ncdev_bar_write_data_v2(struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count)
+int ncdev_bar_write_data_v3(struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count)
 {
 	if (bar == 0) {
 		int i;
@@ -1176,7 +1221,7 @@ int ncdev_bar_write_data_v2(struct neuron_device *nd, u8 bar, u64 *reg_addresses
  * 
  * for V1, this function is dummy
  */
-void udma_m2s_data_rd_cfg_boundaries_set_v2(struct udma *udma)
+void udma_m2s_data_rd_cfg_boundaries_set_v3(struct udma *udma)
 {
 	reg_write32(&udma->udma_regs_m2s->axi_m2s.data_rd_cfg,
 	  UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY | 0x8);
@@ -1190,7 +1235,7 @@ void udma_m2s_data_rd_cfg_boundaries_set_v2(struct udma *udma)
  *
  * for V1, this function is dummy
  */
-void udma_q_config_v2(struct udma_q *udma_q)
+void udma_q_config_v3(struct udma_q *udma_q)
 {
 	if (udma_q->type != UDMA_TX) {
 		return;
@@ -1209,17 +1254,17 @@ void udma_q_config_v2(struct udma_q *udma_q)
 /**
  * ndma_get_wait_for_completion_time() - calculate the first and the following wait times for a DMA tranfer completion
  * 
- *      One full descriptor takes ~4 usec to transfer (64K at 16G/sec) on V2  and ~16 usec to transfer on V1.
+ *      One full descriptor takes ~2 usec to transfer (64K at 32G/sec) on V3  and ~4 usec to transfer on V2.
  *      The last descriptor may be partial, so wait 1/4 64K transfer time for that descriptor.
  *      Also, count includes the completion descriptor so don't include that in the count.
  * 
  * @param first_wait_time: the wait time for the first sleep
  * @param wait_time: the wait time for the following sleeps
  */
-void ndma_get_wait_for_completion_time_v2(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
+void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
-	u64 est_wait_time = 4 * (count -1);
-	*first_wait_time = async ? 1 : (est_wait_time - 3);
+	u64 est_wait_time = 2 * (count -1);
+	*first_wait_time = async ? 1 : (est_wait_time - 1);  // FIXME - need to adjust for zerocopy  
 	*following_wait_time = (est_wait_time * 100) - *first_wait_time;
 
 	// for some reason getting a timeout when staging some of BERT training graphs.
@@ -1228,15 +1273,15 @@ void ndma_get_wait_for_completion_time_v2(u32 count, bool async, u64 *first_wait
 	*following_wait_time *= 100;
 }
 
-void ndma_get_wait_for_completion_time_v2_qemu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
+void ndma_get_wait_for_completion_time_v3_qemu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
-	ndma_get_wait_for_completion_time_v2(count, async, first_wait_time, following_wait_time);
+	ndma_get_wait_for_completion_time_v3(count, async, first_wait_time, following_wait_time);
 	*following_wait_time *= 10 * 1000;
 }
 
-void ndma_get_wait_for_completion_time_v2_emu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
+void ndma_get_wait_for_completion_time_v3_emu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
-	ndma_get_wait_for_completion_time_v2(count, async, first_wait_time, following_wait_time);
+	ndma_get_wait_for_completion_time_v3(count, async, first_wait_time, following_wait_time);
 	*following_wait_time *= 100 * 1000;
 }
 
@@ -1250,15 +1295,17 @@ void ndma_get_wait_for_completion_time_v2_emu(u32 count, bool async, u64 *first_
  *         (that will look as though host is also set)
  *      V2:
  *         similar idea.  Just check for valid address allocated in host memory
+ *      V3:
+ *         similar idea.  Just check for valid address allocated in host memory
  *
  * @param nd: the neuron device
  * @param pa: the desc physical addresses
  * @param dst_mc: the mc that backs the dma queue
  * @return int: return 0 if the pa is valid; otherwise return negative
  */
-int ndma_validate_pa_v2(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *dst_mc, u32 desc_type)
+int ndma_validate_pa_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *dst_mc, u32 desc_type)
 {
-	if ((pa & V2_PCIE_ALL_RT_MASK) == ndhal->ndhal_address_map.pci_host_base) {
+	if ((pa & V3_PCIE_A0_BASE) == ndhal->ndhal_address_map.pci_host_base) {
 		if (!ndma_is_valid_host_mem(nd, pa)) {
 			return -EINVAL;
 		}
@@ -1266,34 +1313,6 @@ int ndma_validate_pa_v2(struct neuron_device *nd, phys_addr_t pa, struct mem_chu
 	return 0;
 }
 
-const static uint64_t seng_udma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
-	{ V2_APB_SENG_0_UDMA_0_BASE, V2_APB_SENG_0_UDMA_1_BASE, V2_APB_SENG_0_UDMA_2_BASE,
-	  V2_APB_SENG_0_UDMA_3_BASE, V2_APB_SENG_0_UDMA_4_BASE, V2_APB_SENG_0_UDMA_5_BASE,
-	  V2_APB_SENG_0_UDMA_6_BASE, V2_APB_SENG_0_UDMA_7_BASE, V2_APB_SENG_0_UDMA_8_BASE,
-	  V2_APB_SENG_0_UDMA_9_BASE, V2_APB_SENG_0_UDMA_10_BASE, V2_APB_SENG_0_UDMA_11_BASE,
-	  V2_APB_SENG_0_UDMA_12_BASE, V2_APB_SENG_0_UDMA_13_BASE,
-	  V2_APB_SENG_0_UDMA_14_BASE, V2_APB_SENG_0_UDMA_15_BASE },
-	{ V2_APB_SENG_1_UDMA_0_BASE, V2_APB_SENG_1_UDMA_1_BASE, V2_APB_SENG_1_UDMA_2_BASE,
-	  V2_APB_SENG_1_UDMA_3_BASE, V2_APB_SENG_1_UDMA_4_BASE, V2_APB_SENG_1_UDMA_5_BASE,
-	  V2_APB_SENG_1_UDMA_6_BASE, V2_APB_SENG_1_UDMA_7_BASE, V2_APB_SENG_1_UDMA_8_BASE,
-	  V2_APB_SENG_1_UDMA_9_BASE, V2_APB_SENG_1_UDMA_10_BASE, V2_APB_SENG_1_UDMA_11_BASE,
-	  V2_APB_SENG_1_UDMA_12_BASE, V2_APB_SENG_1_UDMA_13_BASE,
-	  V2_APB_SENG_1_UDMA_14_BASE, V2_APB_SENG_1_UDMA_15_BASE }
-};
-const static uint64_t seng_sdma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
-	{ V2_APB_SENG_0_SDMA_0_BASE, V2_APB_SENG_0_SDMA_1_BASE, V2_APB_SENG_0_SDMA_2_BASE,
-	  V2_APB_SENG_0_SDMA_3_BASE, V2_APB_SENG_0_SDMA_4_BASE, V2_APB_SENG_0_SDMA_5_BASE,
-	  V2_APB_SENG_0_SDMA_6_BASE, V2_APB_SENG_0_SDMA_7_BASE, V2_APB_SENG_0_SDMA_8_BASE,
-	  V2_APB_SENG_0_SDMA_9_BASE, V2_APB_SENG_0_SDMA_10_BASE, V2_APB_SENG_0_SDMA_11_BASE,
-	  V2_APB_SENG_0_SDMA_12_BASE, V2_APB_SENG_0_SDMA_13_BASE,
-	  V2_APB_SENG_0_SDMA_14_BASE, V2_APB_SENG_0_SDMA_15_BASE },
-	{ V2_APB_SENG_1_SDMA_0_BASE, V2_APB_SENG_1_SDMA_1_BASE, V2_APB_SENG_1_SDMA_2_BASE,
-	  V2_APB_SENG_1_SDMA_3_BASE, V2_APB_SENG_1_SDMA_4_BASE, V2_APB_SENG_1_SDMA_5_BASE,
-	  V2_APB_SENG_1_SDMA_6_BASE, V2_APB_SENG_1_SDMA_7_BASE, V2_APB_SENG_1_SDMA_8_BASE,
-	  V2_APB_SENG_1_SDMA_9_BASE, V2_APB_SENG_1_SDMA_10_BASE, V2_APB_SENG_1_SDMA_11_BASE,
-	  V2_APB_SENG_1_SDMA_12_BASE, V2_APB_SENG_1_SDMA_13_BASE,
-	  V2_APB_SENG_1_SDMA_14_BASE, V2_APB_SENG_1_SDMA_15_BASE }
-};
 /**
  * ndma_init() - Initialize a DMA engine
  * 
@@ -1302,43 +1321,46 @@ const static uint64_t seng_sdma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_T
  * @param eng_id: DMA engine index to initialize
  * @return int: 0 on success, otherwise on failure
  */
-int ndma_init_v2(void __iomem *bar0, struct udma *udma, int eng_id)
+int ndma_init_v3(void __iomem *bar0, struct udma *udma, int eng_id)
 {
 	char udma_name[UDMA_INSTANCE_NAME_LEN];
 	int ret = 0;
-	const bool d2h = (eng_id == V2_D2H_IDX);
-	const bool h2d = (eng_id == V2_H2D_IDX);
+	const bool d2h_0 = eng_id == V3_D2H_0_IDX;
+	const bool h2d_0 = eng_id == V3_H2D_0_IDX;
+	const bool d2h_1 = eng_id == V3_D2H_1_IDX;
+	const bool h2d_1 = eng_id == V3_H2D_1_IDX;
 
-
-	void __iomem *udma_base = NULL;
-	void __iomem *sdma_base = NULL;
-
-	if (h2d || d2h) {
-		const uint64_t seng_udma_relbase = ( h2d ? V2_APB_H2D_UDMA_BASE : V2_APB_D2H_UDMA_BASE) - V2_APB_BASE;
-		const uint64_t seng_sdma_relbase = ( h2d ? V2_APB_H2D_SDMA_BASE : V2_APB_D2H_SDMA_BASE) - V2_APB_BASE;
-
-		udma_base = ((void __iomem *)bar0 + V2_PCIE_BAR0_APB_OFFSET) + seng_udma_relbase;
-		sdma_base = ((void __iomem *)bar0 + V2_PCIE_BAR0_APB_OFFSET) + seng_sdma_relbase;
+	uint64_t seng_udma_relbase;
+	if (h2d_0 || d2h_0) {
+		seng_udma_relbase = (h2d_0 ? V3_APB_IO_0_H2D_UDMA_BASE : V3_APB_IO_0_D2H_UDMA_BASE);
+		seng_udma_relbase = seng_udma_relbase - V3_APB_IO_0_BASE + V3_PCIE_BAR0_APB_IO_0_OFFSET;
+	} else if (h2d_1 || d2h_1) {
+		seng_udma_relbase = (h2d_1 ? V3_APB_IO_1_H2D_UDMA_BASE : V3_APB_IO_1_D2H_UDMA_BASE);
+		seng_udma_relbase = seng_udma_relbase - V3_APB_IO_1_BASE + V3_PCIE_BAR0_APB_IO_1_OFFSET;
 	} else {
-		const int nc_id = eng_id / V2_DMA_ENG_PER_NC;
-		const int eid = eng_id % V2_DMA_ENG_PER_NC;
-
-		const uint64_t seng_udma_relbase = seng_udma_base[nc_id][eid] - V2_APB_BASE;
-		const uint64_t seng_sdma_relbase = seng_sdma_base[nc_id][eid] - V2_APB_BASE;
-
-		udma_base = ((void __iomem *)bar0 + V2_PCIE_BAR0_APB_OFFSET) + seng_udma_relbase;
-		sdma_base  = ((void __iomem *)bar0 + V2_PCIE_BAR0_APB_OFFSET) + seng_sdma_relbase;
-
-		ret = sdma_configure_broadcast(sdma_base, eid);
-		if (ret) {
-			pr_err("SDMA BCAST:%d init failed\n", eng_id);
-			goto done;
+		int seng_id = eng_id / V3_NUM_DMA_ENG_PER_SENG;
+		int eng_id_within_seng = eng_id % V3_NUM_DMA_ENG_PER_SENG;
+		if (seng_id == 0) {
+			seng_udma_relbase = V3_APB_SE_0_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
+			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_0_BASE + V3_PCIE_BAR0_APB_SE_0_OFFSET;
+		} else if (seng_id == 1) {
+			seng_udma_relbase = V3_APB_SE_1_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
+			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_1_BASE + V3_PCIE_BAR0_APB_SE_1_OFFSET;
+		} else if (seng_id == 2) {
+			seng_udma_relbase = V3_APB_SE_2_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
+			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_2_BASE + V3_PCIE_BAR0_APB_SE_2_OFFSET;
+		} else {
+			seng_udma_relbase = V3_APB_SE_3_SDMA_0_BASE + eng_id_within_seng * V3_APB_SDMA_DIST;
+			seng_udma_relbase = seng_udma_relbase - V3_APB_SE_3_BASE + V3_PCIE_BAR0_APB_SE_3_OFFSET;
 		}
 	}
 
+ 	void __iomem *udma_base = (void __iomem *)bar0 + seng_udma_relbase;
+	void __iomem *sdma_base = udma_base + V3_APB_SDMA_MISC_OFFSET;
+
 	snprintf(udma_name, UDMA_INSTANCE_NAME_LEN, "UDMA_ENG_%d", eng_id);
 	ret = udma_m2m_init_engine(udma, udma_base, DMA_MAX_Q_MAX, udma_name, 0,
-				   V2_ALLOWED_DESC_PER_PACKET + 1, true); // we add one to allow for MD descriptor
+							   V3_ALLOWED_DESC_PER_PACKET + 1, false); // we add one to allow for MD descriptor
 	if (ret) {
 		pr_err("UDMA ENG:%d init failed\n", eng_id);
 		goto done;
@@ -1348,8 +1370,6 @@ int ndma_init_v2(void __iomem *bar0, struct udma *udma, int eng_id)
 		pr_err("SDMA ENG:%d init failed\n", eng_id);
 		goto done;
 	}
-
-	udma_m2m_set_axi_error_abort(udma); // setup dma abort
 
 done:
 	return ret;
@@ -1364,40 +1384,72 @@ done:
  * @param offset: offset to be checked as blocked or not
  * @return int: return -1 if the access should be blocked, otherwise return 0.
  */
-int ndma_is_bar0_write_blocked_v2(u64 off)
+int ndma_is_bar0_write_blocked_v3(u64 off)
 {
 	int eid;
-	// check NC 0
-	u64 start_off = V2_APB_SENG_0_UDMA_0_BASE - V2_APB_BASE + V2_PCIE_BAR0_APB_OFFSET;
-	u64 end_off = V2_APB_SENG_0_UDMA_15_BASE - V2_APB_BASE + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_UDMA_SIZE;
+	// check seng 0
+	u64 start_off = V3_APB_SE_0_SDMA_0_BASE - V3_APB_SE_0_BASE + V3_PCIE_BAR0_APB_SE_0_OFFSET;
+	u64 end_off = start_off + V3_NUM_DMA_ENG_PER_SENG * V3_APB_SDMA_DIST;
 	if (off >= start_off && off < end_off) {
-		for (eid = 0; eid < V2_DMA_ENG_PER_NC; eid++) {
+		for (eid = 0; eid < V3_NUM_DMA_ENG_PER_SENG; eid++) {
 			if (ndma_bar0_blocked_one_engine(start_off, off)) {
 				return -1;
 			}
-			start_off += V2_APB_SENG_UDMA_SIZE;
+			start_off += V3_APB_SDMA_DIST;
 		}
 	}
-	// check NC 1
-	start_off = V2_APB_SENG_1_UDMA_0_BASE - V2_APB_BASE + V2_PCIE_BAR0_APB_OFFSET;
-	end_off = V2_APB_SENG_1_UDMA_15_BASE - V2_APB_BASE + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_UDMA_SIZE;
+	// check seng 1
+	start_off = V3_APB_SE_1_SDMA_0_BASE - V3_APB_SE_1_BASE + V3_PCIE_BAR0_APB_SE_1_OFFSET;
+	end_off = start_off + V3_NUM_DMA_ENG_PER_SENG * V3_APB_SDMA_DIST;
 	if (off >= start_off && off < end_off) {
-		for (eid = 0; eid < V2_DMA_ENG_PER_NC; eid++) {
+		for (eid = 0; eid < V3_NUM_DMA_ENG_PER_SENG; eid++) {
 			if (ndma_bar0_blocked_one_engine(start_off, off)) {
 				return -1;
 			}
-			start_off += V2_APB_SENG_UDMA_SIZE;
+			start_off += V3_APB_SDMA_DIST;
+		}
+	}
+	// check seng 2
+	start_off = V3_APB_SE_2_SDMA_0_BASE - V3_APB_SE_2_BASE + V3_PCIE_BAR0_APB_SE_2_OFFSET;
+	end_off = start_off + V3_NUM_DMA_ENG_PER_SENG * V3_APB_SDMA_DIST;
+	if (off >= start_off && off < end_off) {
+		for (eid = 0; eid < V3_NUM_DMA_ENG_PER_SENG; eid++) {
+			if (ndma_bar0_blocked_one_engine(start_off, off)) {
+				return -1;
+			}
+			start_off += V3_APB_SDMA_DIST;
+		}
+	}
+	// check seng 3
+	start_off = V3_APB_SE_3_SDMA_0_BASE - V3_APB_SE_3_BASE + V3_PCIE_BAR0_APB_SE_3_OFFSET;
+	end_off = start_off + V3_NUM_DMA_ENG_PER_SENG * V3_APB_SDMA_DIST;
+	if (off >= start_off && off < end_off) {
+		for (eid = 0; eid < V3_NUM_DMA_ENG_PER_SENG; eid++) {
+			if (ndma_bar0_blocked_one_engine(start_off, off)) {
+				return -1;
+			}
+			start_off += V3_APB_SDMA_DIST;
 		}
 	}
 	// check D2H
-	start_off = V2_APB_D2H_UDMA_BASE - V2_APB_BASE + V2_PCIE_BAR0_APB_OFFSET;
-	end_off = start_off + V2_APB_SENG_UDMA_SIZE;
+	start_off = V3_APB_IO_0_D2H_UDMA_BASE - V3_APB_IO_0_BASE + V3_PCIE_BAR0_APB_IO_0_OFFSET;
+	end_off = start_off + V3_APB_SDMA_DIST;
+	if (ndma_bar0_blocked_one_engine(start_off, off)) {
+		return -1;
+	}
+	start_off = V3_APB_IO_1_D2H_UDMA_BASE - V3_APB_IO_1_BASE + V3_PCIE_BAR0_APB_IO_1_OFFSET;
+	end_off = start_off + V3_APB_SDMA_DIST;
 	if (ndma_bar0_blocked_one_engine(start_off, off)) {
 		return -1;
 	}
 	// check H2D
-	start_off = V2_APB_H2D_UDMA_BASE - V2_APB_BASE + V2_PCIE_BAR0_APB_OFFSET;
-	end_off = start_off + V2_APB_SENG_UDMA_SIZE;
+	start_off = V3_APB_IO_0_H2D_UDMA_BASE - V3_APB_IO_0_BASE + V3_PCIE_BAR0_APB_IO_0_OFFSET;
+	end_off = start_off + V3_APB_SDMA_DIST;
+	if (ndma_bar0_blocked_one_engine(start_off, off)) {
+		return -1;
+	}
+	start_off = V3_APB_IO_1_H2D_UDMA_BASE - V3_APB_IO_1_BASE + V3_PCIE_BAR0_APB_IO_1_OFFSET;
+	end_off = start_off + V3_APB_SDMA_DIST;
 	if (ndma_bar0_blocked_one_engine(start_off, off)) {
 		return -1;
 	}
@@ -1419,7 +1471,7 @@ int ndma_is_bar0_write_blocked_v2(u64 off)
  * @param set_dmb 
  * @return int 
  */
-int ndma_get_m2m_barrier_type_v2(bool set_dmb)
+int ndma_get_m2m_barrier_type_v3(bool set_dmb)
 {
 	if (set_dmb)
 		return UDMA_M2M_BARRIER_WRITE_BARRIER;
@@ -1432,127 +1484,127 @@ int ndma_get_m2m_barrier_type_v2(bool set_dmb)
  * static asserts to valid static const sizes work across versions
  *
  */
-static_assert( MAX_DRAM_CHANNELS >= V2_MAX_DRAM_CHANNELS, "Max dram channel count too small");
-static_assert( MAX_TS_PER_DEVICE >= V2_TS_PER_DEVICE, "Max ts per device count too small");
-static_assert( MAX_NC_PER_DEVICE >= V2_NC_PER_DEVICE, "Max nc per device count too small");
-static_assert( MAX_NQ_TYPE >= V2_MAX_NQ_TYPE, "Max nq type count too small");
-static_assert( MAX_NQ_ENGINE >= V2_MAX_NQ_QUEUES, "Max nq per engine count too small");
-static_assert( NUM_DMA_ENG_PER_DEVICE >= V2_NUM_DMA_ENG_PER_DEVICE, "Max dma engine per device count too small");
+static_assert( MAX_DRAM_CHANNELS >= V3_MAX_DRAM_CHANNELS, "Max dram channel count too small");
+static_assert( MAX_TS_PER_DEVICE >= V3_TS_PER_DEVICE, "Max ts per device count too small");
+static_assert( MAX_NC_PER_DEVICE >= V3_NC_PER_DEVICE, "Max nc per device count too small");
+static_assert( MAX_NQ_TYPE >= V3_MAX_NQ_TYPE, "Max nq type count too small");
+static_assert( MAX_NQ_ENGINE >= V3_MAX_NQ_QUEUES, "Max nq per engine count too small");
+static_assert( NUM_DMA_ENG_PER_DEVICE >= V3_NUM_DMA_ENG_PER_DEVICE, "Max dma engine per device count too small");
 
 
 /**
- * ndhal_register_funcs_v2() - initialize the dhal for v2 chips
+ * ndhal_register_funcs_v3() - initialize the dhal for v3 chips
  *  
  */
-int ndhal_register_funcs_v2(void) {
+int ndhal_register_funcs_v3(void) {
 	int ret = 0;
 
 	if (!ndhal) {
-		pr_err("ndhal is null. Can't register functions for V2.");
+		pr_err("ndhal is null. Can't register functions for V3.");
 		return -EINVAL;
 	}
 
-	ndhal->ndhal_address_map.pci_host_base = V2_PCIE_A0_BASE;
-	ndhal->ndhal_address_map.mmap_p_offset = V2_MMAP_P_OFFSET;
-	ndhal->ndhal_address_map.mmap_nc_event_offset = V2_MMAP_NC_EVENT_OFFSET;
-	ndhal->ndhal_address_map.mmap_nc_sema_read_offset = V2_MMAP_NC_SEMA_READ_OFFSET;
-	ndhal->ndhal_address_map.mmap_nc_sema_set_offset = V2_MMAP_NC_SEMA_SET_OFFSET;
-	ndhal->ndhal_address_map.mmap_nc_sema_incr_offset = V2_MMAP_NC_SEMA_INCR_OFFSET;
-	ndhal->ndhal_address_map.mmap_nc_sema_decr_offset = V2_MMAP_NC_SEMA_DECR_OFFSET;
-	ndhal->ndhal_address_map.bar0_misc_ram_offset = V2_MMAP_BAR0_APB_MISC_RAM_OFFSET;
+	// Disable metrics on v3 until we have support
+	extern unsigned int nmetric_log_posts;
+	if (nmetric_log_posts == 1) {
+		nmetric_log_posts = 0;
+	}
+
+	ndhal->ndhal_address_map.pci_host_base = V3_PCIE_A0_BASE;
+	ndhal->ndhal_address_map.mmap_p_offset = V3_MMAP_P_OFFSET;
+	ndhal->ndhal_address_map.mmap_nc_event_offset = V3_MMAP_NC_EVENT_OFFSET;
+	ndhal->ndhal_address_map.mmap_nc_sema_read_offset = V3_MMAP_NC_SEMA_READ_OFFSET;
+	ndhal->ndhal_address_map.mmap_nc_sema_set_offset = V3_MMAP_NC_SEMA_SET_OFFSET;
+	ndhal->ndhal_address_map.mmap_nc_sema_incr_offset = V3_MMAP_NC_SEMA_INCR_OFFSET;
+	ndhal->ndhal_address_map.mmap_nc_sema_decr_offset = V3_MMAP_NC_SEMA_DECR_OFFSET;
+	ndhal->ndhal_address_map.bar0_misc_ram_offset = V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET;
 	ndhal->ndhal_address_map.port_1_base = 0ull;
-	ndhal->ndhal_address_map.mmap_nc_size = V2_MMAP_NC_SIZE;
-	ndhal->ndhal_address_map.nc_per_device = V2_NC_PER_DEVICE;
-	ndhal->ndhal_address_map.semaphore_count = V2_SEMAPHORE_COUNT;
-	ndhal->ndhal_address_map.event_count = V2_EVENTS_COUNT;
-	ndhal->ndhal_address_map.ts_per_device = V2_TS_PER_DEVICE;
-	ndhal->ndhal_address_map.dma_eng_per_nc = V2_DMA_ENG_PER_NC;
-	ndhal->ndhal_address_map.dram_channels = V2_MAX_DRAM_CHANNELS;
+	ndhal->ndhal_address_map.mmap_nc_size = V3_MMAP_NC_SIZE;
+	ndhal->ndhal_address_map.nc_per_device = V3_NC_PER_DEVICE;
+	ndhal->ndhal_address_map.semaphore_count = V3_SEMAPHORE_COUNT;
+	ndhal->ndhal_address_map.event_count = V3_EVENTS_COUNT;
+	ndhal->ndhal_address_map.ts_per_device = V3_TS_PER_DEVICE;
+	ndhal->ndhal_address_map.dma_eng_per_nc = V3_DMA_ENG_PER_NC;
+	ndhal->ndhal_address_map.dram_channels = V3_MAX_DRAM_CHANNELS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
-	ndhal->ndhal_topsp.ts_nq_init = ts_nq_init_v2;
-	ndhal->ndhal_topsp.ts_nq_destroy_one = ts_nq_destroy_one_v2;
-	ndhal->ndhal_topsp.ts_nq_get_nqid = ts_nq_get_nqid_v2;
-	ndhal->ndhal_topsp.ts_nq_set_hwaddr = ts_nq_set_hwaddr_v2;
-	ndhal->ndhal_nc.nc_get_semaphore_base = nc_get_semaphore_base_v2;
-	ndhal->ndhal_nc.nc_get_event_addr = nc_get_event_addr_v2;
-	ndhal->ndhal_nq.nnq_get_nqid = nnq_get_nqid_v2;
-	ndhal->ndhal_nq.nnq_set_hwaddr = nnq_set_hwaddr_v2;
-	ndhal->ndhal_mpset.mp_min_alloc_size = (mempool_min_alloc_size < 1024) ? 1024 : mempool_min_alloc_size;  // v2 has a bigger mem size and gen pool create fails if < 1024
-	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v2;
-	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v2;
-	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v2;
-    ndhal->ndhal_ndmar.ndmar_get_h2t_qid = ndmar_get_h2t_qid_v2;
-    ndhal->ndhal_ndmar.ndmar_is_h2t_q = ndmar_is_h2t_q_v2;
-	ndhal->ndhal_ndmar.nr_init_h2t_eng = nr_init_h2t_eng_v2;
-	ndhal->ndhal_ndmar.ndmar_is_nx_ring = ndmar_is_nx_ring_v2;
-	ndhal->ndhal_ndmar.ndmar_quiesce_queues = ndmar_quiesce_queues_v2;
-	ndhal->ndhal_ndmar.ndmar_set_model_started = ndmar_set_model_started_v2;
-	ndhal->ndhal_fw_io.fw_io_topology = fw_io_topology_v2;
-	ndhal->ndhal_fw_io.fw_io_register_readless_read_region = fw_io_register_readless_read_region_v2;
-	ndhal->ndhal_fw_io.fw_io_read_csr_array = fw_io_read_csr_array_v2;
-	ndhal->ndhal_mmap.dm_mmap_special = dm_mmap_special_v2;
-	ndhal->ndhal_mmap.mmap_get_bar4_offset = mmap_get_bar4_offset_v2;
-	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt = root_info_node_attrs_info_tbl_cnt_v2;
-	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl = root_info_node_attrs_info_tbl_v2;
-	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_ecc_nodes = nsysfsmetric_add_ecc_nodes_v2;
+	ndhal->ndhal_topsp.ts_nq_init = ts_nq_init_v3;
+	ndhal->ndhal_topsp.ts_nq_destroy_one = ts_nq_destroy_one_v3;
+	ndhal->ndhal_topsp.ts_nq_get_nqid = ts_nq_get_nqid_v3;
+	ndhal->ndhal_topsp.ts_nq_set_hwaddr = ts_nq_set_hwaddr_v3;
+	ndhal->ndhal_nc.nc_get_semaphore_base = nc_get_semaphore_base_v3;
+	ndhal->ndhal_nc.nc_get_event_addr = nc_get_event_addr_v3;
+	ndhal->ndhal_nq.nnq_get_nqid = nnq_get_nqid_v3;
+	ndhal->ndhal_nq.nnq_set_hwaddr = nnq_set_hwaddr_v3;
+	ndhal->ndhal_mpset.mp_min_alloc_size = (mempool_min_alloc_size < 1024) ? 1024 : mempool_min_alloc_size;
+	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v3;
+	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v3;
+	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v3;
+    ndhal->ndhal_ndmar.ndmar_get_h2t_qid = ndmar_get_h2t_qid_v3;
+    ndhal->ndhal_ndmar.ndmar_is_h2t_q = ndmar_is_h2t_q_v3;
+	ndhal->ndhal_ndmar.nr_init_h2t_eng = nr_init_h2t_eng_v3;
+	ndhal->ndhal_ndmar.ndmar_is_nx_ring = ndmar_is_nx_ring_v3;
+	ndhal->ndhal_ndmar.ndmar_quiesce_queues = ndmar_quiesce_queues_v3;
+	ndhal->ndhal_ndmar.ndmar_set_model_started = ndmar_set_model_started_v3;
+	ndhal->ndhal_fw_io.fw_io_topology = fw_io_topology_v3;
+	ndhal->ndhal_fw_io.fw_io_register_readless_read_region = fw_io_register_readless_read_region_v3;
+	ndhal->ndhal_fw_io.fw_io_read_csr_array = fw_io_read_csr_array_v3;
+	ndhal->ndhal_mmap.dm_mmap_special = dm_mmap_special_v3;
+	ndhal->ndhal_mmap.mmap_get_bar4_offset = mmap_get_bar4_offset_v3;
+	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt = root_info_node_attrs_info_tbl_cnt_v3;
+	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl = root_info_node_attrs_info_tbl_v3;
+	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_ecc_nodes = nsysfsmetric_add_ecc_nodes_v3;
 	ndhal->ndhal_pci.axi_bar = BAR_UNUSED;
 	ndhal->ndhal_pci.dram_bar = 4;
-	ndhal->ndhal_pci.neuron_pci_release_bar = neuron_pci_release_bar_v2;
-	ndhal->ndhal_pci.neuron_pci_reserve_bar = neuron_pci_reserve_bar_v2;
-	ndhal->ndhal_pci.neuron_pci_set_npdev = neuron_pci_set_npdev_v2;
-	ndhal->ndhal_pci.neuron_pci_get_device_id = neuron_pci_get_device_id_v2;
-	ndhal->ndhal_pci.neuron_pci_device_id_to_rid_map = neuron_pci_device_id_to_rid_map_v2; 
-	ndhal->ndhal_cdev.ncdev_mem_regions = ncdev_mem_regions_v2;
-	ndhal->ndhal_cdev.ncdev_bar0_write_blocked_addrs = ncdev_bar0_write_blocked_addrs_v2;
-	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v2;
-	ndhal->ndhal_cdev.ncdev_quiesce_exec_on_proc_exit = ncdev_quiesce_exec_on_proc_exit_v2;
-	ndhal->ndhal_cdev.ncdev_bar_write_data = ncdev_bar_write_data_v2;
-	ndhal->ndhal_udma.num_beats = 1024; // >= UDMA_REV_ID_4
-	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set = udma_m2s_data_rd_cfg_boundaries_set_v2;
-	ndhal->ndhal_udma.udma_q_config = udma_q_config_v2;
-	ndhal->ndhal_ndma.ndma_retry_memcpy = true;
-	ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v2;
-	ndhal->ndhal_ndma.ndma_validate_pa = ndma_validate_pa_v2;
-	ndhal->ndhal_ndma.ndma_init = ndma_init_v2;
-	ndhal->ndhal_ndma.ndma_is_bar0_write_blocked = ndma_is_bar0_write_blocked_v2;
-	ndhal->ndhal_ndma.ndma_get_m2m_barrier_type = ndma_get_m2m_barrier_type_v2;
+	ndhal->ndhal_pci.neuron_pci_release_bar = neuron_pci_release_bar_v3;
+	ndhal->ndhal_pci.neuron_pci_reserve_bar = neuron_pci_reserve_bar_v3;
+	ndhal->ndhal_pci.neuron_pci_set_npdev = neuron_pci_set_npdev_v3;
+	ndhal->ndhal_pci.neuron_pci_get_device_id = neuron_pci_get_device_id_v3;
+	ndhal->ndhal_pci.neuron_pci_device_id_to_rid_map = neuron_pci_device_id_to_rid_map_v3; 
+	ndhal->ndhal_cdev.ncdev_mem_regions = ncdev_mem_regions_v3;
+	ndhal->ndhal_cdev.ncdev_bar0_write_blocked_addrs = ncdev_bar0_write_blocked_addrs_v3;
+	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v3;
+	ndhal->ndhal_cdev.ncdev_quiesce_exec_on_proc_exit = ncdev_quiesce_exec_on_proc_exit_v3;
+	ndhal->ndhal_cdev.ncdev_bar_write_data = ncdev_bar_write_data_v3;
+	ndhal->ndhal_udma.num_beats = 2296;  // allow up to 288 outstanding writes
+	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set = udma_m2s_data_rd_cfg_boundaries_set_v3;
+	ndhal->ndhal_udma.udma_q_config = udma_q_config_v3;
+	ndhal->ndhal_ndma.ndma_retry_memcpy = false;
+	ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3;
+	ndhal->ndhal_ndma.ndma_validate_pa = ndma_validate_pa_v3;
+	ndhal->ndhal_ndma.ndma_init = ndma_init_v3;
+	ndhal->ndhal_ndma.ndma_is_bar0_write_blocked = ndma_is_bar0_write_blocked_v3;
+	ndhal->ndhal_ndma.ndma_get_m2m_barrier_type = ndma_get_m2m_barrier_type_v3;
+
 
 	if (narch_is_qemu()) {
-		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v2_qemu;
-		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v2_qemu;
-		ndhal->ndhal_address_map.dma_eng_per_nd = V2_NC_PER_DEVICE * V2_DMA_ENG_PER_NC;
-		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v2_qemu_emu;
+		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v3_qemu;
+		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3_qemu;
+		ndhal->ndhal_address_map.dma_eng_per_nd = V3_NC_PER_DEVICE * V3_DMA_ENG_PER_NC;
+		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
 		ndhal->ndhal_pci.apb_bar = 2;
-		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v2_qemu;
+		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_qemu;
 	} else if (narch_is_emu()) {
 		ndhal->ndhal_reset.retry_count *= 1000; // wait longer on the emulator
-		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v2_emu;
-		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v2_emu;
-		ndhal->ndhal_address_map.dma_eng_per_nd = nc_per_dev_param * V2_DMA_ENG_PER_NC;
+		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v3_emu;
+		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3_emu;
+		ndhal->ndhal_address_map.dma_eng_per_nd = nc_per_dev_param * V3_DMA_ENG_PER_NC;
 		ndhal->ndhal_address_map.nc_per_device = nc_per_dev_param;
-		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v2_qemu_emu;
+		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
 		ndhal->ndhal_pci.apb_bar = 0;
-		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v2_emu;
+		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_emu;
 	} else {
-		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v2;
-		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v2;
-		ndhal->ndhal_address_map.dma_eng_per_nd = V2_NC_PER_DEVICE * V2_DMA_ENG_PER_NC;
-		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v2;
+		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v3;
+		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3;
+		ndhal->ndhal_address_map.dma_eng_per_nd = V3_NC_PER_DEVICE * V3_DMA_ENG_PER_NC;
+		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3;
 		ndhal->ndhal_pci.apb_bar = 0;
 	}
 
 	switch (ndhal->pci_device_id) {
-		case TRN1_DEVICE_ID0:
-			ret = ndhal_register_funcs_trn1();
+		case TRN2_DEVICE_ID0:
+			ret = ndhal_register_funcs_trn2();
 			if (ret) {
-				pr_err("failed to register ndhal funcs on trn1.\n");
-				return ret;
-			}
-			break;
-		case INF2_DEVICE_ID0:
-			ret = ndhal_register_funcs_inf2();
-			if (ret) {
-				pr_err("failed to register ndhal funcs on inf2.\n");
+				pr_err("failed to register ndhal funcs on trn2.\n");
 				return ret;
 			}
 			break;

@@ -16,9 +16,6 @@
 
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
-#include "v1/address_map.h"
-#include "v2/address_map.h"
-#include "v1/fw_io.h"
 #include "neuron_fw_io.h"
 #include "neuron_dhal.h"
 #include "neuron_nq.h"

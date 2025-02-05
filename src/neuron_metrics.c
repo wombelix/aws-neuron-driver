@@ -20,13 +20,13 @@
 #include "neuron_dhal.h"
 
 unsigned int nmetric_metric_post_delay = 150000; // milliseconds
-unsigned int nmetric_log_posts = 0;
+unsigned int nmetric_log_posts = 1;
 
 module_param(nmetric_metric_post_delay, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nmetric_metric_post_delay, "Minimum time to wait (in milliseconds) before posting metrics again");
 
 module_param(nmetric_log_posts, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(nmetric_log_posts, "0: send metrics to CW, 1: send metrics to trace, >=2: send metrics to both");
+MODULE_PARM_DESC(nmetric_log_posts, "1: send metrics to CW, 2: send metrics to trace, 3: send metrics to both");
 
 static int nmetric_counters_buf_size = sizeof(u64) * NMETRIC_COUNTER_COUNT;
 static int nmetric_versions_buf_size = sizeof(struct nmetric_versions) * NMETRIC_VERSION_COUNT;
@@ -81,7 +81,7 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR = 219, // generic notification error
 	                                          // for reference look at "INFER_SUBTYPE_NONE" in
 	                                          // Runtime repo "tdrv/infer_error_subtype_int.c"
-
+	NMETRIC_CW_ID_NERR_OOB = 220,
 	NMETRIC_CW_ID_FEATURE_BITMAP = 250,
 	NMETRIC_CW_ID_SYSFS_METRIC_BITMAP = 251,
 
@@ -118,7 +118,7 @@ static const nmetric_def_t nmetric_defs[] = {
 	NMETRIC_COUNTER_DEF(16, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_UNSUPPORTED_VERSION, NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION),
 	// special counter metric case
 	NMETRIC_DEF(17, NMETRIC_TYPE_FW_IO_ERR, 1, POST_TIME_TICK_0, NMETRIC_CW_ID_FW_IO_ERROR_COUNT, 0xFF, 0),
-
+	NMETRIC_COUNTER_DEF(18, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_OOB, NDS_NC_COUNTER_OOB),
 	// bitmap metrics
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_FEATURE_BITMAP, NDS_ND_COUNTER_FEATURE_BITMAP),
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_UNUSED, NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP),
@@ -579,9 +579,10 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 
 	// post metrics if available
 	//
-	if (nmetric_log_posts != 0)
+	if (nmetric_log_posts & (1<<1)) {
 		nmetric_mock_fw_io_post_metric(nd->metrics.posting_buffer, data_size);
-	if (data_size && (nmetric_log_posts != 1)) {
+	}
+	if (data_size && (nmetric_log_posts & (1<<0))) {
 		int ret = fw_io_post_metric(nd->fw_io_ctx, nd->metrics.posting_buffer, data_size);
 		if (ret < 0)
 			pr_err("Metric posting failed with error code: %d\n", ret);

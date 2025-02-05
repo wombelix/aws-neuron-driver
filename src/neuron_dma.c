@@ -11,8 +11,6 @@
 #include <linux/mm.h>
 
 #include "udma/udma.h"
-#include "v1/address_map.h"
-#include "v2/address_map.h"
 #include "neuron_trace.h"
 #include "neuron_device.h"
 #include "neuron_dma.h"
@@ -435,7 +433,7 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 
 	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
 	// for v2 the last one is reserved for collectives
-	const int qid = ndhal->ndhal_address_map.h2t_qid;
+	const int qid = ndhal->ndhal_ndmar.ndmar_get_h2t_qid(nc_id);
 
 	struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
 	struct ndma_queue *queue = &eng->queues[qid];
@@ -634,7 +632,7 @@ int ndma_memcpy_mc_wait( struct neuron_device *nd, struct mem_chunk *src_mc, str
 	int ret;
 	const u32  nc_id         = ndma_mc_pair_to_nc( src_mc, dst_mc);
 	const int eng_id         = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
-	const int qid            = ndhal->ndhal_address_map.h2t_qid;
+	const int qid            = ndhal->ndhal_ndmar.ndmar_get_h2t_qid(nc_id);
 	struct ndma_eng *eng     = &nd->ndma_engine[eng_id];
 	struct ndma_queue *queue = &eng->queues[qid];
 	struct ndma_ring *ring   = &queue->ring_info;

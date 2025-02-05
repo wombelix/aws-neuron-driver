@@ -28,7 +28,7 @@ static u64 seng_sdma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
 };
 
 
-u64 notific_get_relative_offset_sdma(int nc_id, int eng_id)
+u64 notific_get_relative_offset_sdma_v2(int nc_id, int eng_id)
 {
 	const u64 seng_sdma_relbase = seng_sdma_base[nc_id][eng_id] - V2_APB_BASE;
 	u64 sdma_base = V2_PCIE_BAR0_APB_OFFSET + seng_sdma_relbase;
@@ -57,7 +57,7 @@ static int notific_decode_sdma_nq_head_reg_access(u64 offset, u8 nc_id, u32 *nq_
 
 static int notific_decode_nc_nq_head_reg_access(u64 offset, u8 nc_id, u32 *nq_type, u8 *nq_id)
 {
-	u64 nc_start_offset = notific_get_relative_offset(nc_id);
+	u64 nc_start_offset = notific_get_relative_offset_v2(nc_id);
 	u64 nq_relative_offset = offset - nc_start_offset;
 	int nq_instance;
 
@@ -74,7 +74,7 @@ static int notific_decode_nc_nq_head_reg_access(u64 offset, u8 nc_id, u32 *nq_ty
 
 static int notific_decode_topsp_nq_head_reg_access(u64 offset, u8 topsp_id, u32 *nq_type, u8 *nq_id)
 {
-	u64 start_offset = notific_get_relative_offset_topsp(topsp_id);
+	u64 start_offset = notific_get_relative_offset_topsp_v2(topsp_id);
 	u64 nq_relative_offset = offset - start_offset;
 	int nq_instance;
 
@@ -89,7 +89,7 @@ static int notific_decode_topsp_nq_head_reg_access(u64 offset, u8 topsp_id, u32 
 	return 0;
 }
 
-int notific_decode_nq_head_reg_access(u64 offset, u8 *nc_id, u32 *nq_type, u8 *instance, bool *is_top_sp)
+int notific_decode_nq_head_reg_access_v2(u64 offset, u8 *nc_id, u32 *nq_type, u8 *instance, bool *is_top_sp)
 {
 	int i;
 
@@ -106,7 +106,7 @@ int notific_decode_nq_head_reg_access(u64 offset, u8 *nc_id, u32 *nq_type, u8 *i
 	}
 
 	for (i = 0; i < V2_MMAP_TPB_COUNT; i++) {
-		u64 start_offset = notific_get_relative_offset(i);
+		u64 start_offset = notific_get_relative_offset_v2(i);
 		u64 end_offset = start_offset + V2_APB_SENG_0_TPB_NOTIFIC_SIZE;
 		if (offset >= start_offset && offset < end_offset) {
 			*nc_id = i;
@@ -115,7 +115,7 @@ int notific_decode_nq_head_reg_access(u64 offset, u8 *nc_id, u32 *nq_type, u8 *i
 	}
 
 	for (i = 0; i < V2_TS_PER_DEVICE; i++) {
-		u64 start_offset = notific_get_relative_offset_topsp(i);
+		u64 start_offset = notific_get_relative_offset_topsp_v2(i);
 		u64 end_offset = start_offset + V2_APB_IOFAB_TOP_SP_0_SIZE;
 		if (offset >= start_offset && offset < end_offset) {
 			*nc_id = i;

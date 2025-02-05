@@ -22,9 +22,6 @@
 #include <linux/delay.h>
 #include <linux/fault-inject.h>
 
-#include <v1/address_map.h>
-#include <v2/address_map.h>
-
 #include "neuron_reg_access.h"
 #include "neuron_device.h"
 #include "neuron_arch.h"

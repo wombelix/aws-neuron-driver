@@ -14,8 +14,6 @@
 #include "neuron_core.h"
 
 #include "neuron_ioctl.h"
-#include "v1/address_map.h"
-#include "v2/address_map.h"
 
 struct neuron_attached_process {
 	pid_t pid; // pid which attached to this process

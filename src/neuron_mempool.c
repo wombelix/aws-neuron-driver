@@ -272,8 +272,6 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 
 	ret = ndhal->ndhal_mpset.mpset_block_carveout_regions(nd, mpset, device_dram_addr, device_dram_size);
 	if (ret) {
-				goto fail;
-				goto fail;
 		goto fail;
 	}
 
@@ -504,7 +502,7 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	// Round the size up to a full page or multiple pages.
 	// Make mmap() happy with any memory allocated via this function.
 	size = roundup(size, PAGE_SIZE);
-	if (channel >= V1_MAX_DRAM_CHANNELS)
+	if (channel >= ndhal->ndhal_address_map.dram_channels)
 		return -EINVAL;
 #ifdef CONFIG_FAULT_INJECTION
 	if (should_fail(&neuron_fail_mc_alloc, 1))

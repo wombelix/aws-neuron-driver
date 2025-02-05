@@ -7,10 +7,14 @@
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
 
 #include <linux/capability.h>
+#include <linux/fault-inject.h>
 #include "neuron_mmap.h"
 #include "neuron_device.h"
 #include "neuron_dhal.h"
 
+#ifdef CONFIG_FAULT_INJECTION
+extern struct fault_attr neuron_fail_nc_mmap;
+#endif
 
 int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 block_id,  enum neuron_dm_resource_type resource, u64 *offset, u64 *size)
 {
@@ -304,7 +308,7 @@ static int nmmap_dm_mc(struct neuron_device *nd, struct vm_area_struct *vma, str
 
 	// Readonly access for other processes for memory whose lifespan is not per device
 	if (mc->pid != task_tgid_nr(current) && mc->lifespan != MC_LIFESPAN_DEVICE) {
-		vma->vm_flags &= ~VM_WRITE;
+		vm_flags_clear(vma, VM_WRITE);
 		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
 	}
 
@@ -315,7 +319,7 @@ static int nmmap_dm_mc(struct neuron_device *nd, struct vm_area_struct *vma, str
 	if (ret != 0)
 		return ret;
 
-	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY;
+	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY);
 
 	// Insert the virtual address into tree so that we can do search using VA
 	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current),
@@ -355,7 +359,7 @@ static int nmap_dm_special(struct neuron_device *nd, struct vm_area_struct *vma)
 		return ret;
 	}
 	
-	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY;
+	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY);
 
 	// Insert the virtual address into tree so that we can do search using VA
 	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current),
@@ -395,7 +399,7 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma)
 
 	// Readonly access for other processes for memory whose lifespan is not per device
 	if (mc->pid != task_tgid_nr(current) && mc->lifespan != MC_LIFESPAN_DEVICE) {
-		vma->vm_flags &= ~VM_WRITE;
+		vm_flags_clear(vma, VM_WRITE);
 		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
 	}
 
@@ -408,7 +412,7 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma)
 	if (ret != 0)
 		return ret;
 
-	vma->vm_flags |= VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY;
+	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP | VM_DONTCOPY);
 
 	// Insert the virtual address into tree so that we can do search using VA
 	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current),

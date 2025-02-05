@@ -20,8 +20,6 @@
 #include "neuron_reg_access.h"
 #include "neuron_metrics.h"
 #include "v1/fw_io.h"
-#include "v1/address_map.h"
-#include "v2/address_map.h"
 #include "neuron_dma.h"
 #include "neuron_dhal.h"
 #include "neuron_nq.h"
@@ -36,6 +34,7 @@ static struct pci_device_id neuron_pci_dev_ids[] = {
 	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID3) },
 	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN1_DEVICE_ID0) },
 	{ PCI_DEVICE(AMZN_VENDOR_ID, INF2_DEVICE_ID0) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN2_DEVICE_ID0) },
 	{
 		0,
 	},
@@ -158,10 +157,18 @@ static int neuron_pci_device_close(struct neuron_device *nd)
 static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 {
 	unsigned short device = nd->pdev->device;
+	enum neuron_arch arch;
 	u8 revision;
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &revision);
-	// TODO - this is temp 
-	narch_init(device == TRN1_DEVICE_ID0 || (device == INF2_DEVICE_ID0)  ? NEURON_ARCH_V2 : NEURON_ARCH_V1, revision);
+
+	if (device == TRN1_DEVICE_ID0 || device == INF2_DEVICE_ID0) {
+		arch = NEURON_ARCH_V2;
+	} else if (device == TRN2_DEVICE_ID0) {
+		arch = NEURON_ARCH_V3;
+	} else {
+		arch = NEURON_ARCH_V1;
+	}
+	narch_init(arch, revision);
 }
 
 static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)

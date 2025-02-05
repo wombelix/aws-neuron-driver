@@ -9,9 +9,22 @@
 #ifndef NEURON_DMM_H
 #define NEURON_DMM_H
 
+#include <linux/version.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include "neuron_mempool.h"
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+static inline void vm_flags_set(struct vm_area_struct *vma, vm_flags_t flags)
+{
+    vma->vm_flags |= flags;
+}
+
+static inline void vm_flags_clear(struct vm_area_struct *vma, vm_flags_t flags)
+{
+    vma->vm_flags &= ~flags;
+}
+#endif
 
 struct nmmap_node {
 	struct rb_node node; //rbtree node
@@ -48,6 +61,8 @@ struct neuron_dm_special_mmap_ent {
 #define DM_SPECIAL_MM_ENT(blk, blk_id, res, blk_mmoff, blk_baroff, blk_sz, res_off, res_sz)  \
 						{blk, blk_id, res, (blk_mmoff) + (blk_sz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
 
+#define DM_SPECIAL_MM_ENT_(blk, blk_id, res, blk_mmoff, blk_baroff, blk_mmsz, blk_sz, res_off, res_sz)  \
+						{blk, blk_id, res, (blk_mmoff) + (blk_mmsz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
 /**
  * nmmap_create_node - Creates a memory map node that can be used by external drivers
  * like EFA

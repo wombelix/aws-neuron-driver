@@ -21,9 +21,6 @@
 
 #include "share/neuron_driver_shared.h"
 
-#include "v1/address_map.h"
-#include "v2/address_map.h"
-
 struct neuron_device;
 
 extern int mempool_min_alloc_size;
@@ -64,7 +61,7 @@ struct mempool {
 
 // DRAM region is split into multiple regions.
 #define MAX_DDR_REGIONS 4
-#define MAX_DRAM_CHANNELS 2
+#define MAX_DRAM_CHANNELS 4
 
 // start page size for host MP
 #define MP_HOST_PAGE_SIZE_MIN (256UL * 1024)

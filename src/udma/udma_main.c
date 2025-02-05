@@ -64,7 +64,6 @@ static int udma_m2s_packet_size_cfg_set(struct udma *udma, struct udma_m2s_pkt_l
 static int udma_set_defaults(struct udma *udma)
 {
 	struct udma_gen_ex_regs __iomem *gen_ex_regs;
-	u8 rev_id = udma->rev_id;
 	unsigned int i;
 	u32 value;
 
@@ -74,11 +73,10 @@ static int udma_set_defaults(struct udma *udma)
 		.max_pkt_size = UDMA_M2S_CFG_LEN_MAX_PKT_SIZE_MASK,
 	};
 
-	/* Setting the data fifo depth to 32K (1024 beats of 256 bits)
-	 *This allows the UDMA to have 128 outstanding writes
+	/* Setting the data fifo depth.  For example, to 32K (1024 beats of 256 bits)
+	 * allows the UDMA to have 128 for outstanding writes
 	 */
-	unsigned int num_beats = (rev_id >= UDMA_REV_ID_4) ? 1024 : 256;
-	value = (num_beats << UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_SHIFT) |
+	value = (ndhal->ndhal_udma.num_beats << UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_SHIFT) |
 		(UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_RESET_VALUE << UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_SHIFT);
 	reg_write32(&udma->udma_regs_m2s->m2s_rd.data_cfg, value);
 

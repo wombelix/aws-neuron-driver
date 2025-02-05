@@ -15,13 +15,13 @@
 #include "neuron_trace.h"
 #include "neuron_cdev.h"
 
-MODULE_DESCRIPTION("Neuron Driver, built from SHA: 9dbffa9295aae550a78d843153376d6e24e295ba");
+MODULE_DESCRIPTION("Neuron Driver, built from SHA: 1355be842607c13a01a0008d67da2f48b0c5ec05");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.15.9.0");
+MODULE_VERSION("2.16.7.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.15.9.0";
-const char driver_revision[] = "9dbffa9295aae550a78d843153376d6e24e295ba";
+const char driver_version[] = "2.16.7.0";
+const char driver_revision[] = "1355be842607c13a01a0008d67da2f48b0c5ec05";
 
 extern int neuron_pci_module_init(void);
 extern void neuron_pci_module_exit(void);

@@ -7,14 +7,9 @@
 #define NEURON_RING_H
 
 #include "udma/udma.h"
-#include "v1/address_map.h"
-#include "v1/tdma.h"
-#include "v2/address_map.h"
-#include "v2/sdma.h"
-
 
 #define DMA_H2T_DESC_COUNT 4096
-#define NUM_DMA_ENG_PER_DEVICE 34 // for v2 2 nc with each 16,
+#define NUM_DMA_ENG_PER_DEVICE 132 // for v2 2 nc with each 16,
 
 #define NDMA_QUEUE_DUMMY_RING_DESC_COUNT 64
 #define NDMA_QUEUE_DUMMY_RING_SIZE (NDMA_QUEUE_DUMMY_RING_DESC_COUNT * sizeof(union udma_desc))
@@ -227,22 +222,26 @@ int ndmar_queue_copy_start(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx
  */
 int ndmar_ack_completed(struct neuron_device *nd, u32 eng_id, u32 qid, u32 count);
 
+
+
 /**
- * ndmar_queue_get_descriptor_mc() - Get backing memory chunk info.
+ * ndmar_queue_get_descriptor_info() - Get backing physical address info, len, mcs
  *
  * @nd: Neuron device which contains the DMA engine
  * @nd: DMA engine index which contains the DMA queue
  * @qid: DMA queue index
- * @tx: Buffer to store TX mc
- * @rx: Buffer to store RX mc
+ * @tx_mc: Buffer to store TX mc
+ * @rx_mc: Buffer to store RX mc
+ * @tx_pa: Buffer to store TX device side physical address
+ * @rx_pa: Buffer to store RX device side physical address
  * @tx_size: Buffer to store tx descriptor count
  * @rx_size: Buffer to store rx descriptor count
  *
  * Return: 0 on success, a negative error code otherwise.
  */
-int ndmar_queue_get_descriptor_mc(struct neuron_device *nd, u8 eng_id, u8 qid,
-				  struct mem_chunk **tx, struct mem_chunk **rx, u32 *tx_size,
-				  u32 *rx_size);
+int ndmar_queue_get_descriptor_info(struct neuron_device *nd, u8 eng_id, u8 qid,
+				  struct mem_chunk **tx_mc, struct mem_chunk **rx_mc, u64 *tx_pa, u64 *rx_pa, 
+				  u32 *tx_size, u32 *rx_size);
 
 /**
  * ndmar_eng_get_state() - Get DMA engine's current state.
