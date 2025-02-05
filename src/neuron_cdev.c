@@ -644,7 +644,7 @@ static int ncdev_mem_copy_async_wait(struct neuron_device *nd, void *param)
 
 	if ((arg.pwait_handle < NEURON_DMA_H2T_CTX_HANDLE_ASYNC1) || (arg.pwait_handle > NEURON_DMA_H2T_CTX_HANDLE_ASYNC2))  {
 		pr_err("dma memcpy wait failed. invalid wait handle: %d\n", arg.pwait_handle);
-	   return -EINVAL;	
+		return -EINVAL;
 	}
 
 	ret = ndma_memcpy_mc_wait( nd, src_mc, dst_mc, arg.pwait_handle);
@@ -1305,7 +1305,7 @@ static long ncdev_driver_info(unsigned int cmd, void *param)
 			driver_info.version = NEURON_DEVICE_DRIVER_INFO_VERSION0;
 			driver_info.size = sizeof(driver_info);
 			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA;
-			
+
 			return copy_to_user(param, &driver_info, sizeof(driver_info));
 		}
 	}
@@ -1538,17 +1538,31 @@ static long ncdev_crwl_writer_downgrade(struct neuron_device *nd, void *param)
 	return ncrwl_writer_downgrade(nd, arg.nc_id, arg.uuid);
 }
 
-static long ncdev_crwl_nc_range_mark(void *param)
+static long ncdev_crwl_nc_range_mark(struct file *filep, void *param)
 {
+	struct ncdev *ncd;
+	struct neuron_device *nd;
 	struct neuron_ioctl_crwl_nc_map arg;
 	int ret;
+	u32 offset = 0;
+
+	ncd = filep->private_data;
+	if (ncd == NULL) {
+		return -EINVAL;
+	}
+	nd = ncd->ndev;
+	if (nd == NULL) {
+		return -EINVAL;
+	}
 
 	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
-	ret = ncrwl_nc_range_mark(arg.nc_count, arg.start_nc_index, arg.end_nc_index,
+	offset = NC_PER_DEVICE(nd) * nd->device_index;
+	ret = ncrwl_nc_range_mark(arg.nc_count, arg.start_nc_index + offset, arg.end_nc_index + offset,
 				  &arg.max_nc_available, &arg.bitmap);
+	arg.bitmap >>= offset;
 	if (ret) {
 		int unused = copy_to_user(param, &arg, sizeof(arg));
 		unused = unused;
@@ -1560,16 +1574,29 @@ static long ncdev_crwl_nc_range_mark(void *param)
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
-static long ncdev_crwl_nc_range_unmark(void *param)
+static long ncdev_crwl_nc_range_unmark(struct file *filep, void *param)
 {
+	struct ncdev *ncd;
+	struct neuron_device *nd;
 	struct neuron_ioctl_crwl_nc_map arg;
 	int ret;
+	u32 offset = 0;
+
+	ncd = filep->private_data;
+	if (ncd == NULL) {
+		return -EINVAL;
+	}
+	nd = ncd->ndev;
+	if (nd == NULL) {
+		return -EINVAL;
+	}
 
 	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
-	ncrwl_nc_range_unmark(arg.bitmap);
+	offset = NC_PER_DEVICE(nd) * nd->device_index;
+	ncrwl_nc_range_unmark(arg.bitmap << offset);
 	return 0;
 }
 
@@ -1644,9 +1671,9 @@ static long ncdev_compatible_version(void *param)
 
 inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
 	if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
-		return ncdev_crwl_nc_range_mark((void *)param);
+		return ncdev_crwl_nc_range_mark(filep, (void *)param);
 	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) {
-		return ncdev_crwl_nc_range_unmark((void *)param);
+		return ncdev_crwl_nc_range_unmark(filep, (void *)param);
 	} else if (cmd == NEURON_IOCTL_COMPATIBLE_VERSION) {
 		return ncdev_compatible_version((void*)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_BASIC_INFO) {
@@ -1834,11 +1861,13 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	struct ncdev *dev;
 	struct neuron_device *nd;
 
-	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
-		return 0;
-
 	dev = &devnodes[iminor(inode)];
 	nd = dev->ndev;
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep)) {
+		filep->private_data = dev;
+		return 0;
+	}
 
 	mutex_lock(&dev->ncdev_lock);
 	dev->open_count++;
