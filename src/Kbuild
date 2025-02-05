@@ -12,6 +12,7 @@ neuron-objs += v1/fw_io.o
 neuron-objs += v1/putils.o
 neuron-objs += v2/notific.o
 neuron-objs += v1/dma.o
+neuron-objs += v1/dma_blocked.o
 neuron-objs += v2/dma.o
 
 ccflags-y += -O3 -Wall -Werror -Wno-declaration-after-statement -Wunused-macros -Wunused-local-typedefs

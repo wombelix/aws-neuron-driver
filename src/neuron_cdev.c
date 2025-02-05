@@ -721,6 +721,52 @@ static long ncdev_bar_read(struct neuron_device *nd, u8 bar, u64 *reg_addresses,
 	return ret;
 }
 
+/* some CSRs are under complete control of the driver
+ * prevent user space from poking them
+ */
+extern int v1_dma_bar0_blocked(u64 off);
+extern int v2_dma_bar0_blocked(u64 off);
+
+static int ncdev_ok_bar0_write(u64 off)
+{
+	const u64 v1_blocked[] = {
+		V1_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET,
+		V1_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET,
+		V1_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET,
+		V1_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET,
+		V1_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET
+	};
+	const u64 v2_blocked[] = {
+		V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET,
+		V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET,
+		V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET,
+		V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET,
+		V2_MMAP_BAR0_APB_MISC_RAM_OFFSET + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET
+	};
+	const u64 *blocked;
+	u32 blocked_count, i;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		if (v1_dma_bar0_blocked(off)) {
+			return -1;
+		}
+		blocked = v1_blocked;
+		blocked_count = sizeof(v1_blocked)/sizeof(v1_blocked[0]);
+	} else {
+		if (v2_dma_bar0_blocked(off)) {
+			return -1;
+		}
+		blocked = v2_blocked;
+		blocked_count = sizeof(v2_blocked)/sizeof(v2_blocked[0]);
+	}
+	for (i = 0; i < blocked_count; i++) {
+		if (off == blocked[i]) {
+			pr_err("** blocking %llx\n", off);
+			return -1;
+		}
+	}
+	return 0;
+}
+
 static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses, void *user_va,
 			    u32 data_count)
 {
@@ -747,6 +793,10 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 		for (i = 0; i < data_count; i++) {
 			u64 off = reg_addresses[i] - (u64)nd->npdev.bar0;
 			if (off > nd->npdev.bar0_size) {
+				ret = -EINVAL;
+				goto done;
+			}
+			if (ncdev_ok_bar0_write(off)) {
 				ret = -EINVAL;
 				goto done;
 			}
