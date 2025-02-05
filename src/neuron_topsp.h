@@ -10,6 +10,7 @@
  * ts_nq_init() - Initialize notification queue for TopSp.
  *
  * @nd: neuron device
+ * @nc_id: neuron core id this TopSp is assoicated with
  * @ts_id: ToSp Id
  * @eng_index: notification engine index in the core
  * @nq_type: type of the notification queue
@@ -23,7 +24,7 @@
  *
  * Return: 0 on if initialization succeeds, a negative error code otherwise.
  */
-int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
+int ts_nq_init(struct neuron_device *nd, u32 nc_id, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
 	       u32 on_host_memory, u32 dram_channel, u32 dram_region,
 	       bool force_alloc_mem, struct mem_chunk **nq_mc, u64 *mmap_offset);
 

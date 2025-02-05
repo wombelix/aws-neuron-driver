@@ -64,7 +64,7 @@ union udma_desc {
 #define M2S_DESC_RING_ID_SHIFT 24
 #define M2S_DESC_RING_ID_MASK (0x3 << M2S_DESC_RING_ID_SHIFT) /* Ring ID bits in m2s */
 #define M2S_DESC_LEN_SHIFT 0
-#define M2S_DESC_LEN_MASK (0xfffff << M2S_DESC_LEN_SHIFT) /* Data length */
+#define M2S_DESC_LEN_MASK (0xffff << M2S_DESC_LEN_SHIFT) /* Data length */
 
 #define S2M_DESC_INT_EN BIT(28) /* Enable Interrupt on completion */
 #define S2M_DESC_RING_ID_SHIFT 24

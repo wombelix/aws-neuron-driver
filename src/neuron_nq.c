@@ -93,7 +93,7 @@ static void nnq_set_hwaddr(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_
 	}
 }
 
-static int nnq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
+static int nnq_halt(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
 {
 	u8 nq_id;
 
@@ -109,9 +109,24 @@ static int nnq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_
 	}
 
 	nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, 0, 0);
+	
+	return 0;
+}
 
-	// sleep 1msec so that hw can drain
-	msleep(1);
+static int nnq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
+{
+	u8 nq_id;
+
+	if (nd == NULL || nc_id >= NC_PER_DEVICE(nd))
+		return -EINVAL;
+
+	nq_id = nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	if (nq_id >= MAX_NQ_SUPPORTED)
+		return -EINVAL;
+
+	if (nd->nq_mc[nc_id][nq_id] == NULL) {
+		return 0;
+	}
 
 	mc_free(&nd->nq_mc[nc_id][nq_id]);
 
@@ -163,6 +178,15 @@ void nnq_destroy_nc(struct neuron_device *nd, u8 nc_id)
 	u8 eng_index;
 	u8 nq_type;
 	u8 ts_id;
+
+	for (eng_index = 0; eng_index < MAX_NQ_ENGINE; eng_index++) {
+		for (nq_type = 0; nq_type < MAX_NQ_TYPE; nq_type++) {
+			nnq_halt(nd, nc_id, eng_index, nq_type);
+		}
+	}
+
+	// wait for halted notific queues to drain
+	msleep(1);
 
 	for (eng_index = 0; eng_index < MAX_NQ_ENGINE; eng_index++) {
 		for (nq_type = 0; nq_type < MAX_NQ_TYPE; nq_type++) {

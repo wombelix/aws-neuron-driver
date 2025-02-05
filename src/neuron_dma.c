@@ -216,6 +216,7 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 					goto fail;
 				}
 				pr_info("Failed to copy memory during a NeuronCore reset: nd %d, src %#llx, dst %#llx, size %u. Retrying the copy.\n", nd->device_index, src, dst, size);
+				memcpy_start_time = get_jiffies_64();
 				ret = ndmar_h2t_ring_init(eng, qid);
 				if (ret) {
 					pr_err("H2T ring init failed on nd %d: ret %d\n", nd->device_index, ret);
@@ -226,8 +227,8 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 			} else {
 				prev_offset = offset;
 				prev_remaining = remaining;
+				memcpy_start_time = get_jiffies_64();
 			}
-			memcpy_start_time = get_jiffies_64();
 			pending_transfers = 0;
 		} else {
 			ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, false);

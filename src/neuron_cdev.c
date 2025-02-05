@@ -615,6 +615,7 @@ int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
 
 	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, arg.size, MEM_LOC_HOST, 0, 0, arg.nc_id, &src_mc);
 	if (ret) {
+		pr_err("engine programming dma mc_alloc failed. nc_id: %d addr: %llu size: %u err: %d\n",arg.nc_id,  arg.dst + arg.offset, arg.size, ret);
 		ret = -ENOMEM;
 		return ret;
 	}
@@ -623,10 +624,9 @@ int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
 	if (ret)
 		goto error;
 
-	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
-			  arg.dst + arg.offset, arg.size);
+	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd), arg.dst + arg.offset, arg.size);
 
-    if (ret) {
+	if (ret) {
 		pr_err("engine programming dma failed. nc_id: %d addr: %llu\n",arg.nc_id,  arg.dst + arg.offset);
 	}
 error:
@@ -1256,7 +1256,8 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       false, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_region;  
+		ret = ts_nq_init(nd, nc_id, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 false, &mc, &arg.mmap_offset);
 	} else {
@@ -1284,7 +1285,8 @@ static long ncdev_nc_nq_init_with_realloc_v2(struct neuron_device *nd, void *par
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_region;
+		ret = ts_nq_init(nd, nc_id, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else {
@@ -1725,8 +1727,10 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 		// If this proc exited in the middle of a reset, wait for the reset to be processed.
 		nr_wait(nd, task_tgid_nr(current), true);
 
-		// before resetting DMA, allow current NeuronCore execution to finish and settle.
-		msleep(1000);  // TODO - investigate directly clearing semaphore and events.
+		// for inf1 before resetting DMA, allow current NeuronCore execution to finish and settle.
+		if (narch_get_arch() == NEURON_ARCH_V1) {
+			msleep(1000);  // TODO - investigate directly clearing semaphore and events.
+		}
 		ndmar_handle_process_exit(nd, task_tgid_nr(current));
 		msleep(10); // TODO - confirm with HW dev, whether any delay needed after q reset.
 		ncrwl_release_current_process(nd);
@@ -1927,8 +1931,7 @@ static void ncdev_cleanup(void)
 	int i;
 	for (i = 0; i < MAX_NEURON_DEVICE_COUNT; i++) {
 		if (!devnodes[i].ndev)
-			continue;
-		ncdev_delete_device_node(devnodes[i].ndev);
+			pr_err("Error! ncdev is not NULL");
 	}
 
 	if (neuron_dev_class) {

@@ -333,7 +333,7 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
 		nd->nr.req_pending_head = req;
 	}
 	mutex_unlock(&nd->nr.nr_lock);
-	wake_up_interruptible(&nd->nr.wait_queue);
+	wake_up_interruptible_sync(&nd->nr.wait_queue);
 
 	return 0;
 }

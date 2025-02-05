@@ -6,19 +6,25 @@
 
 #include <linux/device.h>
 
-#define MAX_CHILD_NODES_NUM	32
-#define MAX_METRIC_ID		NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT + 64
+#define MAX_CHILD_NODES_NUM	    32
+#define NON_NDS_COUNTER_COUNT   64
+#define MAX_METRIC_ID           (NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT + NON_NDS_COUNTER_COUNT)
 #define MAX_COUNTER_ATTR_TYPE_COUNT	3
+
+#define NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(nds_id) (nds_id)
+#define NDS_ND_COUNTER_ID_TO_SYSFS_METRIC_ID(nds_id) (nds_id + NDS_NC_COUNTER_COUNT)
+#define NON_NDS_ID_TO_SYSFS_METRIC_ID(non_nds_id)    (non_nds_id + NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT)
 
 enum nsysfsmetric_attr_type {
     TOTAL,     // counter value accumulated
     PRESENT,   // counter value at the current window
-    PEAK,      // max value
-    OTHER,     // all other types besides TOTAL and PRESENT
+    PEAK,      // max counter value
+    OTHER,     // all other types besides TOTAL, PRESENT, and PEAK
 };
 
 enum nsysfsmetric_metric_id_category {
     NDS_NC_METRIC,
+    NDS_ND_METRIC,
     NON_NDS_METRIC,
 };
 
@@ -37,8 +43,14 @@ enum nsysfsmetric_non_nds_ids {  // The metrics needed by sysfs metrics but not 
 
 struct neuron_device;
 
+struct sysfs_mem_thread {
+	struct task_struct *thread; // aggregation thread that sends metrics every 1 second
+	wait_queue_head_t wait_queue;
+	volatile bool stop; // if cleared, thread would exit the loop
+};
+
 struct nsysfsmetric_counter {
-    struct kobject *kobj;
+    struct nsysfsmetric_node *node; // used for sysfs_notify
     u64 total;
     u64 present;
     u64 peak;
@@ -59,6 +71,7 @@ struct nsysfsmetric_metrics { // per neuron_device
     struct nsysfsmetric_counter nrt_metrics[MAX_METRIC_ID][MAX_NC_PER_DEVICE]; // runtime metrics, indiced by metric_id and nc_id
     struct nsysfsmetric_counter dev_metrics[MAX_METRIC_ID]; // TODO: pacific metrics
     uint64_t bitmap; // store the dynamic metrics to be added
+    struct sysfs_mem_thread mem_thread; // keep fetching memory breakdown from datastore
 };
 
 typedef struct nsysfsmetric_attr_info {
@@ -98,7 +111,7 @@ void nsysfsmetric_destroy(struct neuron_device *nd);
 int nsysfsmetric_init_and_add_dynamic_counter_nodes(struct neuron_device *nd, uint64_t ds_val);
 
 /**
- * nsysfsmetric_nds_aggregate() - Aggregate sysfs metrics from datastore
+ * nsysfsmetric_nds_aggregate() - Aggregate sysfs metrics from datastore when a process exits
  * 
  * @param nd: The pointer to the neuron_device
  * @param entry: : The pointer to the datastore entry
@@ -106,31 +119,31 @@ int nsysfsmetric_init_and_add_dynamic_counter_nodes(struct neuron_device *nd, ui
 void nsysfsmetric_nds_aggregate(struct neuron_device *nd, struct neuron_datastore_entry *entry);
 
 /**
- * nsysfsmetric_nc_inc_counter() - Increment the counter with id for neuron_device nd and neuron core nc_id by delta
+ * nsysfsmetric_inc_counter() - Increment the counter with metric_id for neuron_device nd and neuron core nc_id by delta
  * 
  * @param nd: The pointer to the neuron_device
  * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
- * @param id: the index that represents the counter
+ * @param id: the index that represents the counter. It can be a ds id or non ds id
  * @param nc_id: the neuron core id
  * @param delta: the amount to be incremented
  */
-void nsysfsmetric_nc_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
+void nsysfsmetric_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
 
 /**
- * nsysfsmetric_nc_dec_counter() - Decrement the counter with id for neuron_device nd and neuron core nc_id by delta
+ * nsysfsmetric_dec_counter() - Decrement the counter with metric_id for neuron_device nd and neuron core nc_id by delta
  * 
  * @param nd: The pointer to the neuron_device
  * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
- * @param id: the index that represents the counter
- * @param nc_id: the neuron core id
+ * @param id: the index that represents the counter. It can be a ds id or non ds id * @param nc_id: the neuron core id
  * @param delta: the amount to be decremented
  */
-void nsysfsmetric_nc_dec_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
+void nsysfsmetric_dec_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
 
 /**
  * nsysfsmetric_inc_reset_req_count() - Increment the RESET_COUNT metrics
  * 
  * @param nd: The pointer to the neuron_device 
+ * @param nc_id: the neuron core id
  */
 void nsysfsmetric_inc_reset_req_count(struct neuron_device *nd, int nc_id);
 

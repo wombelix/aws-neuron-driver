@@ -87,7 +87,7 @@ static int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 n
 }
 
 
-int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
+int ts_nq_init(struct neuron_device *nd, u32 nc_id, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
 	       u32 on_host_memory, u32 dram_channel, u32 dram_region, bool force_alloc_mem,
 	       struct mem_chunk **nq_mc, u64 *mmap_offset)
 {
@@ -100,7 +100,7 @@ int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u3
 	if (nd == NULL || ts_id >= TS_PER_DEVICE(nd))
 		return -EINVAL;
 
-	u8 nq_id = ts_nq_get_nqid(nd, eng_index, nq_type);
+	u8  nq_id = ts_nq_get_nqid(nd, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -108,7 +108,7 @@ int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u3
 	if (mc == NULL || force_alloc_mem) {
 		struct mem_chunk *_mc = NULL;
 		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
-				   dram_channel, dram_region, 0, &_mc);
+				   dram_channel, dram_region, nc_id, &_mc);
 		if (ret)
 			return ret;
 		ts_nq_set_hwaddr(nd, ts_id, eng_index, nq_type, size, _mc->pa);
