@@ -11,6 +11,7 @@ enum neuron_driver_feature_flag {
 	NEURON_DRIVER_FEATURE_DMABUF = 1ull <<  0, 
 	NEURON_DRIVER_FEATURE_ASYNC_DMA = 1ull <<  1, 
 	NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT = 1ull <<  2, 
+	NEURON_DRIVER_FEATURE_BIG_CORE_MAPS   = 1ull <<  3, 
 };
 
 #define NEURON_NC_MAP_DEVICE (0xffffffff)
@@ -78,6 +79,22 @@ enum NQ_TYPE {
 	NQ_TYPE_MAX
 };
 
+/**
+ * memory mapping enums for selecting what bar0 resources to map.
+ * Bar0 mapping is restricted to a limited set of regions, read only
+ * via the virtual address.
+ *
+ */
+enum neuron_dm_block_type {
+   NEURON_DM_BLOCK_INVALID = -1,  // invalid - tag last entry in the table
+   NEURON_DM_BLOCK_TPB     =  0,
+   NEURON_DM_BLOCK_TOPSP   =  1
+};
+
+enum neuron_dm_resource_type {
+   NEURON_DM_RESOURCE_SEMAPHORE = 0,
+};
+
 struct neuron_uuid {
 	__u8 value[32];
 };
@@ -117,7 +134,7 @@ typedef union nmetric_version {
  * 		2. you need to update NDS_ND_COUNTER_COUNT or NDS_NC_COUNTER_COUNT
  * 	To prevent compatability issues, you need to always append the new counter type to the end of the enum
  */
-#define NDS_ND_COUNTER_RESERVED 19
+#define NDS_ND_COUNTER_RESERVED 18
 
 // Device counter types
 enum {
@@ -137,7 +154,9 @@ enum {
 
 	NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP,
 
-	NDS_ND_COUNTER_COUNT = NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP + NDS_ND_COUNTER_RESERVED + 1
+	NDS_ND_COUNTER_DEVICE_CLUSTER_ID,
+
+	NDS_ND_COUNTER_COUNT = NDS_ND_COUNTER_DEVICE_CLUSTER_ID + NDS_ND_COUNTER_RESERVED + 1
 };
 
 #define NDS_NC_COUNTER_RESERVED 1

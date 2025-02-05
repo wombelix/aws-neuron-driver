@@ -323,6 +323,14 @@ struct neuron_ioctl_crwl_nc_map {
 	volatile long unsigned int bitmap; // [in/out] bitmap of neuron cores.
 };
 
+struct neuron_ioctl_crwl_nc_map_ext {
+	__u32 nc_count; // [in] number of neuron cores needed/available.
+	__u32 start_nc_index; // [in] starting neuron core index from which search should start.
+	__u32 end_nc_index; // [in] ending neuron core index.
+	__u32 max_nc_available; // [out] max free nc available.
+	long unsigned int bitmap[8]; // [in/out] bitmap of neuron cores.
+};
+
 struct neuron_ioctl_cinit_set {
 	__u32 nc_id; // [in] neuron code id whose init state that needs to be set
 	__u32 state; // [in] state to set
@@ -361,6 +369,14 @@ struct neuron_ioctl_device_bdf_ext {
 	__u8 func;
 };
 
+struct neuron_ioctl_resource_mmap_info  {
+	__u32 block;    // [in] block type containing the resource
+	__u32 block_id; // [in] id of the block if is more than one block
+	__u32 resource; // [in] resource the caller wants to mmap
+	__u64 offset;   // [out] mmap offset of the resource
+	__u64 size;     // [out] mmap size of the resource
+};
+
 #define NEURON_IOCTL_MAX_CONNECTED_DEVICES 8
 #define NEURON_MAX_BARS 2
 struct neuron_ioctl_device_info {
@@ -388,6 +404,12 @@ struct neuron_ioctl_device_driver_info{
 						   // It can be extended to provide feature get/set by making flags in/out (using _IOR)
 };
 
+
+struct neuron_ioctl_mem_get_mc_mmap_info {
+	__u64 pa;        	 // [in] location in device memory the caller want MC info on.
+	__u64 mmap_offset;   // [out] mmap() offset for this mc
+	__u64 size;          // [out] size of memory allocated for this mc
+};
 
 #define NEURON_IOCTL_BASE 'N'
 
@@ -495,7 +517,9 @@ struct neuron_ioctl_device_driver_info{
 #define NEURON_IOCTL_CRWL_WRITER_ENTER _IOW(NEURON_IOCTL_BASE, 83, struct neuron_ioctl_crwl *)
 #define NEURON_IOCTL_CRWL_WRITER_DOWNGRADE  _IOW(NEURON_IOCTL_BASE, 84, struct neuron_ioctl_crwl *)
 #define NEURON_IOCTL_CRWL_NC_RANGE_MARK _IOW(NEURON_IOCTL_BASE, 85, struct neuron_ioctl_crwl_nc_map *)
+#define NEURON_IOCTL_CRWL_NC_RANGE_MARK_EXT0 _IOWR(NEURON_IOCTL_BASE, 85, struct neuron_ioctl_crwl_nc_map_ext)
 #define NEURON_IOCTL_CRWL_NC_RANGE_UNMARK _IOW(NEURON_IOCTL_BASE, 86, struct neuron_ioctl_crwl_nc_map *)
+#define NEURON_IOCTL_CRWL_NC_RANGE_UNMARK_EXT0 _IOW(NEURON_IOCTL_BASE, 86, struct neuron_ioctl_crwl_nc_map_ext)
 
 /** Neuron Core Init State */
 #define NEURON_IOCTL_CINIT_SET_STATE _IOW(NEURON_IOCTL_BASE, 91, struct  neuron_ioctl_cinit_set *)
@@ -535,7 +559,13 @@ struct neuron_ioctl_device_driver_info{
 #define NEURON_IOCTL_DRIVER_INFO_GET _IOR(NEURON_IOCTL_BASE, 110, struct neuron_ioctl_device_driver_info)
 #define NEURON_IOCTL_DRIVER_INFO_SET _IOW(NEURON_IOCTL_BASE, 110, struct neuron_ioctl_device_driver_info)
 
+/** for a given mem address, return the MC info */
+#define NEURON_IOCTL_MEM_MC_GET_INFO  _IOWR(NEURON_IOCTL_BASE, 111, struct neuron_ioctl_mem_get_mc_mmap_info)
 
-#define NEURON_IOCTL_MAX 111
+/** request mmap info for a given resource  */
+#define NEURON_IOCTL_RESOURCE_MMAP_INFO _IOWR(NEURON_IOCTL_BASE, 112, struct neuron_ioctl_resource_mmap_info)
+
+// Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
+#define NEURON_IOCTL_MAX 113
 
 #endif

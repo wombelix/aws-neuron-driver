@@ -156,7 +156,7 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 		return -1;
 	}
 
-	if (s2m_compl_ring != NULL) { // completion ring not supported, see sunda-5328
+	if (s2m_compl_ring != NULL) { // completion ring not supported
 		pr_err("Completion ring not supported\n");
 		return -1;
 	}

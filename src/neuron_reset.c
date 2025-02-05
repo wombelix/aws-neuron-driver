@@ -10,19 +10,18 @@
 
 #include <linux/kernel.h>
 #include <linux/sched.h>
-#include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/kthread.h>
-#include <linux/module.h>
 #include <linux/mutex.h>
 
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
-
 #include "v1/address_map.h"
 #include "v2/address_map.h"
 #include "v1/fw_io.h"
 #include "neuron_fw_io.h"
+#include "neuron_dhal.h"
+#include "neuron_nq.h"
 
 int no_reset = 0;
 module_param(no_reset, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -32,10 +31,8 @@ MODULE_PARM_DESC(no_reset, "Dont reset device");
 #define NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS 3000
 #define NR_RESET_INIT_PRE_WAIT_TIME_INC_MS 2000
 #define NR_RESET_INIT_RETRY_COUNT 5 
-#define NR_RESET_RETRY_COUNT 5
-#define NR_RESET_RETRY_SLEEP_MS 100
 
-static int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec) 
+int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec) 
 {
 	unsigned long timeout = msecs_to_jiffies(msec);
 
@@ -43,116 +40,6 @@ static int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec)
 		timeout = schedule_timeout_interruptible(timeout);
 
 	return jiffies_to_msecs(timeout);
-}
-
-static int nr_initiate_reset(struct neuron_device *nd)
-{
-	if (no_reset)
-		return 0;
-
-	if (narch_is_qemu()) {
-		if (narch_get_arch() == NEURON_ARCH_V2) {
-			volatile void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
-			writel(1, (volatile uint32_t *)addr);
-		}
-	} else {
-		int i, j;
-		uint32_t nc_map = nd->nr.req_pending_head->nc_map;
-		uint32_t tpb_reset_map = 0;
-		// Build the tpb reset map if we are not performing a device reset
-		if (narch_get_arch() == NEURON_ARCH_V2 && nc_map != NEURON_NC_MAP_DEVICE) {
-			for (i = 0; i < MAX_NC_PER_DEVICE; i++) {
-				if ((1 << i) & nc_map) {
-					// Add this tpb to the reset map
-					tpb_reset_map |= (1 << i);
-					int ts_per_nc = V2_TS_PER_DEVICE / V2_NC_PER_DEVICE;
-					// Add all top sps owned by this tpb to the reset map
-					for (j = i * ts_per_nc; j < (i + 1) * ts_per_nc; j++) {
-						tpb_reset_map |= (1 << (8 + j));
-					}
-				}
-			}
-		}
-
-        /* Wait times are different for device reset vs nc reset (aka tpb reset) */
-		uint32_t reset_init_retry_wait_time =
-				nc_map == NEURON_NC_MAP_DEVICE ?
-						NR_RESET_INIT_PRE_WAIT_TIME_MS :
-						NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS;
-
-		for (i = 0; i < NR_RESET_INIT_RETRY_COUNT; i++) {
-			fw_io_initiate_reset(nd->npdev.bar0, nc_map == NEURON_NC_MAP_DEVICE, tpb_reset_map);
-			// once reset is initiated, FWIO wont respond until the device
-			// comes out of reset, so sleep here for sometime
-			if (nr_msleep_stoppable(nd, reset_init_retry_wait_time))
-				return -1;
-			// Emulator doesn't have readless read support, just return
-			if (narch_is_emu()) {
-				return 0;
-			}
-			for (j = 0; j < NR_RESET_RETRY_COUNT; j++) {
-				if (fw_io_is_reset_initiated(nd->npdev.bar0))
-					return 0;
-				if (nd->nr.stop)
-					return -1;
-			}
-			reset_init_retry_wait_time += NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
-		}
-		if (i == NR_RESET_INIT_RETRY_COUNT)
-			return -1;
-	}
-	return 0;
-}
-
-static int nr_wait_for_reset_completion(struct neuron_device *nd)
-{
-	if (no_reset)
-		return 0;
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		int i;
-		for (i = 0; i < NR_RESET_RETRY_COUNT; i++) {
-			if (fw_io_is_device_ready_v1(nd->npdev.bar0))
-				break;
-			if (nd->nr.stop)
-				return -1;
-		}
-		if (i == NR_RESET_RETRY_COUNT)
-			return -1;
-		return 0;
-	} else if (narch_get_arch() == NEURON_ARCH_V2) {
-		int i;
-		uint32_t retry_count = NR_RESET_RETRY_COUNT;
-		void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET;
-		if (narch_is_qemu()) {
-			addr += V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
-		} else {
-			addr += V2_APB_IOFAB_RELBASE + V2_APB_IOFAB_MISC_RAM_RELBASE + V2_FW_IO_REG_FW_STATUS_OFFSET;
-			if (narch_is_emu()) {
-				retry_count *= 1000; // wait longer on the emulator
-			}
-		}
-
-		for (i = 0; i < retry_count; i++) {
-			bool reset_in_progress = true;
-			u32 status;
-
-			if (narch_is_qemu()) {
-				reset_in_progress = readl((volatile uint32_t *)addr);
-				msleep(2 * 1000);
-			} else {
-				if (fw_io_read_csr_array(&addr, &status, 1, false) == 0)
-					reset_in_progress = status & V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK;
-			}
-			if (!reset_in_progress)
-				return 0;
-			if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i)) 
-				return -1;
-		}
-		return -1;
-	} else {
-		BUG();
-	}
-	return 0;
 }
 
 static int nr_reset_thread_fn(void *arg)
@@ -169,20 +56,17 @@ static int nr_reset_thread_fn(void *arg)
 		enum neuron_reset_state state = NEURON_RESET_STATE_STARTED;
 		nd->nr.reset_start_time = get_jiffies_64();
 		pr_info("nd%d: initiating reset request %u\n", nd->device_index, req->request_id);
-		ret = nr_initiate_reset(nd);
+		ret = ndhal->reset_funcs.nr_initiate_reset(nd);
 		if (ret) {
 			state = NEURON_RESET_STATE_FAILED;
 			nsysfsmetric_inc_reset_fail_count(nd);
 		} else {
-			ret = nr_wait_for_reset_completion(nd);
+			ret = ndhal->reset_funcs.nr_wait_for_reset_completion(nd);
 			if (ret) {
 				pr_info("nd%d: device didnt come out reset\n", nd->device_index);
 				state = NEURON_RESET_STATE_FAILED;
 				nsysfsmetric_inc_reset_fail_count(nd);
 			} else {
-				if (narch_get_arch() == NEURON_ARCH_V1) {
-					fw_io_device_id_write(nd->npdev.bar0, nd->device_index);
-				}
 				ret = ndmar_init_ncs(nd, req->nc_map);
 				if (ret) {
 					pr_info("nd%d: failed to initialize dma after reset\n", nd->device_index);
@@ -401,4 +285,35 @@ bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd)
 	}
 
 	return false;
+}
+
+int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map) {
+    int i, j;
+
+    /* Wait times are different for device reset vs nc reset (aka tpb reset) */
+    uint32_t reset_init_retry_wait_time = (nc_map == NEURON_NC_MAP_DEVICE ? NR_RESET_INIT_PRE_WAIT_TIME_MS : NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS);
+
+    for (i = 0; i < NR_RESET_INIT_RETRY_COUNT; i++) {
+        fw_io_initiate_reset(nd->npdev.bar0, nc_map == NEURON_NC_MAP_DEVICE, tpb_reset_map);
+        // once reset is initiated, FWIO wont respond until the device
+        // comes out of reset, so sleep here for sometime
+        if (nr_msleep_stoppable(nd, reset_init_retry_wait_time))
+            return -1;
+        // Emulator doesn't have readless read support, just return
+        if (narch_is_emu()) {
+            return 0;
+        }
+        for (j = 0; j < ndhal->reset_funcs.retry_count; j++) {
+            if (fw_io_is_reset_initiated(nd->npdev.bar0))
+                return 0;
+            if (nd->nr.stop)
+                return -1;
+        }
+        reset_init_retry_wait_time += NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
+    }
+    if (i == NR_RESET_INIT_RETRY_COUNT) {
+        return -1;
+    }
+
+    return 0;
 }

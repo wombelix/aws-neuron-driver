@@ -13,21 +13,20 @@
 #include "udma/udma.h"
 #include "v1/address_map.h"
 #include "v2/address_map.h"
-
 #include "neuron_trace.h"
 #include "neuron_device.h"
 #include "neuron_dma.h"
 #include "neuron_mempool.h"
+#include "neuron_dhal.h"
 
 int nc_per_dev_param = 1;
-
 module_param(nc_per_dev_param, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nc_per_dev_param, "Number of neuron cores");
 
 extern int v1_dma_init(void __iomem *bar0, struct udma *udma, int eng_id);
 extern int v2_dma_init(void __iomem *bar0, struct udma *udma, int eng_id);
 
-static struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id)
+struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id)
 {
 	if (eng_id >= NUM_DMA_ENG_PER_DEVICE)
 		return NULL;
@@ -35,7 +34,7 @@ static struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_i
 	return &nd->ndma_engine[eng_id];
 }
 
-static void ndmar_release_engine(struct ndma_eng *eng)
+void ndmar_release_engine(struct ndma_eng *eng)
 {
 	mutex_unlock(&eng->nd->ndma_engine[eng->eng_id].lock);
 }
@@ -48,29 +47,6 @@ static struct ndma_queue *ndmar_get_queue(struct ndma_eng *eng, u32 qid)
 static struct ndma_ring *ndmar_get_ring(struct ndma_queue *queue)
 {
 	return &queue->ring_info;
-}
-
-uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id) {
-	if (narch_get_arch() == NEURON_ARCH_V2) {
-		return (nc_id == 0) ? V2_D2H_IDX : V2_H2D_IDX;
-	} else {
-		return  (nc_id * V1_DMA_ENG_PER_NC) + (V1_DMA_ENG_PER_NC - 1);
-	}
-}
-
-int ndmar_get_h2t_qid(void)
-{
-       return (narch_get_arch() == NEURON_ARCH_V2) ? 0 : V1_MAX_DMA_RINGS - 1;
-}
-
-bool ndmar_is_nx_ring(uint32_t eng_id, uint32_t q_id)
-{
-	if (narch_get_arch() != NEURON_ARCH_V1) {
-		// for v2 the last queue is reserved for collectives, and the second
-		// to last queue in engs 0-10 are reserved for NX cores
-		return (q_id == (V2_DMA_QUEUE_PER_ENG - 2)) && ((eng_id % V2_DMA_ENG_PER_NC) < (V2_TPB_ENG_PER_NC + V2_TS_PER_DEVICE));
-	}
-	return false;
 }
 
 u32 ndmar_ring_get_desc_count(u32 v)
@@ -89,6 +65,7 @@ u32 ndmar_ring_get_desc_count(u32 v)
 	return v;
 }
 
+// TODO: add to ndhal when refactor dma code
 void ndmar_set_model_started_v1(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc)
 {
 	// For v1, the first model started state needs to be set. Determine the nc
@@ -130,7 +107,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->tx_mc = mc;
 		ring->tx.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->tx.addr = virt_to_phys(ring->tx.ptr) | PCI_HOST_BASE(eng->nd);
+			ring->tx.addr = virt_to_phys(ring->tx.ptr) | ndhal->address_map.pci_host_base;
 		} else {
 			ring->tx.addr = mc->pa;
 			if (port) {
@@ -142,7 +119,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->rx_mc = mc;
 		ring->rx.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->rx.addr = virt_to_phys(ring->rx.ptr) | PCI_HOST_BASE(eng->nd);
+			ring->rx.addr = virt_to_phys(ring->rx.ptr) | ndhal->address_map.pci_host_base;
 		} else {
 			ring->rx.addr = mc->pa;
 			if (port) {
@@ -155,7 +132,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->rxc_mc = mc;
 		ring->rxc.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->rxc.addr = virt_to_phys(ring->rxc.ptr) | PCI_HOST_BASE(eng->nd);
+			ring->rxc.addr = virt_to_phys(ring->rxc.ptr) | ndhal->address_map.pci_host_base;
 		} else {
 			ring->rxc.addr = mc->pa;
 			if (port) {
@@ -209,20 +186,11 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 
 void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 {
-	int ret, eng_id, qid, dma_eng_per_nd;
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
-	} else {
-		int nc_per_dev;
-		if (narch_is_emu())
-			nc_per_dev = nc_per_dev_param;
-		else
-			nc_per_dev = V2_NC_PER_DEVICE;
-		dma_eng_per_nd = nc_per_dev * V2_DMA_ENG_PER_NC;
-	}
+	int ret, eng_id, qid;
+
 	struct mem_chunk *mc = nd->ndma_q_dummy_mc;
 	const int desc_count = NDMA_QUEUE_DUMMY_RING_DESC_COUNT;
-	for (eng_id = 0; eng_id < dma_eng_per_nd; eng_id++) {
+	for (eng_id = 0; eng_id < ndhal->ndmar_funcs.dma_eng_per_nd; eng_id++) {
 		for (qid = 0; qid < DMA_MAX_Q_MAX; qid++) {
 			if (nd->ndma_engine[eng_id].queues[qid].owner != pid) {
 				continue;
@@ -231,12 +199,12 @@ void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 			// h2t rings are maintained by the driver so dont reset.
 			// there cant be any outstanding DMA transaction in h2t since it is a
 			// synchronous system call(which will block till finished when a process crashes).
-			if (nd->ndma_engine[eng_id].used_for_h2t && qid == ndmar_get_h2t_qid())
+			if (nd->ndma_engine[eng_id].used_for_h2t && qid == ndhal->ndmar_funcs.h2t_qid)
 				continue;
 
 			// rings owned by the nx should not be reset by us
 			// ok since they should never be interacting with host mem
-			if (ndmar_is_nx_ring(eng_id, qid)) {
+			if (ndhal->ndmar_funcs.ndmar_is_nx_ring(eng_id, qid)) {
 				continue;
 			}
 
@@ -305,77 +273,15 @@ int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid)
 	return 0;
 }
 
-int ndmar_quiesce_queues(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask)
-{
-	if (engine_count > DMA_QUIESCE_MAX_ENG)
-		return -EINVAL;
-
-	// For Inferentia reset queues on all 3 engines that belong to NC
-	// Skip h2t because it is shared between models, processes
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		u32 start_eng = nc_id * V1_DMA_ENG_PER_NC;
-		u32 e;
-		for (e = 0; e < V1_DMA_ENG_PER_NC; e++) {
-			int q;
-			struct ndma_eng *eng  = ndmar_acquire_engine(nd, start_eng + e);
-			if (eng == NULL)
-				return -EINVAL;
-			for (q = 0; q < V1_MAX_DMA_RINGS; q++) {
-				u32 mask = 0x1 << q;
-				// skip h2t because it is shared
-				if ((start_eng + e) == ndmar_get_h2t_eng_id(nd, nc_id) && q == ndmar_get_h2t_qid()) {
-					continue;
-				}
-				// check if only the specific queues were requested
-				if (engine_count > 0) {
-					// if was not specified for this engine or was not requested for this queue
-					if (e >= engine_count || (queue_mask[e] & mask) == 0) {
-						continue;
-					}
-				}
-				udma_q_pause(&eng->udma.udma_q_m2s[q]);
-				udma_q_pause(&eng->udma.udma_q_s2m[q]);
-			}
-			ndmar_release_engine(eng);
-		}
-	} else {
-		u32 start_eng = nc_id * V2_DMA_ENG_PER_NC;
-		u32 e;
-		for (e = 0; e < V2_DMA_ENG_PER_NC; e++) {
-			int q;
-			struct ndma_eng *eng  = ndmar_acquire_engine(nd, start_eng + e);
-			if (eng == NULL)
-				return -EINVAL;
-			for (q = 0; q < V2_MAX_DMA_RINGS; q++) {
-				u32 mask = 0x1 << q;
-				// check if only the specific queues were requested
-				if (engine_count > 0) {
-					// if was not specified for this engine or was not requested for this queue
-					if (e >= engine_count || (queue_mask[e] & mask) == 0) {
-						continue;
-					}
-				}
-				udma_q_pause(&eng->udma.udma_q_m2s[q]);
-				udma_q_pause(&eng->udma.udma_q_s2m[q]);
-			}
-			ndmar_release_engine(eng);
-		}
-	}
-	// sleep a bit, ideally we would wait for prefetch and scheduling
-	// to get disabled but that requires reads that we don't want to do
-	udelay(4);
-	return 0;
-}
-
 int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 {
 	int ret = 0;
 	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL, *h2t_completion_mc = NULL;
 
-	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
+	const int eng_id = ndhal->ndmar_funcs.ndmar_get_h2t_eng_id(nd, nc_id);
 	const int ndesc = DMA_H2T_DESC_COUNT;
 	const u32 ring_size = ndmar_ring_get_desc_count(ndesc) * sizeof(union udma_desc);
-	const int qid = ndmar_get_h2t_qid();
+	const int qid = ndhal->ndmar_funcs.h2t_qid;
 
 	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
@@ -413,7 +319,7 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 
 	ring->h2t_completion_mc = h2t_completion_mc;
 	ring->h2t_completion.ptr = h2t_completion_mc->va;
-	ring->h2t_completion.addr = virt_to_phys(ring->h2t_completion.ptr) | PCI_HOST_BASE(eng->nd);
+	ring->h2t_completion.addr = virt_to_phys(ring->h2t_completion.ptr) | ndhal->address_map.pci_host_base;
 
 	mutex_init(&eng->h2t_ring_lock);
 
@@ -518,7 +424,7 @@ int ndmar_eng_init(struct neuron_device *nd, int eng_id)
 	trace_dma_engine_init(nd, eng_id);
 
 	if (narch_get_arch() == NEURON_ARCH_V1)
-		ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
+		ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id); // TODO: add to ndhal when refactor dma code
 	else
 		ret = v2_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
 
@@ -547,32 +453,15 @@ void ndmar_preinit(struct neuron_device *nd)
 static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 {
 	int ret = 0;
-	int nc_per_dev;
-	int dma_eng_per_nc, dma_eng_per_nd;
-	enum neuron_arch arch = narch_get_arch();
 
 	if (nd->dmar_init_done[nc_idx]) {
 		return 0;
 	}
 
-
-	if (arch == NEURON_ARCH_V1) {
-		nc_per_dev = V1_NC_PER_DEVICE;
-		dma_eng_per_nc = V1_DMA_ENG_PER_NC;
-		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
-	} else {
-		if (narch_is_emu())
-			nc_per_dev = nc_per_dev_param;
-		else
-			nc_per_dev = V2_NC_PER_DEVICE;
-		dma_eng_per_nc = V2_DMA_ENG_PER_NC;
-		dma_eng_per_nd = nc_per_dev * dma_eng_per_nc;
-	}
-
 	// init all seng DMA engines in the NC
 	int eng_id;
-	int start_eng = nc_idx * dma_eng_per_nc;
-	int end_eng = (nc_idx + 1) * dma_eng_per_nc - 1;
+	int start_eng = nc_idx * ndhal->ndmar_funcs.dma_eng_per_nc;
+	int end_eng = (nc_idx + 1) * ndhal->ndmar_funcs.dma_eng_per_nc - 1;
 	for (eng_id = start_eng; eng_id <= end_eng; eng_id++) {
 		ret = ndmar_eng_init(nd, eng_id);
 		if (ret) {
@@ -582,7 +471,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 	}
 
 	// allocate H2T engines and rings
-	eng_id = ndmar_get_h2t_eng_id(nd, nc_idx);
+	eng_id = ndhal->ndmar_funcs.ndmar_get_h2t_eng_id(nd, nc_idx);
 	if (eng_id < start_eng || eng_id > end_eng) {
 		ret = ndmar_eng_init(nd, eng_id);
 		if (ret) {
@@ -600,7 +489,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 	struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
 		return -EINVAL;
-	const int qid = ndmar_get_h2t_qid();
+	const int qid = ndhal->ndmar_funcs.h2t_qid;
 	ret = ndmar_h2t_ring_init(eng, qid);
 	ndmar_release_engine(eng);
 	if (ret) {
@@ -615,18 +504,9 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 
 int ndmar_init_ncs(struct neuron_device *nd, uint32_t nc_map) {
 	int ret = 0;
-	int nc_per_dev;
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		nc_per_dev = V1_NC_PER_DEVICE;
-	} else {
-		if (narch_is_emu())
-			nc_per_dev = nc_per_dev_param;
-		else
-			nc_per_dev = V2_NC_PER_DEVICE;
-	}
-
 	int nc_idx;
-	for (nc_idx = 0; nc_idx < nc_per_dev; nc_idx++) {
+
+	for (nc_idx = 0; nc_idx < ndhal->address_map.nc_per_device; nc_idx++) {
 		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
 			ret = ndmar_init_nc(nd, nc_idx);
 			if (ret) {
@@ -645,7 +525,7 @@ int ndmar_init(struct neuron_device *nd)
 
 static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
 {
-	const int qid = ndmar_get_h2t_qid();
+	const int qid = ndhal->ndmar_funcs.h2t_qid;
 	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	BUG_ON(eng == NULL);
 	struct ndma_queue *queue = &eng->queues[qid];
@@ -668,25 +548,15 @@ static void ndmar_close_nc(struct neuron_device *nd, int nc_idx)
 	if (!nd->dmar_init_done[nc_idx]) {
 		return;
 	}
-	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_idx);
+	const int eng_id = ndhal->ndmar_funcs.ndmar_get_h2t_eng_id(nd, nc_idx);
 	ndmar_h2t_ring_free(nd, eng_id);
 	nd->dmar_init_done[nc_idx] = false;
 }
 
 void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map)
 {
-	int nc_per_dev;
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		nc_per_dev = V1_NC_PER_DEVICE;
-	} else {
-		if (narch_is_emu())
-			nc_per_dev = nc_per_dev_param;
-		else
-			nc_per_dev = V2_NC_PER_DEVICE;
-	}
-
 	int nc_idx;
-	for (nc_idx = 0; nc_idx < nc_per_dev; nc_idx++) {
+	for (nc_idx = 0; nc_idx < ndhal->address_map.nc_per_device; nc_idx++) {
 		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
 			ndmar_close_nc(nd, nc_idx);
 		}

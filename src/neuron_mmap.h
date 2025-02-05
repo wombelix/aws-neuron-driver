@@ -70,6 +70,17 @@ u64 nmmap_offset(struct mem_chunk *mc);
 int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma);
 
 /**
+ * nmap_dm_special_resource_get() - return the mmap offset and size for a special resource
+ * in general used to map bar0 resources for EFA
+ *
+ * @block:    block type containing the resource
+ * @id:       id of the block if is more than one block .
+ * @resource: resource the caller wants to mmap
+ *
+ */
+int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 id,  enum neuron_dm_resource_type resource, u64 *offset, u64 *size);
+
+/**
  * nmmap_search_va - Searches for va (mmap'd) in the rbtree
  *
  * @nd: neuron device
@@ -78,5 +89,13 @@ int nmmap_mem(struct neuron_device *nd, struct vm_area_struct *vma);
  * Return: mmap node
  */
 struct nmmap_node *nmmap_search_va(struct neuron_device *nd, void *va);
+
+/**
+ * nmmap_get_mc_from_pa() - return the mc associated with a pa
+ * @nd: neuron device
+ * @pa: physical address with the mc
+ *
+ */
+struct mem_chunk *nmmap_get_mc_from_pa(struct neuron_device *nd, phys_addr_t pa);
 
 #endif

@@ -19,6 +19,8 @@
 #define NDMA_QUEUE_DUMMY_RING_DESC_COUNT 64
 #define NDMA_QUEUE_DUMMY_RING_SIZE (NDMA_QUEUE_DUMMY_RING_DESC_COUNT * sizeof(union udma_desc))
 
+extern int nc_per_dev_param;
+
 struct neuron_device;
 struct neuron_dma_eng_state;
 struct neuron_dma_queue_state;
@@ -169,18 +171,6 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid);
 
 /**
- * ndmar_quiesce_queues() - Quiesce DMA queues.
- *
- * @nd: Neuron device which contains the DMA engines
- * @nc_id: NC id that owns the queues
- * @engine_count: the number of elements in the queue_mask array - currently not used, always pass 0
- * @queue_mask:   per engine queues to reset - currently not used and ignored.
- *
- * Return: 0 if queue release succeeds, a negative error code otherwise.
- */
-int ndmar_quiesce_queues(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask);
-
-/**
  * ndmar_handle_process_exit() - Stops all the queues used by the given process.
  *
  * This function should be called when a process exits(before the MCs are freed),
@@ -280,21 +270,6 @@ int ndmar_queue_get_state(struct neuron_device *nd, int eng_id, int qid,
  * Return: None
  */
 void ndmar_set_model_started_v1(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc);
-
-/** ndmar_get_h2t_qid()
- *
- * Return qid
- */
-int ndmar_get_h2t_qid(void);
-
-/** ndmar_get_h2t_eng_id()
- *
- *  @nd: Neuron device which contains the DMA engine
- *  @nc_id: Neuron core corresponding to H2T engine
- * Return engine id
- */
-uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id);
-
 
 /** ndmar_h2t_ring_init() - initialize a DMA ring 
  * 

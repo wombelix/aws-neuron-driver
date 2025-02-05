@@ -28,7 +28,7 @@ struct neuron_crwl {
  * @param start_nc_index: Starting NC index from where search should start.
  * @param end_nc_index: Last NC index where search should end.
  * @param max_range_available: Maximum number of NC cores available. (valid only on failure)
- * @param result: Resulting acquired NC bitmap will be stored here.
+ * @param result: Resulting acquired NC bitmap will be stored here.  Caller is expected to zero prior to call
  *
  * @return 0 on success, negative error code on failure.
  */
@@ -41,7 +41,7 @@ int ncrwl_nc_range_mark(u32 nc_count, u32 start_nc_index, u32 end_nc_index,
  * @param free: Map of NCs to release.
  *
  */
-void ncrwl_nc_range_unmark(volatile long unsigned int bitmap);
+void ncrwl_nc_range_unmark(volatile long unsigned int *bitmap);
 
 /**
  * ncrwl_reader_enter() - Takes reader lock of given neuron core.

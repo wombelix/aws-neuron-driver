@@ -30,77 +30,16 @@
 #include "neuron_mmap.h"
 #include "neuron_topsp.h"
 #include "neuron_nq.h"
-
-static u8 nnq_get_nqid(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
-{
-	u8 nq_id = 0;
-	if (narch_get_arch() == NEURON_ARCH_V1)
-		nq_id = (nq_type * MAX_NQ_TYPE) + index;
-	else
-		nq_id = (nq_type * V2_MAX_NQ_QUEUES) + index; //for v2 nq is based on queue
-	return nq_id;
-}
-
-static void nnq_set_hwaddr(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type, u32 size,
-			   u64 queue_pa)
-{
-	void *apb_base;
-	u32 low, high;
-
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		apb_base = nd->npdev.bar0 + pu_get_relative_offset(nc_id);
-	} else {
-		if (nq_type == NQ_TYPE_TRACE_DMA) {
-			apb_base = nd->npdev.bar0 + notific_get_relative_offset_sdma(nc_id, index);
-			index = 0; //in the block write it on queue 0 as the base is different
-		} else {
-			apb_base = nd->npdev.bar0 + notific_get_relative_offset(nc_id);
-		}
-	}
-
-	low = (u32)(queue_pa & 0xffffffff);
-	high = (u32)(queue_pa >> 32U);
-
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		switch (nq_type) {
-		case NQ_TYPE_ERROR:
-			pu_write_error_notification_cfg_0(apb_base, low);
-			pu_write_error_notification_cfg_1(apb_base, high);
-			pu_write_error_notification_cfg_2(apb_base, size);
-			break;
-		case NQ_TYPE_EVENT:
-			pu_write_event_notification_cfg_0(apb_base, low);
-			pu_write_event_notification_cfg_1(apb_base, high);
-			pu_write_event_notification_cfg_2(apb_base, size);
-			break;
-		case NQ_TYPE_NOTIFY:
-			pu_write_expl_notification_cfg_0(apb_base, index, 0, low);
-			pu_write_expl_notification_cfg_1(apb_base, index, 0, high);
-			pu_write_expl_notification_cfg_2(apb_base, index, 0, size);
-			break;
-		case NQ_TYPE_TRACE:
-			pu_write_impl_notification_cfg_0(apb_base, index, 0, low);
-			pu_write_impl_notification_cfg_1(apb_base, index, 0, high);
-			pu_write_impl_notification_cfg_2(apb_base, index, 0, size);
-			break;
-		default:
-			BUG();
-		}
-	} else {
-		notific_write_nq_base_addr_hi(apb_base, index, high);
-		notific_write_nq_base_addr_lo(apb_base, index, low);
-		notific_write_nq_f_size(apb_base, index, size);
-	}
-}
+#include "neuron_dhal.h"
 
 static int nnq_halt(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
 {
 	u8 nq_id;
 
-	if (nd == NULL || nc_id >= NC_PER_DEVICE(nd))
+	if (nd == NULL || nc_id >= ndhal->address_map.nc_per_device)
 		return -EINVAL;
 
-	nq_id = nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	nq_id = ndhal->nq_funcs.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -108,7 +47,7 @@ static int nnq_halt(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_typ
 		return 0;
 	}
 
-	nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, 0, 0);
+	ndhal->nq_funcs.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, 0, 0);
 	
 	return 0;
 }
@@ -117,10 +56,10 @@ static int nnq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_
 {
 	u8 nq_id;
 
-	if (nd == NULL || nc_id >= NC_PER_DEVICE(nd))
+	if (nd == NULL || nc_id >= ndhal->address_map.nc_per_device)
 		return -EINVAL;
 
-	nq_id = nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	nq_id = ndhal->nq_funcs.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -143,10 +82,10 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 		pr_err("notification ring size must be power of 2");
 		return -EINVAL;
 	}
-	if (nd == NULL || nc_id >= NC_PER_DEVICE(nd))
+	if (nd == NULL || nc_id >= ndhal->address_map.nc_per_device)
 		return -EINVAL;
 
-	u8 nq_id = nnq_get_nqid(nd, nc_id, eng_index, nq_type);
+	u8 nq_id = ndhal->nq_funcs.nnq_get_nqid(nd, nc_id, eng_index, nq_type);
 	if (nq_id >= MAX_NQ_SUPPORTED)
 		return -EINVAL;
 
@@ -157,7 +96,7 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 			       dram_channel, dram_region, nc_id, &_mc);
 		if (ret)
 			return ret;
-		nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, _mc->pa);
+		ndhal->nq_funcs.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, _mc->pa);
 		nd->nq_mc[nc_id][nq_id] = _mc;
 		if (mc) {
 			mc_free(&mc);
@@ -194,11 +133,9 @@ void nnq_destroy_nc(struct neuron_device *nd, u8 nc_id)
 		}
 	}
 
-	if (narch_get_arch() == NEURON_ARCH_V2) {
-		u8 ts_per_nc = V2_TS_PER_DEVICE / V2_NC_PER_DEVICE;
-		for (ts_id = nc_id * ts_per_nc; ts_id < (nc_id + 1) * ts_per_nc; ts_id++) {
-			ts_nq_destroy_one(nd, ts_id);
-		}
+	u8 ts_per_nc = ndhal->topsp_funcs.ts_per_device / ndhal->address_map.nc_per_device;
+	for (ts_id = nc_id * ts_per_nc; ts_id < (nc_id + 1) * ts_per_nc; ts_id++) {
+		ndhal->topsp_funcs.ts_nq_destroy_one(nd, ts_id);
 	}
 }
 
@@ -206,10 +143,7 @@ void nnq_destroy_all(struct neuron_device *nd)
 {
 	u8 nc_id;
 
-	for (nc_id = 0; nc_id < NC_PER_DEVICE(nd); nc_id++) {
+	for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
 		nnq_destroy_nc(nd, nc_id);
 	}
 }
-
-
-

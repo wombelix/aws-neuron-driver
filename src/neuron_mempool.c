@@ -19,6 +19,7 @@
 #include "neuron_mempool.h"
 #include "neuron_device.h"
 #include "neuron_reg_access.h"
+#include "neuron_dhal.h"
 
 /*
  *  genalloc.h mempool we use doesn't support VA=0; since we set it up such that va==pa for device memory
@@ -40,10 +41,6 @@ MODULE_PARM_DESC(mempool_host_memory_size, "Host memory to reserve(in bytes)");
 #ifdef CONFIG_FAULT_INJECTION
 DECLARE_FAULT_ATTR(neuron_fail_mc_alloc);
 #endif
-
-// Upper 16MB is used internally by the firmware, don't use it in
-// the allocation pool
-#define MEMPOOL_CARVEOUT_SIZE 0x1000000 // 16MB
 
 /**
  * mc_insert_node() - Insert a mem chunk to the tree
@@ -262,30 +259,15 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 	int channel = 0, region = 0;
 	u64 region_sz = 0;
 	u64 device_dram_addr[MAX_DRAM_CHANNELS];
-	u64 device_dram_size[MAX_DDR_REGIONS];
+	u64 device_dram_size[MAX_DRAM_CHANNELS];
 
-	if (narch_get_arch() == NEURON_ARCH_V1) {
-		mpset->num_channels = V1_MAX_DRAM_CHANNELS;
-		device_dram_addr[0] = P_0_DRAM_0_BASE;
-		device_dram_addr[1] = P_0_DRAM_1_BASE;
-		device_dram_size[0] = P_0_DRAM_0_SIZE;
-		device_dram_size[1] = P_0_DRAM_1_SIZE;
-		mpset->mp_device_num_regions = 4;
-	} else {
-		mpset->num_channels = V2_MAX_DRAM_CHANNELS;
-		device_dram_addr[0] = V2_HBM_0_BASE;
-		device_dram_addr[1] = V2_HBM_1_BASE;
-		device_dram_size[0] = V2_HBM_0_SIZE;
-		device_dram_size[1] = V2_HBM_1_SIZE;
-		mpset->mp_device_num_regions = 1;
-	}
+	ndhal->mpset_funcs.mpset_set_dram_and_mpset_info(mpset, device_dram_addr, device_dram_size);
 
 	for (channel = 0; channel < mpset->num_channels; channel++) {
 		region_sz = device_dram_size[channel] / mpset->mp_device_num_regions;
 		for (region = 0; region < mpset->mp_device_num_regions; region++) {
 			dma_addr_t addr = device_dram_addr[channel] + (region * region_sz);
-			ret = mp_init_device_mem(&mpset->mp_device[channel][region], mpset, addr,
-									 region_sz, channel, region);
+			ret = mp_init_device_mem(&mpset->mp_device[channel][region], mpset, addr, region_sz, channel, region);
 			if (ret) {
 				pr_err("mpset device init failed %d\n", ret);
 				goto fail;
@@ -293,38 +275,13 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 		}
 	}
 
-	/*
-	*  Block carve out regions: Upper 16 MB is used internally by firmware for trainuim
-	*
-	*  Ideally we would carve out by simply changing the start address of the chunk;
-	*  however, that breaks aligned allocation in 4.x kernel versions (fixed in 5.x).
-	*  Fix here:
-	*     commit 52fbf1134d479234d7e64ba9dcbaea23405f229e
-	*     Author: Alexey Skidanov <alexey.skidanov@intel.com>
-	*     Date:   Thu Jan 3 15:26:44 2019 -0800
-	*
-	*     lib/genalloc.c: fix allocation of aligned buffer from non-aligned chunk
-	*/
-	for (channel = 0; channel < mpset->num_channels; channel++) {
-		for (region = 0; region < mpset->mp_device_num_regions; region++) {
-			const dma_addr_t start_addr = device_dram_addr[channel] + (region * region_sz);
-			if (narch_get_arch() == NEURON_ARCH_V1)
-				continue;
-			struct mem_chunk *mc = NULL;
-			u32 nc_id = channel;
-			ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, MEM_LOC_DEVICE,
-				       channel, region, nc_id, &mc);
-			if (ret) {
-				pr_err("failed to allocate hbm carevout region: ret=%d\n", ret);
+	ret = ndhal->mpset_funcs.mpset_block_carveout_regions(nd, mpset, device_dram_addr, device_dram_size);
+	if (ret) {
 				goto fail;
-			}
-			if (mc->pa != start_addr) {
-				pr_err("carve out mc not offset 0!");
-				mc_free(&mc);
 				goto fail;
-			}
-		}
+		goto fail;
 	}
+
 	return 0;
 
 fail:
@@ -597,7 +554,7 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 			}
 		}
 		if (mc->va)
-			mc->pa |= PCI_HOST_BASE(nd);
+			mc->pa |= ndhal->address_map.pci_host_base;
 		else
 			pr_info("host mem occupied %lld\n", mpset->host_mem_size);
 	} else {
@@ -725,7 +682,7 @@ void mc_free(struct mem_chunk **mcp)
 			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
 			mc->mp->allocated_size -= mc->size;
 		} else {
-			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~PCI_HOST_BASE(nd));
+			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~ndhal->address_map.pci_host_base);
 		}
 		mpset->host_mem_size -= mc->size;
 		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, mc->nc_id, mc->size);

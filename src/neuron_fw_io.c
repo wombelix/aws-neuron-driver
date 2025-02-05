@@ -28,9 +28,9 @@
 #include "neuron_reg_access.h"
 #include "neuron_device.h"
 #include "neuron_arch.h"
-
 #include "v1/fw_io.h"
 #include "neuron_fw_io.h"
+#include "neuron_dhal.h"
 
 #ifdef CONFIG_FAULT_INJECTION
 DECLARE_FAULT_ATTR(neuron_fail_fwio_read);
@@ -45,19 +45,32 @@ static u64 fw_io_get_bar0_misc_ram_offset(void) {
 	return narch_get_arch() == NEURON_ARCH_V1 ?  V1_MMAP_BAR0_APB_MISC_RAM_OFFSET : V2_MMAP_BAR0_APB_MISC_RAM_OFFSET;
 }
 
-static u64 fw_io_get_phys_host_offset(void){
-	return narch_get_arch() == NEURON_ARCH_V1 ?  PCIEX8_0_BASE : V2_PCIE_A0_BASE;
+int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count)
+{
+    if (ecc_offset != FW_IO_REG_SRAM_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM0_ECC_OFFSET && ecc_offset != FW_IO_REG_HBM1_ECC_OFFSET) {
+        pr_err("wrong ecc offset is given\n");
+        return -EINVAL;
+    }
+
+    void *addr = bar0 + fw_io_get_bar0_misc_ram_offset() + ecc_offset;
+    int ret = fw_io_read_csr_array(&addr, ecc_err_count, 1, false);
+    if (ret) {
+        pr_err("failed to get ecc error count from pacific for ecc_offset=%llu\n", ecc_offset);
+        return -EIO;
+    }
+
+	return 0;
 }
 
 int fw_io_device_id_read(void *bar0, u32 *device_id)
 {
-       void * addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
-       return fw_io_read_csr_array( &addr, device_id, 1, false);
+	void *addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
+	return fw_io_read_csr_array(&addr, device_id, 1, false);
 }
 
 void fw_io_device_id_write(void *bar0, u32 device_id)
 {
-	void * addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
+	void *addr = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_DEVICE_ID_OFFSET;
 	reg_write32(addr, device_id);
 }
 
@@ -448,7 +461,7 @@ static const int *inf2_24xl_neighbor_ids[6] = {
 
 static int fw_io_topology_v2(int pdev_index, int device_id, u32 *connected_device_ids, int *count)
 {
-	// Sunda does not have Pacific support to detect east/west/south/north neighbors like Tonga,
+	// V2 does not have Pacific support to detect east/west/south/north neighbors like V1,
 	// so its topology is hardcoded based on instance type.
 	*count = 0;
 
@@ -522,7 +535,7 @@ struct fw_io_ctx *fw_io_setup(void __iomem *bar0, u64 bar0_size,
 	}
 
 	ctx->request_addr = virt_to_phys(ctx->request);
-	ctx->request_addr |= fw_io_get_phys_host_offset();
+	ctx->request_addr |= ndhal->address_map.pci_host_base;
 
 	ctx->response = kmalloc(FW_IO_MAX_SIZE, GFP_ATOMIC);
 	if (ctx->response == NULL) {
@@ -531,7 +544,7 @@ struct fw_io_ctx *fw_io_setup(void __iomem *bar0, u64 bar0_size,
 	}
 
 	ctx->response_addr = virt_to_phys(ctx->response);
-	ctx->response_addr |= fw_io_get_phys_host_offset();
+	ctx->response_addr |= ndhal->address_map.pci_host_base;
 
 	if (narch_get_arch() == NEURON_ARCH_V1){
 		if (fw_io_register_read_region(ctx, bar0, bar0_size, P_0_APB_BASE)) {

@@ -17,6 +17,7 @@
 #include "neuron_trace.h"
 #include "neuron_metrics.h"
 #include "neuron_device.h"
+#include "neuron_dhal.h"
 
 unsigned int nmetric_metric_post_delay = 150000; // milliseconds
 unsigned int nmetric_log_posts = 0;
@@ -80,9 +81,11 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR = 219, // generic notification error
 	                                          // for reference look at "INFER_SUBTYPE_NONE" in
 	                                          // KaenaRuntime repo "tdrv/infer_error_subtype_int.c"
-	
+
 	NMETRIC_CW_ID_FEATURE_BITMAP = 250,
-	NMETRIC_CW_ID_SYSFS_METRIC_BITMAP = 251
+	NMETRIC_CW_ID_SYSFS_METRIC_BITMAP = 251,
+
+	NMETRIC_CW_ID_DEVICE_CLUSTER_ID = 252
 };
 
 static const nmetric_def_t nmetric_defs[] = {
@@ -118,7 +121,10 @@ static const nmetric_def_t nmetric_defs[] = {
 
 	// bitmap metrics
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_FEATURE_BITMAP, NDS_ND_COUNTER_FEATURE_BITMAP),
-	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_UNUSED, NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP)
+	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_UNUSED, NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP),
+
+	// const uint64 metrics
+	NMETRIC_CONSTANT_U64(0, POST_TIME_TICK_1, NMETRIC_CW_ID_DEVICE_CLUSTER_ID, NDS_ND_COUNTER_DEVICE_CLUSTER_ID, NMETRIC_CONST_U64_FLAG_SKIP_ZERO)
 };
 static const int nmetric_count = sizeof(nmetric_defs) / sizeof(nmetric_def_t);
 
@@ -213,17 +219,18 @@ static inline bool nmetric_check_post_tick(u8 tick, const nmetric_def_t *metric)
 
 /**
  * nmetric_aggregate_nd_counter_entry()
- * 
- * Aggregates all metrics in specified datastore entry to specified buffer. Counter metrics are added together. 
+ *
+ * Aggregates all metrics in specified datastore entry to specified buffer. Counter metrics are added together.
  * Multiple version metrics are can be gathered per posting session up to a predefined limit. Any excess versions will be discarded
- * 
+ *
  * @nd: neuron device
  * @entry: valid initialized datastore entry to aggregate metrics from
  * @dest_buf: destination buffer to recieve all aggregated data from datastore entry, must be large enough to accommodate all counters being tracked
  * @feature_bitmap: destination buffer to recieve feature_bitmap data from datastore entry
  * @tick: current tick value
  */
-static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct neuron_datastore_entry *entry, u64 *dest_buf, u64 *feature_bitmap, u8 tick)
+static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct neuron_datastore_entry *entry, u64 *dest_buf,
+                                               u64 *feature_bitmap, u64 *const_u64_metrics, u8 tick)
 {
 	int nc_id;
 	int nmetric_index;
@@ -241,7 +248,7 @@ static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct 
 							  &nd->metrics.component_versions[curr_metric->index]);
 		break;
 		case NMETRIC_TYPE_COUNTER:
-			for (nc_id = 0; nc_id < NC_PER_DEVICE(nd); nc_id++) {
+			for (nc_id = 0; nc_id < ndhal->address_map.nc_per_device; nc_id++) {
 				dest_buf[curr_metric->index] += NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[curr_metric->ds_id];
 			}
 		break;
@@ -250,20 +257,23 @@ static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct 
 				*feature_bitmap |= NDS_ND_COUNTERS(ds_base_ptr)[curr_metric->ds_id];
 			}
 		break;
+		case NMETRIC_TYPE_CONSTANT_U64:
+			const_u64_metrics[curr_metric->index] = NDS_ND_COUNTERS(ds_base_ptr)[curr_metric->ds_id];
+		break;
 		}
 	}
 }
 
 /**
  * nmetric_full_aggregation() - Aggregates all metrics in all datastore entries in device to specified buffer
- * 
+ *
  * @nd: neuron device
  * @curr_metrics: destination buffer to recieve all aggregated data from datastore entry, must be large enough to accommodate all counters being tracked
  * @curr_feature_bitmap: destination buffer to recieve feature_bitmap from datastore entry
  * @tick: current tiint ds_id;ck value
- * 
+ *
  */
-static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics, u64 *curr_feature_bitmap, u8 tick)
+static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics, u64 *curr_feature_bitmap, u64 *const_u64_metrics, u8 tick)
 {
 	// aggregate counter metrics in all cores of all entries of the datastore into current count array
 	int i;
@@ -271,7 +281,7 @@ static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics, 
 
 	for (i = 0; i < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; i++)
 		if (neuron_ds_check_entry_in_use(&nd->datastore, i)) // ensure that datastore entry is in use and valid
-			nmetric_aggregate_nd_counter_entry(nd, &nd->datastore.entries[i], curr_metrics, curr_feature_bitmap, tick);
+			nmetric_aggregate_nd_counter_entry(nd, &nd->datastore.entries[i], curr_metrics, curr_feature_bitmap, const_u64_metrics, tick);
 
 	// update metrics that do not have counters in nds
 	if (nmetric_check_post_tick(tick, nmetric_fw_io_def))
@@ -279,17 +289,22 @@ static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics, 
 }
 
 // Wrapper function for entry aggregate function
+// The purpose of this function is to save out counters for processes that have stopped between
+// data posts.
+// Since NDS clears out after a process is terminated, we need to save out the counters on
+// process termination to prevent us from losing metric data.
 void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore_entry *entry)
 {
-	nmetric_aggregate_nd_counter_entry(nd, entry, nd->metrics.ds_freed_metrics_buf, &nd->metrics.ds_freed_feature_bitmap_buf, POST_TIME_ALWAYS);
+	nmetric_aggregate_nd_counter_entry(nd, entry, nd->metrics.ds_freed_metrics_buf, &nd->metrics.ds_freed_feature_bitmap_buf,
+	                                   nd->metrics.ds_freed_const_u64_buf, POST_TIME_ALWAYS);
 }
 
 /**
  * nmetric_mock_fw_io_post_metric() - Mock posting function used for internal testing
- * 
+ *
  * @data: start of posting buffer
  * @size: size of posting buffer
- * 
+ *
  */
 void nmetric_mock_fw_io_post_metric(u8 *data, u32 size)
 {
@@ -451,7 +466,7 @@ static inline int nmetric_post_counter(u64 *curr_metrics, u64 *prev_metrics,
 	return metric_size;
 }
 
-static inline int nmetric_post_feature_bitmap(const nmetric_def_t *metric, struct nmetric_cw_metric *dest, 
+static inline int nmetric_post_feature_bitmap(const nmetric_def_t *metric, struct nmetric_cw_metric *dest,
 											 u64 curr_feature_bitmap, u64 freed_feature_bitmap, int available_size)
 	{
 	u64 metric_value = curr_feature_bitmap | freed_feature_bitmap;
@@ -474,25 +489,60 @@ static inline int nmetric_post_feature_bitmap(const nmetric_def_t *metric, struc
 	return metric_size;
 }
 
+static inline int nmetric_post_constant_u64(const nmetric_def_t *metric, struct nmetric_cw_metric *dest, u64 *const_u64_metrics, u64 *freed_const_u64_metrics, int available_size)
+{
+	// we have a choice of taking the metric value from previous
+	// NDS or current NDS.
+	// For default flow, take current NDS value as preference.
+	//
+	// Change to backup NDS if there is NULL (0) data in the prefered NDS
+	u64 *pref = const_u64_metrics;
+	u64 *bak = freed_const_u64_metrics;
+	if (metric->flags & NMETRIC_CONST_U64_FLAG_PREFER_FREED) {
+		pref = freed_const_u64_metrics;
+		bak = const_u64_metrics;
+	}
+	u64 metric_value = pref[metric->index];
+	// do not post the constant if nothing is set
+	if ((metric->flags & NMETRIC_CONST_U64_FLAG_SKIP_ZERO) != 0 && metric_value == 0) {
+		metric_value = bak[metric->index];
+		if (metric_value == 0)
+			return 0;
+	}
+
+	// check if there is enough space in buffer
+	int expected_len = snprintf(NULL, 0, "%llu", metric_value);
+	int metric_size = sizeof(struct nmetric_cw_metric) + expected_len;
+	if (available_size < metric_size)
+		return 0;
+
+	// save metrics to buffer
+	dest->id = metric->cw_id;
+	dest->len = expected_len;
+	snprintf(dest->data, expected_len + 1, "%llu", metric_value); // post the as decimal not hex, as cw reads it in decimal format
+
+	return metric_size;
+}
+
 /**
- * nmetric_post_metrics()  
- * 
- * Sends a byte array of metrics in string form to fw. Differential counter metrics are sent (as compared to the last posting); 
+ * nmetric_post_metrics()
+ *
+ * Sends a byte array of metrics in string form to fw. Differential counter metrics are sent (as compared to the last posting);
  * counter metrics with 0 difference from last posting are not posted. Extremely large counter metrics may be truncated and will log an error.
  * Multiple version metrics may be posted at once up to a predefined limit, versions beyond this limit will be discarded.
- * 
+ *
  * @nd: neuron device
  * @curr_metrics: buffer containing metrics of the current session not yet posted to fw
  * @prev_metrics: buffer containing metrics of the previous session, last posted
- * @freed_metrics: buffer containing metrics that were freed before being posted in the current session and not captured in current metrics buf 
+ * @freed_metrics: buffer containing metrics that were freed before being posted in the current session and not captured in current metrics buf
  * @versions: buffer containing version metrics gathered from the current session
  * @constants_metrics: buffer containing metrics constant to the device
  * @curr_feature_bitmap: buffer containing feature_bitmap of the current session not yet posted to fw
  * @freed_feature_bitmap: buffer containing feature_bitmap that were freed before being posted in the current session and not captured in current feature_bitmap
- * 
+ *
  */
 static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics,
-				 struct nmetric_versions *versions, u64 curr_feature_bitmap, u64 freed_feature_bitmap, u8 tick)
+				 struct nmetric_versions *versions, u64 curr_feature_bitmap, u64 freed_feature_bitmap, u64 *const_u64_metrics, u64 *freed_const_u64_metrics, u8 tick)
 {
 	int available_size;
 	int nmetric_index;
@@ -521,6 +571,9 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 		case NMETRIC_TYPE_BITMAP:
 			data_size += nmetric_post_feature_bitmap(curr_metric, dest, curr_feature_bitmap, freed_feature_bitmap, available_size);
 		break;
+		case NMETRIC_TYPE_CONSTANT_U64:
+			data_size += nmetric_post_constant_u64(curr_metric, dest, const_u64_metrics, freed_const_u64_metrics, available_size);
+		break;
 		}
 	}
 
@@ -538,18 +591,18 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 /**
  *
  * nmetric_cache_shared_bufs() - Caches neuron device buffer values to avoid needing extra locks
- * 
+ *
  * @nd: neuron device
  * @freed_metrics[out]: will contain freed counter data copied from neuron device aggregation
  * @versions[out]: will contain version metrics data copied from neuron device aggregation
  * @freed_feature_bitmap: will contain freed feature_bitmap metrics data copied from neuron device aggregation
  * @tick: current tick value
  */
-static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metrics, struct nmetric_versions *versions, u64 *freed_feature_bitmap, u8 tick)
+static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metrics, struct nmetric_versions *versions, u64 *freed_feature_bitmap, u64 *freed_const_u64_metrics, u8 tick)
 {
 	int nmetric_index;
 	const nmetric_def_t *curr_metric;
-	
+
 	// cache and reset freed metrics buf
 	memcpy(freed_metrics, nd->metrics.ds_freed_metrics_buf, nmetric_counters_buf_size);
 	// cache and reset version metrics buf
@@ -558,6 +611,13 @@ static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metri
 	*freed_feature_bitmap = nd->metrics.ds_freed_feature_bitmap_buf;
 	nd->metrics.ds_freed_feature_bitmap_buf = 0;
 
+	// IMPORTANT MUST USE THIS LOOP TO RESET EVERYTHING.
+	// IF NOT A DIFFERENT TICK WILL SAVE OFF THINGS AND RESET FOR YOU AND
+	// YOU DO NOT POST
+	//
+	// TODO: Fix feature bitmap since that resets even if it is not posted
+	// and to keep "versions" and the counters consistent, add them into the loop
+	// as well.
 	for (nmetric_index = 0; nmetric_index < nmetric_count; nmetric_index++) {
 		curr_metric = &nmetric_defs[nmetric_index];
 		if (!nmetric_check_post_tick(tick, curr_metric))
@@ -570,13 +630,17 @@ static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metri
 		case NMETRIC_TYPE_FW_IO_ERR:
 			nd->metrics.ds_freed_metrics_buf[curr_metric->index] = 0;
 		break;
+		case NMETRIC_TYPE_CONSTANT_U64:
+			freed_const_u64_metrics[curr_metric->index] = nd->metrics.ds_freed_const_u64_buf[curr_metric->index];
+			nd->metrics.ds_freed_const_u64_buf[curr_metric->index] = 0;
+		break;
 		}
 	}
 }
 
 /**
  * nmetric_start_new_session() - Copies metrics in the buffer of the current session to the reference buffer, resets all buffers containing metrics of the current session
- * 
+ *
  * @curr_metrics: buffer containing metrics of the current session
  * @prev_metrics: reference buffer
  * @freed_metrics: cache of buffer containing metrics of freed datastore entries
@@ -585,16 +649,30 @@ static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metri
  * @tick: current tick value
  *
  */
-static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics, u64 *curr_feature_bitmap, u64 *freed_feature_bitmap, u8 tick)
+static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics, u64 *curr_feature_bitmap, u64 *freed_feature_bitmap, u64 *const_u64_metrics, u64 *freed_const_u64_metrics, u8 tick)
 {
 	int nmetric_index;
 	const nmetric_def_t *curr_metric;
+
+	// IMPORTANT MUST USE THIS LOOP TO START NEW SESSION.
+	// IF NOT, YOU WILL MESS WITH DATA ON A DIFFERENT TICK
+	//
+	// TODO: Fix feature bitmap
+
 	// save metrics to reference array
 	for (nmetric_index = 0; nmetric_index < nmetric_count; nmetric_index++) {
 		curr_metric = &nmetric_defs[nmetric_index];
-		if (!nmetric_check_post_tick(tick, curr_metric) || curr_metric->type != NMETRIC_TYPE_COUNTER)
+		if (!nmetric_check_post_tick(tick, curr_metric))
 			continue;
-		prev_metrics[curr_metric->index] = curr_metrics[curr_metric->index];
+		switch(curr_metric->type) {
+			case NMETRIC_TYPE_COUNTER:
+				prev_metrics[curr_metric->index] = curr_metrics[curr_metric->index];
+			break;
+			case NMETRIC_TYPE_CONSTANT_U64:
+				const_u64_metrics[curr_metric->index] = 0;
+				freed_const_u64_metrics[curr_metric->index] = 0;
+			break;
+		}
 	}
 
 	// reset all current metrics
@@ -608,9 +686,9 @@ static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metric
 
 /**
  * nmetric_thread_fn() - periodically aggregates and posts metric at rate specified by module parameter
- * 
+ *
  * @arg: expected to be a pointer to neuron device
- * 
+ *
  */
 static int nmetric_thread_fn(void *arg)
 {
@@ -619,8 +697,10 @@ static int nmetric_thread_fn(void *arg)
 	u64 prev[NMETRIC_COUNTER_COUNT]; // recorded metrics from the last post
 	u64 freed[NMETRIC_COUNTER_COUNT]; // cache holding metrics that were freed before the posting period was reached
 	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
-	u64 curr_feature_bitmap;  // feature_bitmap for the current session 
-	u64 freed_feature_bitmap; // cache hold the feature_bitmap that was freed before the posting period was reached 
+	u64 curr_feature_bitmap;  // feature_bitmap for the current session
+	u64 freed_feature_bitmap; // cache hold the feature_bitmap that was freed before the posting period was reached
+	u64 const_u64_metrics[NMETRIC_CONSTANT_U64_COUNT];
+	u64 freed_const_u64_metrics[NMETRIC_CONSTANT_U64_COUNT];
 	u8 tick = 0;
 
 	// initialize all aggregation buffers
@@ -630,6 +710,8 @@ static int nmetric_thread_fn(void *arg)
 	memset(component_versions, 0, nmetric_versions_buf_size);
 	curr_feature_bitmap = 0;
 	freed_feature_bitmap = 0;
+	memset(const_u64_metrics, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
+	memset(freed_const_u64_metrics, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
 
 	// metrics are only sent once at rate specified by module param, new metric data may be saved without being immediately sent
 	while (!kthread_should_stop() && nd->metrics.neuron_aggregation.running) {
@@ -639,12 +721,12 @@ static int nmetric_thread_fn(void *arg)
 
 		// aggregate and post metrics
 		neuron_ds_acquire_lock(&nd->datastore);
-		nmetric_full_aggregate(nd, curr, &curr_feature_bitmap, tick);
-		nmetric_cache_shared_bufs(nd, freed, component_versions, &freed_feature_bitmap, tick);
+		nmetric_full_aggregate(nd, curr, &curr_feature_bitmap, const_u64_metrics, tick);
+		nmetric_cache_shared_bufs(nd, freed, component_versions, &freed_feature_bitmap, freed_const_u64_metrics, tick);
 		neuron_ds_release_lock(&nd->datastore);
 
-		nmetric_post_metrics(nd, curr, prev, freed, component_versions, curr_feature_bitmap, freed_feature_bitmap, tick);
-		nmetric_start_new_session(nd, curr, prev, freed, &curr_feature_bitmap, &freed_feature_bitmap, tick); // reset all current metrics for this tick
+		nmetric_post_metrics(nd, curr, prev, freed, component_versions, curr_feature_bitmap, freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick);
+		nmetric_start_new_session(nd, curr, prev, freed, &curr_feature_bitmap, &freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick); // reset all current metrics for this tick
 		tick = (tick + 1) % POST_TICK_COUNT;
 	}
 	return 0;
@@ -677,6 +759,7 @@ int nmetric_init(struct neuron_device *nd)
 	int ret;
 
 	memset(nd->metrics.ds_freed_metrics_buf, 0, nmetric_counters_buf_size);
+	memset(nd->metrics.ds_freed_const_u64_buf, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
 
 	// initiate metric aggregator thread
 	ret = nmetric_create_thread(nd);

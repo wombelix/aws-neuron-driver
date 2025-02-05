@@ -179,6 +179,7 @@ done:
 	return ret;
 }
 
+
 // Each entry points to NC and value points to PID acquired that NC.
 static pid_t ncrwl_range_pids[MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE] = {0};
 DEFINE_MUTEX(ncrwl_range_lock); // lock to protect ncrwl_range_pids
@@ -187,11 +188,10 @@ int ncrwl_nc_range_mark(u32 nc_count, u32 start_nc_index, u32 end_nc_index,
 {
 	int i, j;
 	*max_range = 0;
-	*result_map = 0;
 	if (start_nc_index > end_nc_index ||
 		    start_nc_index >= MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE ||
 		    end_nc_index >= MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE)
-		return EINVAL;
+		return -EINVAL;
 	mutex_lock(&ncrwl_range_lock);
 	for (i = start_nc_index; i <= end_nc_index; i++) {
 		int range_len = 1;
@@ -220,16 +220,17 @@ int ncrwl_nc_range_mark(u32 nc_count, u32 start_nc_index, u32 end_nc_index,
 		i = j + 1;
 	}
 	mutex_unlock(&ncrwl_range_lock);
-	return EBUSY;
+	return -EBUSY;
 }
 
-void ncrwl_nc_range_unmark(volatile long unsigned int free_map)
+void ncrwl_nc_range_unmark(volatile long unsigned int *free_map)
 {
 	int i;
 	mutex_lock(&ncrwl_range_lock);
 	for (i = 0; i < MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE; i++) {
-		if (test_bit(i, &free_map) && ncrwl_range_pids[i] == task_tgid_nr(current))
+		if (test_bit(i, free_map) && ncrwl_range_pids[i] == task_tgid_nr(current)) {
 			ncrwl_range_pids[i] = 0;
+		}
 	}
 	mutex_unlock(&ncrwl_range_lock);
 }

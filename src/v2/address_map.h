@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef __V2_ADDR_MAP_H__
 
-// Host memory access
-#define V2_PCIE_A0_BASE                        0x00100000000000ull
+/** All the address names are copied from the arch header repository.
+ * 
+ * APB address space:
+ *     - V2_MMAP_BAR0_APB prefix refers to the address relative to host
+ *     - V2_APB prefix refers to the address relative to device
+ * 
+ */
 
 // All PCIe routes mask
 #define V2_PCIE_ALL_RT_MASK                    0x01f00000000000ull
-
 
 // relative to nc
 #define V2_MMAP_P_OFFSET 0x00000000000000ull
@@ -19,6 +23,7 @@
 #define V2_MMAP_NC_SEMA_SET_OFFSET V2_MMAP_NC_EVENT_OFFSET + 0x00000000001400ull
 #define V2_MMAP_NC_SEMA_INCR_OFFSET V2_MMAP_NC_EVENT_OFFSET + 0x00000000001800ull
 #define V2_MMAP_NC_SEMA_DECR_OFFSET V2_MMAP_NC_EVENT_OFFSET + 0x00000000001c00ull
+#define V2_MMAP_NC_SEMA_SIZE 0x00000000002000ull
 
 // relative to bar0
 #define V2_MMAP_BAR0_APB_OFFSET                    0x00000030000000ull
@@ -26,7 +31,7 @@
 #define V2_APB_IOFAB_MISC_RAM_RELBASE              0x000000001a0000ull
 #define V2_MMAP_BAR0_APB_MISC_RAM_OFFSET           V2_MMAP_BAR0_APB_OFFSET + V2_APB_IOFAB_RELBASE + V2_APB_IOFAB_MISC_RAM_RELBASE
 
-// relative to sunda address space
+// relative to V2 address space
 #define V2_APB_MISC_RAM_OFFSET 0x000ffff0fa0000ull
 
 #define V2_MMAP_NC_SIZE 0x00000004000000ull
@@ -74,8 +79,9 @@
 #define V2_HBM_1_SIZE 0x00000400000000ull
 #define V2_PCIE_BAR0_TPB_0_OFFSET 0x000000000000000
 #define V2_PCIE_BAR0_TPB_0_SIZE 0x000000004000000
+#define V2_PCIE_BAR0_TOPSP_0_OFFSET 0x00000010000000ull
 #define V2_PCIE_BAR0_APB_OFFSET 0x000000030000000
-#define V2_PCIE_A0_BASE 0x00100000000000ull
+#define V2_PCIE_A0_BASE 0x00100000000000ull // Host memory access
 
 #define V2_TOP_SP_0_BASE 0x000fffd0000000ull
 #define V2_TOP_SP_0_SIZE 0x00000000400000ull

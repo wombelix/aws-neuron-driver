@@ -17,13 +17,17 @@
 #define POST_TIME_TICK_1	0x1
 #define POST_TICK_COUNT		2
 
-#define NMETRIC_TYPE_CONSTANT	0x0
-#define NMETRIC_TYPE_VERSION	0x1
-#define NMETRIC_TYPE_COUNTER	0x2
-#define NMETRIC_TYPE_FW_IO_ERR	0x3
-#define NMETRIC_TYPE_BITMAP		0x4
+#define NMETRIC_TYPE_CONSTANT     0x0
+#define NMETRIC_TYPE_VERSION      0x1
+#define NMETRIC_TYPE_COUNTER      0x2
+#define NMETRIC_TYPE_FW_IO_ERR    0x3
+#define NMETRIC_TYPE_BITMAP       0x4
+#define NMETRIC_TYPE_CONSTANT_U64 0x5
 
 #define NMETRIC_FLAG_VERS_ALLOW_TYPE	(1)
+
+#define NMETRIC_CONST_U64_FLAG_SKIP_ZERO (0x1ull << 0)
+#define NMETRIC_CONST_U64_FLAG_PREFER_FREED (0x1ull << 1)
 
 // Sadly, the 3 #defines below need to be updated when adding new metrics to nmetric_defs
 // Number of metrics of type NMETRIC_TYPE_VERSION
@@ -38,6 +42,9 @@
 // Number of metrics of type NMETRIC_TYPE_BITMAP
 #define NMETRIC_BITMAP_COUNT 1
 
+// Number of metrics of type NMETRIC_CONSTANT_U64
+#define NMETRIC_CONSTANT_U64_COUNT 1
+
 typedef struct {
 	u8 index;	// metric specific index
 	u8 type;	// metric type
@@ -45,16 +52,17 @@ typedef struct {
 	u8 tick;	// tick index on which the metric is posted
 	u8 cw_id;	// target cloudwatch id
 	u8 ds_id;	// source datastore id
-	u8 flags;   // metric specific flags
+	u8 flags;	// metric specific flags
 } nmetric_def_t;
 
 // Create a metric id which is an unique combination of id, type and post time
 #define NMETRIC_DEF(_index, _type, _count, _tick, _cw_id, _ds_id, _flags)	{ .index = _index, .type = _type, .count = _count, .tick = _tick, .cw_id = _cw_id, .ds_id = _ds_id, .flags = _flags }
 
-#define NMETRIC_CONSTANT_DEF(idx, tick, cw_id)			NMETRIC_DEF(idx, NMETRIC_TYPE_CONSTANT, 1, tick, cw_id, 0xFF, 0)
-#define NMETRIC_VERSION_DEF(idx, tick, cw_id, ds_id, flags)		NMETRIC_DEF(idx, NMETRIC_TYPE_VERSION, NEURON_METRICS_VERSION_CAPACITY, tick, cw_id, ds_id, flags)
-#define NMETRIC_COUNTER_DEF(idx, tick, cw_id, ds_id)		NMETRIC_DEF(idx, NMETRIC_TYPE_COUNTER, 1, tick, cw_id, ds_id, 0)
-#define NMETRIC_BITMAP_DEF(idx, tick, cw_id, ds_id)			NMETRIC_DEF(idx, NMETRIC_TYPE_BITMAP, 1, tick, cw_id, ds_id, 0)
+#define NMETRIC_CONSTANT_DEF(idx, tick, cw_id)               NMETRIC_DEF(idx, NMETRIC_TYPE_CONSTANT, 1, tick, cw_id, 0xFF, 0)
+#define NMETRIC_VERSION_DEF(idx, tick, cw_id, ds_id, flags)  NMETRIC_DEF(idx, NMETRIC_TYPE_VERSION, NEURON_METRICS_VERSION_CAPACITY, tick, cw_id, ds_id, flags)
+#define NMETRIC_COUNTER_DEF(idx, tick, cw_id, ds_id)         NMETRIC_DEF(idx, NMETRIC_TYPE_COUNTER, 1, tick, cw_id, ds_id, 0)
+#define NMETRIC_BITMAP_DEF(idx, tick, cw_id, ds_id)          NMETRIC_DEF(idx, NMETRIC_TYPE_BITMAP, 1, tick, cw_id, ds_id, 0)
+#define NMETRIC_CONSTANT_U64(idx, tick, cw_id, ds_id, flags) NMETRIC_DEF(idx, NMETRIC_TYPE_CONSTANT_U64, 1, tick, cw_id, ds_id, flags)
 
 struct nmetric_versions {
 	u32 version_usage_count[NEURON_METRICS_VERSION_MAX_CAPACITY];
@@ -71,6 +79,7 @@ struct neuron_metrics {
 	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
 	u64 ds_freed_feature_bitmap_buf; // stores unsent feature bitmap metrics about to be freed from datastore
 	u64 ds_freed_metrics_buf[NMETRIC_COUNTER_COUNT]; // stores unsent metrics about to be freed from datastore
+	u64 ds_freed_const_u64_buf[NMETRIC_CONSTANT_U64_COUNT]; // stores unsent constant u64 values about to be freed from datastore
 	struct nmetric_aggregation_thread neuron_aggregation; // aggregation thread that periodically aggregates and posts metrics
 	u8 posting_buffer[NEURON_METRICS_MAX_POSTING_BUF_SIZE + 1];
 };

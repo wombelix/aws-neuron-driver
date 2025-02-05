@@ -32,6 +32,8 @@
 #include "neuron_reset.h"
 #include "neuron_sysfs_metrics.h"
 #include "neuron_dmabuf.h"
+#include "neuron_dhal.h"
+#include "neuron_nq.h"
 
 #include "v1/address_map.h"
 #include "v2/address_map.h"
@@ -290,7 +292,7 @@ static int ncdev_dma_quiesce_queues(struct neuron_device *nd, void *param)
 	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_quiesce_queues*)param, sizeof(arg));
 	if (ret)
 		return ret;
-	return ndmar_quiesce_queues(nd, arg.nc_id, arg.engine_count, arg.queue_mask);
+	return ndhal->ndmar_funcs.ndmar_quiesce_queues(nd, arg.nc_id, arg.engine_count, arg.queue_mask);
 }
 
 static int ncdev_dma_descriptor_copyout(struct neuron_device *nd, void *param)
@@ -489,6 +491,38 @@ static int ncdev_mem_get_extended_info(void *param)
 	local.pid = mc->pid;
 
 	return copy_to_user(param, &local, sizeof(local));
+}
+
+/**
+ * ncdev_mem_get_mc_mmap_info()
+ *
+ *   for a given address return the mc info required to mmap the address
+ */
+static int ncdev_mem_get_mc_mmap_info(struct neuron_device *nd, unsigned int cmd, void*param)
+{
+	int ret;
+	struct neuron_ioctl_mem_get_mc_mmap_info arg;
+	struct mem_chunk *mc;
+
+	// compatibility check 
+	if (_IOC_SIZE(cmd) != sizeof(arg)) {
+		return -EINVAL;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	mc = nmmap_get_mc_from_pa(nd, arg.pa);
+
+	if (mc == NULL) {
+		return -EINVAL;
+	}
+
+	arg.mmap_offset = mc->pa;
+	arg.size = mc->size;
+
+	return copy_to_user(param, &arg, sizeof(arg));
 }
 
 static int ncdev_get_dmabuf_fd(void *param)
@@ -712,7 +746,7 @@ int ncdev_program_engine(struct neuron_device *nd, void *param)
 	if (ret)
 		goto error;
 
-	ret = ndma_memcpy(nd, 0, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
+	ret = ndma_memcpy(nd, 0, virt_to_phys(src_mc->va) | ndhal->address_map.pci_host_base,
 			  arg.dst + arg.offset, arg.size);
 
     if (ret) {
@@ -748,7 +782,7 @@ int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
 	if (ret)
 		goto error;
 
-	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd), arg.dst + arg.offset, arg.size);
+	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | ndhal->address_map.pci_host_base, arg.dst + arg.offset, arg.size);
 
 	if (ret) {
 		pr_err("engine programming dma failed. nc_id: %d addr: %llu\n",arg.nc_id,  arg.dst + arg.offset);
@@ -1039,7 +1073,7 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 			/*
 			dma_addr_t dst_addr = reg_addresses[0] - (u64)nd->npdev.bar0;
 
-			ret = ndma_memcpy(nd, 0, virt_to_phys(data) | PCI_HOST_BASE(nd), dst_addr, data_size);
+			ret = ndma_memcpy(nd, 0, virt_to_phys(data) | ndhal->address_map.pci_host_base, dst_addr, data_size);
 			if (ret)
 				return ret;
 			*/
@@ -1263,6 +1297,13 @@ static long ncdev_device_info(struct neuron_device *nd, void *param)
 	}
 	mutex_unlock(&ncdev_discovery_lock);
 
+	// sanity check 
+	//
+	if (connected_device_count > NEURON_IOCTL_MAX_CONNECTED_DEVICES) {
+		pr_err("Connected device count exceeded maximum for device %d", nd->device_index);
+		return -EINVAL;
+	}
+
 	for (i = 0; i < connected_device_count; i++) {
 		result.connected_devices[i] = connected_devices[i];
 	}
@@ -1304,7 +1345,8 @@ static long ncdev_driver_info(unsigned int cmd, void *param)
 			driver_info.revision = narch_get_revision();
 			driver_info.version = NEURON_DEVICE_DRIVER_INFO_VERSION0;
 			driver_info.size = sizeof(driver_info);
-			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA;
+			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA |
+										 NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT | NEURON_DRIVER_FEATURE_BIG_CORE_MAPS;
 
 			return copy_to_user(param, &driver_info, sizeof(driver_info));
 		}
@@ -1416,7 +1458,7 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       false, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+		ret = ndhal->topsp_funcs.ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 false, &mc, &arg.mmap_offset);
 	} else {
@@ -1444,7 +1486,7 @@ static long ncdev_nc_nq_init_with_realloc_v2(struct neuron_device *nd, void *par
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+		ret = ndhal->topsp_funcs.ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else {
@@ -1538,11 +1580,18 @@ static long ncdev_crwl_writer_downgrade(struct neuron_device *nd, void *param)
 	return ncrwl_writer_downgrade(nd, arg.nc_id, arg.uuid);
 }
 
-static long ncdev_crwl_nc_range_mark(struct file *filep, void *param)
+/**
+ * ncdev_crwl_nc_range_mark()
+ *
+ *   attempt to acquire a number of consecutive cores
+ *
+ */
+static long ncdev_crwl_nc_range_mark(struct file *filep, unsigned int cmd, void *param)
 {
 	struct ncdev *ncd;
 	struct neuron_device *nd;
-	struct neuron_ioctl_crwl_nc_map arg;
+	struct neuron_ioctl_crwl_nc_map_ext arg = {0};
+	unsigned int size = _IOC_SIZE(cmd);
 	int ret;
 	u32 offset = 0;
 
@@ -1555,30 +1604,51 @@ static long ncdev_crwl_nc_range_mark(struct file *filep, void *param)
 		return -EINVAL;
 	}
 
-	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	// verify the bitmap is large enough to hold all cores (at compile time)
+	static_assert(sizeof(arg.bitmap) >= ((MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE)/8), "mismatch between neuron_ioctl_crwl_nc_map and max core count");
+
+	// vet/correct arg size.
+	//
+	if (size == sizeof(struct neuron_ioctl_crwl_nc_map *)) {
+		size = sizeof(struct neuron_ioctl_crwl_nc_map);
+	} else if (size != sizeof(struct neuron_ioctl_crwl_nc_map_ext)) {
+		return -EINVAL;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, param, size);
 	if (ret)
 		return ret;
 
-	offset = NC_PER_DEVICE(nd) * nd->device_index;
+	// clear bitmap before call
+	memset(arg.bitmap, 0, sizeof(arg.bitmap));
+
+	offset = ndhal->address_map.nc_per_device * nd->device_index;
 	ret = ncrwl_nc_range_mark(arg.nc_count, arg.start_nc_index + offset, arg.end_nc_index + offset,
-				  &arg.max_nc_available, &arg.bitmap);
-	arg.bitmap >>= offset;
+				  &arg.max_nc_available, arg.bitmap);
+
+	bitmap_shift_right(arg.bitmap, arg.bitmap, offset, sizeof(arg.bitmap)*8); 
 	if (ret) {
-		int unused = copy_to_user(param, &arg, sizeof(arg));
+		int unused = copy_to_user(param, &arg, size);
 		unused = unused;
 		// note that ret indicates whether we marked the range
 		// successfully
 		return ret;
 	}
 
-	return copy_to_user(param, &arg, sizeof(arg));
+	return copy_to_user(param, &arg, size);
 }
 
-static long ncdev_crwl_nc_range_unmark(struct file *filep, void *param)
+/**
+ * ncdev_crwl_nc_range_unmark()
+ *
+ *    free a set of cores acquired by this process
+ */
+static long ncdev_crwl_nc_range_unmark(struct file *filep, unsigned int cmd, void *param)
 {
 	struct ncdev *ncd;
 	struct neuron_device *nd;
-	struct neuron_ioctl_crwl_nc_map arg;
+	struct neuron_ioctl_crwl_nc_map_ext arg = {0};
+	unsigned int size = _IOC_SIZE(cmd);
 	int ret;
 	u32 offset = 0;
 
@@ -1591,12 +1661,21 @@ static long ncdev_crwl_nc_range_unmark(struct file *filep, void *param)
 		return -EINVAL;
 	}
 
-	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	// vet/correct arg size.
+	//
+	if (size == sizeof(struct neuron_ioctl_crwl_nc_map *)) {
+		size = sizeof(struct neuron_ioctl_crwl_nc_map);
+	} else if (size != sizeof(struct neuron_ioctl_crwl_nc_map_ext)) {
+		return -EINVAL;
+	}
+
+	ret = neuron_copy_from_user(__func__, &arg, param, size);
 	if (ret)
 		return ret;
 
-	offset = NC_PER_DEVICE(nd) * nd->device_index;
-	ncrwl_nc_range_unmark(arg.bitmap << offset);
+	offset = ndhal->address_map.nc_per_device * nd->device_index;
+	bitmap_shift_left(arg.bitmap, arg.bitmap, offset, sizeof(arg.bitmap)*8); 
+	ncrwl_nc_range_unmark(arg.bitmap);
 	return 0;
 }
 
@@ -1623,6 +1702,36 @@ static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
 		return ret;
 
 	arg.started_count = nd->nc_model_started_count[arg.nc_id];
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+/**
+ * ncdev_resource_mmap_info()
+ *
+ *   retrieve mmap offset and size for a resource.   Resources are
+ *   specified by an abstraction of a block type, index (id) and 
+ *   resource type that the caller wants to map.
+ *
+ */
+static long ncdev_resource_mmap_info(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_resource_mmap_info  arg;
+	u64 offset; 
+	u64 size;
+	int ret;
+
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	ret = nmap_dm_special_resource_get( arg.block, arg.block_id,  arg.resource, &offset, &size);
+
+	if (ret)
+		return ret;
+
+	arg.offset = offset;
+	arg.size = size;
+
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
@@ -1670,10 +1779,10 @@ static long ncdev_compatible_version(void *param)
 }
 
 inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
-	if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
-		return ncdev_crwl_nc_range_mark(filep, (void *)param);
-	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) {
-		return ncdev_crwl_nc_range_unmark(filep, (void *)param);
+	if ((cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) || (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK_EXT0)) {
+		return ncdev_crwl_nc_range_mark(filep, cmd, (void *)param);
+	} else if ((cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) || (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK_EXT0)) {
+		return ncdev_crwl_nc_range_unmark(filep, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_COMPATIBLE_VERSION) {
 		return ncdev_compatible_version((void*)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_BASIC_INFO) {
@@ -1687,7 +1796,7 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 		return ncdev_get_dmabuf_fd((void *)param);
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_DRIVER_INFO_GET)) {
 		return ncdev_driver_info(cmd, (void*)param);
-	}
+	} 
 
 	pr_err("invalid misc IOCTL %d\n", cmd);
 	return -EINVAL;
@@ -1851,6 +1960,10 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_crwl_writer_downgrade(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_BDF) {
 		return ncdev_device_bdf(nd, (void*)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_MC_GET_INFO)) {
+		return ncdev_mem_get_mc_mmap_info(nd, cmd, (void*)param);
+	} else if (cmd == NEURON_IOCTL_RESOURCE_MMAP_INFO) {
+		return ncdev_resource_mmap_info(nd, (void *)param);
 	}
 	// B/W compatibility
 	return ncdev_misc_ioctl(filep, cmd, param);
@@ -1901,9 +2014,12 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 
 static inline int ncdev_misc_flush(struct file *filep)
 {
-       // Clear all NCs used by the closing process
-       ncrwl_nc_range_unmark(~0);
-       return 0;
+	struct neuron_ioctl_crwl_nc_map_ext nc_map;
+
+	// Clear all NCs used by the closing process
+	memset( (void *)nc_map.bitmap, 0xff, sizeof(nc_map.bitmap));
+	ncrwl_nc_range_unmark(nc_map.bitmap);
+	return 0;
 }
 
 static int ncdev_flush(struct file *filep, fl_owner_t id)
@@ -2015,8 +2131,7 @@ static DEVICE_ATTR(reset, S_IWUSR | S_IRUSR, device_reset_show, driver_reset_sto
 static ssize_t neuron_core_count_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret = 0;
-	int neuron_core_count = (narch_get_arch() == NEURON_ARCH_V1 ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE);
-	ret = sprintf(buf, "%d", neuron_core_count);
+	ret = sprintf(buf, "%d", ndhal->address_map.nc_per_device);
 	return ret;
 }
 

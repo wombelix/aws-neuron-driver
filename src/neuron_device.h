@@ -7,7 +7,7 @@
 #define NEURON_DEVICE_H
 
 // Maximum neuron devices supported on a system.
-#define MAX_NEURON_DEVICE_COUNT 16
+#define MAX_NEURON_DEVICE_COUNT 64
 #define MAX_NC_PER_DEVICE 4 //for v1 4 and v2 2
 
 #include "neuron_arch.h"
@@ -25,6 +25,10 @@
 #include "v1/address_map.h"
 #include "v2/address_map.h"
 
+#ifndef static_assert
+#define static_assert(expr, ...)
+#endif
+
 /* Vendor / Device ID for all devices supported by the driver */
 #define AMZN_VENDOR_ID  0x1D0F
 #define INF1_DEVICE_ID0 0x7064
@@ -33,9 +37,6 @@
 #define INF1_DEVICE_ID3 0x7067
 #define INF2_DEVICE_ID0 0x7264
 #define TRN1_DEVICE_ID0 0x7164
-
-#define NC_PER_DEVICE(nd)                                                                          \
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE)
 
 // Global host memory buf size used for memset the device memory
 #define MEMSET_HOST_BUF_SIZE MAX_DMA_DESC_SIZE // guessed optimal DMA transfer and PCIe TLP size.
@@ -103,8 +104,6 @@ struct neuron_device {
 
 	struct nsysfsmetric_metrics sysfs_metrics;
 };
-
-#define PCI_HOST_BASE(nd) (narch_get_arch() == NEURON_ARCH_V2 ? V2_PCIE_A0_BASE : PCIEX8_0_BASE)
 
 /**
  * neuron_pci_get_device() - Returns devices associated with given index.

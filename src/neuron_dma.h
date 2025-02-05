@@ -14,6 +14,22 @@
 struct neuron_device;
 
 /**
+ * ndmar_acquire_engine() - acquire the DMA engine
+ * 
+ * @param nd: neuron device
+ * @param eng_id: DMA engine ID
+ * @return struct ndma_eng*: the DMA engine to be acquired
+ */
+struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id);
+
+/**
+ * ndmar_release_engine() - release the DMA engine
+ * 
+ * @param eng: the DMA engine to be released
+ */
+void ndmar_release_engine(struct ndma_eng *eng);
+
+/**
  * ndma_memcpy_mc() - Copy data from a memory to another memory chunk.
  *
  * @nd: neuron device which should be used for dma

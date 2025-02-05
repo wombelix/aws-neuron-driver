@@ -6,11 +6,34 @@
 #ifndef NEURON_TOPSP_H
 #define NEURON_TOPSP_H
 
+
+/**
+ * ts_nq_get_nqid() - get the notification queue index
+ * 
+ * @nd: neuron device
+ * @index: notification engine index in the core
+ * @nq_type: type of the notification queue
+ * @return u8: notification queue index
+ */
+u8 ts_nq_get_nqid(struct neuron_device *nd, u8 index, u32 nq_type);
+
+/**
+ * ts_nq_set_hwaddr() - set physical address of the notification queue
+ * 
+ * @nd: neuron device
+ * @ts_id: TopSp Id
+ * @index: notification engine index in the core
+ * @nq_type: type of the notification queue
+ * @size: size of queue in bytes
+ * @queue_pa: physical address of the notification queue
+ */
+void ts_nq_set_hwaddr(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_type, u32 size, u64 queue_pa);
+
 /**
  * ts_nq_init() - Initialize notification queue for TopSp.
  *
  * @nd: neuron device
- * @ts_id: ToSp Id
+ * @ts_id: TopSp Id
  * @eng_index: notification engine index in the core
  * @nq_type: type of the notification queue
  * @size: size of queue in bytes

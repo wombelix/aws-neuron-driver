@@ -25,6 +25,7 @@
 #include "v2/address_map.h"
 #include "neuron_dma.h"
 #include "neuron_dhal.h"
+#include "neuron_nq.h"
 
 
 static struct pci_device_id neuron_pci_dev_ids[] = {
@@ -247,12 +248,26 @@ static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 // for V2 rename Neuron devices for better customer experience.
 // https://quip-amazon.com/rRRZAGmIdAaW/TRN1-Discovery
 // map routing id to user id:
-const u32 v2_routing_id_to_user_id[MAX_NEURON_DEVICE_COUNT] = {
+//const u32 v2_routing_id_to_user_id[MAX_NEURON_DEVICE_COUNT] = { FIXME NEED NEW MAPPING
+const u32 v2_routing_id_to_user_id[] = {
 	0,   4,  1,  5,
 	3,   7,  2,  6,
 	12,  8, 13,  9,
 	15, 11, 14, 10 };
 
+
+#define V2_ROUTING_ID_TBL_SZ  (sizeof(v2_routing_id_to_user_id) / sizeof(v2_routing_id_to_user_id[0]))
+
+/**
+ * neuron_pci_v2_routing_id_to_user_id()
+ *
+ */
+static u32 neuron_pci_v2_routing_id_to_user_id( u32 routing_id)
+{
+	u32 user_id_base = v2_routing_id_to_user_id[ routing_id % V2_ROUTING_ID_TBL_SZ];
+
+	return user_id_base  + (routing_id / V2_ROUTING_ID_TBL_SZ) * V2_ROUTING_ID_TBL_SZ;
+}
 
 static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
@@ -382,7 +397,7 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 		// TODO - TRN1 and INF2 mappings are different - likely all of this and the INF1 should be encapsulated.
 		if (nd->pdev->device == TRN1_DEVICE_ID0)
-			nd->device_index = v2_routing_id_to_user_id[routing_id];
+			nd->device_index = neuron_pci_v2_routing_id_to_user_id( routing_id);
 		else
 			nd->device_index = routing_id;
 
@@ -447,10 +462,10 @@ fail_bar0_resource:
 fail_bar0_map:
 	pci_disable_device(dev);
 fail_dhal_init:
-	neuron_dhal_free();
 fail_enable:
 	kfree(nd);
 fail_alloc_nd_mem:
+	pci_set_drvdata(dev, NULL);
 	return ret;
 }
 
@@ -514,6 +529,6 @@ int neuron_pci_module_init(void)
 
 void neuron_pci_module_exit(void)
 {
-	neuron_dhal_free();
 	pci_unregister_driver(&neuron_pci_driver);
+	neuron_dhal_free();
 }

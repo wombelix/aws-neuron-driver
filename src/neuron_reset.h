@@ -10,17 +10,20 @@
 #include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/kthread.h>
+#include <linux/module.h>
 
-#include "neuron_device.h"
+struct neuron_device;
+
+#define NR_RESET_RETRY_COUNT 5
+#define NEURON_RESET_REQUEST_ALL 0xffffffff // special reset request id for internal driver resets
+
+extern int no_reset;
 
 enum {
 	V2_FW_IO_REG_FW_TRIGGER_OFFSET = 0x800,
 	V2_FW_IO_REG_FW_STATUS_OFFSET = 0x808,
 	V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK = 0x8
 };
-
-// special reset request id for internal driver resets
-#define NEURON_RESET_REQUEST_ALL 0xffffffff
 
 enum neuron_reset_state {
 	NEURON_RESET_STATE_STARTED = 1, // Reset is initiated
@@ -104,5 +107,17 @@ int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check);
  * 
  */
 bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd);
+
+/**
+ * nr_initiate_reset_via_fw() - Initiate a reset request to pacific and retry until pacific respond
+ * 
+ */
+int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map);
+
+/**
+ * nr_msleep_stoppable() - Sleep until msec or reset thread is stopped
+ * 
+ */
+int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec);
 
 #endif

@@ -3,11 +3,11 @@
  * Copyright 2020, Amazon.com, Inc. or its affiliates. All Rights Reserved
  */
 
-/** Each neuron device has N number of neuron cores. (inf1 has 4 neuron cores).
+/** Each neuron device has N number of neuron cores. (v1 has 4 neuron cores; v2 has 2 neuron cores).
  *
  * Engines:
  * -------
- * Neuron Core has multiple engines(inf1 has 3) which can do different types of computations.
+ * Neuron Core has multiple engines(Tensor, Scalar, GpSimd, Vector, and/or Sync) which can do different types of computations.
  * Each engine's instruction stream is feed through DMA.
  *
  * Semaphores and events:
@@ -44,61 +44,21 @@
 
 #include "neuron_mempool.h"
 #include "neuron_device.h"
-#include "neuron_nq.h"
+#include "neuron_dhal.h"
 
 #ifdef CONFIG_FAULT_INJECTION
 DECLARE_FAULT_ATTR(neuron_fail_nc_mmap);
 #endif
 
-#define NC_SEMAPHORE_SIZE 4
-#define NC_EVENT_SIZE 4
-
-#define MMAP_P_OFFSET(nd)                                                                          		\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_P_OFFSET : V2_MMAP_P_OFFSET)
-#define MMAP_NC_EVENT_OFFSET(nd)                                                                   		\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_EVENT_OFFSET : V2_MMAP_NC_EVENT_OFFSET)
-#define MMAP_NC_SEMA_READ_OFFSET(nd)                                                               		\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_READ_OFFSET : V2_MMAP_NC_SEMA_READ_OFFSET)
-#define MMAP_NC_SEMA_SET_OFFSET(nd)                                                                	\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_SET_OFFSET : V2_MMAP_NC_SEMA_SET_OFFSET)
-#define MMAP_NC_SEMA_INCR_OFFSET(nd)                                                               	\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_INCR_OFFSET : V2_MMAP_NC_SEMA_INCR_OFFSET)
-#define MMAP_NC_SEMA_DECR_OFFSET(nd)                                                               	\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_DECR_OFFSET : V2_MMAP_NC_SEMA_DECR_OFFSET)
-
-#define MMAP_NC_SIZE(nd)                                                                           	\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SIZE : V2_MMAP_NC_SIZE)
-
-#define SEMAPHORE_COUNT(nd)                                                                        	\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_SEMAPHORE_COUNT : V2_SEMAPHORE_COUNT)
-#define EVENTS_COUNT(nd)                                                                           	\
-	(narch_get_arch() == NEURON_ARCH_V1 ? V1_EVENTS_COUNT : V2_EVENTS_COUNT)
-
-static u64 nc_get_axi_offset(struct neuron_device *nd, int nc_index)
-{
-	return MMAP_P_OFFSET(nd) + (nc_index * MMAP_NC_SIZE(nd));
-}
-
-static void *nc_get_semaphore_base(struct neuron_device *nd, u8 nc_id)
-{
-	if (narch_get_arch() == NEURON_ARCH_V1)
-		return nd->npdev.bar2 + nc_get_axi_offset(nd, nc_id);
-	else if (narch_get_arch() == NEURON_ARCH_V2)
-		return nd->npdev.bar0 + V2_PCIE_BAR0_TPB_0_OFFSET +
-		       (V2_PCIE_BAR0_TPB_0_SIZE * nc_id);
-	else
-		return NULL;
-}
-
 int nc_semaphore_read(struct neuron_device *nd, u8 nc_id, u16 semaphore_index, u32 *result)
 {
 	void *addr;
 
-	if (semaphore_index > SEMAPHORE_COUNT(nd))
+	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
 		return -EINVAL;
 
-	addr = nc_get_semaphore_base(nd, nc_id);
-	addr += MMAP_NC_SEMA_READ_OFFSET(nd) + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->nc_funcs.mmap_nc_sema_read_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	return reg_read32_array((void **)&addr, result, 1);
 }
 
@@ -106,11 +66,11 @@ int nc_semaphore_write(struct neuron_device *nd, u8 nc_id, u16 semaphore_index, 
 {
 	void *addr;
 
-	if (semaphore_index > SEMAPHORE_COUNT(nd))
+	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
 		return -EINVAL;
 
-	addr = nc_get_semaphore_base(nd, nc_id);
-	addr += MMAP_NC_SEMA_SET_OFFSET(nd) + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->nc_funcs.mmap_nc_sema_set_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	writel(value, addr);
 	return 0;
 }
@@ -119,11 +79,11 @@ int nc_semaphore_increment(struct neuron_device *nd, u8 nc_id, u16 semaphore_ind
 {
 	void *addr;
 
-	if (semaphore_index > SEMAPHORE_COUNT(nd))
+	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
 		return -EINVAL;
 
-	addr = nc_get_semaphore_base(nd, nc_id);
-	addr += MMAP_NC_SEMA_INCR_OFFSET(nd) + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->nc_funcs.mmap_nc_sema_incr_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	writel(value, addr);
 	return 0;
 }
@@ -132,36 +92,23 @@ int nc_semaphore_decrement(struct neuron_device *nd, u8 nc_id, u16 semaphore_ind
 {
 	void *addr;
 
-	if (semaphore_index > SEMAPHORE_COUNT(nd))
+	if (semaphore_index >= ndhal->nc_funcs.semaphore_count)
 		return -EINVAL;
 
-	addr = nc_get_semaphore_base(nd, nc_id);
-	addr += MMAP_NC_SEMA_DECR_OFFSET(nd) + (semaphore_index * NC_SEMAPHORE_SIZE);
+	addr = ndhal->nc_funcs.nc_get_semaphore_base(nd, nc_id);
+	addr += ndhal->nc_funcs.mmap_nc_sema_decr_offset + (semaphore_index * NC_SEMAPHORE_SIZE);
 	writel(value, addr);
 	return 0;
-}
-
-static void *nc_get_event_addr(struct neuron_device *nd, u8 nc_id, u16 event_index)
-{
-	void *base;
-	if (narch_get_arch() == NEURON_ARCH_V1)
-		base = nd->npdev.bar2 + nc_get_axi_offset(nd, nc_id) + MMAP_NC_EVENT_OFFSET(nd);
-	else if (narch_get_arch() == NEURON_ARCH_V2)
-		base = nd->npdev.bar0 + V2_PCIE_BAR0_TPB_0_OFFSET +
-		       (V2_PCIE_BAR0_TPB_0_SIZE * nc_id) + MMAP_NC_EVENT_OFFSET(nd);
-	else
-		return NULL;
-	return (base + (event_index * NC_EVENT_SIZE));
 }
 
 int nc_event_get(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 *result)
 {
 	void *addr;
 
-	if (event_index > EVENTS_COUNT(nd))
+	if (event_index > ndhal->nc_funcs.event_count)
 		return -EINVAL;
 
-	addr = nc_get_event_addr(nd, nc_id, event_index);
+	addr = ndhal->nc_funcs.nc_get_event_addr(nd, nc_id, event_index);
 	return reg_read32_array(&addr, result, 1);
 }
 
@@ -169,11 +116,10 @@ int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 {
 	u32 *addr;
 
-	if (event_index > EVENTS_COUNT(nd))
+	if (event_index > ndhal->nc_funcs.event_count)
 		return -EINVAL;
 
-	addr = nc_get_event_addr(nd, nc_id, event_index);
+	addr = ndhal->nc_funcs.nc_get_event_addr(nd, nc_id, event_index);
 	writel(value, addr);
 	return 0;
 }
-

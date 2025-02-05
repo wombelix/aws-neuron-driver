@@ -39,6 +39,14 @@ enum { FW_IO_RESET_TYPE_DEVICE = 1,
 // offsets in MISC RAM for FWIO
 enum {
 	FW_IO_REG_DEVICE_ID_OFFSET = 0x24,
+
+	// MISC RAM slots for ECC error counters for V2
+	//   - ECC counters for V2 which are currently being placed in MISC RAM register 16, 17 and 18 by Pacific. 
+	//   - The upper 16 bits of each register represent corrected errors, and the lower 16 bits represent uncorrected errors.
+	FW_IO_REG_SRAM_ECC_OFFSET = 0x40, // 16 * 4 bytes
+	FW_IO_REG_HBM0_ECC_OFFSET = 0x44, // 17 * 4 bytes
+	FW_IO_REG_HBM1_ECC_OFFSET = 0x48, // 18 * 4 bytes
+
 	FW_IO_REG_METRIC_OFFSET = 0x100, // 0x100 to 0x17F, 128 bytes
 	FW_IO_REG_RESET_TPB_MAP_OFFSET = 0x1d8,
 	FW_IO_REG_RESET_OFFSET = 0x1ec,
@@ -188,5 +196,16 @@ void fw_io_device_id_write(void *bar0, u32 device_id);
  * @return  fw io error count on success.
  */
 u64 fw_io_get_err_count(struct fw_io_ctx *ctx);
+
+/**
+ * fw_io_ecc_read() - Read ECC errors
+ * 
+ * @param bar: from bar
+ * @param ecc_offset: one of FW_IO_REG_SRAM_ECC_OFFSET, FW_IO_REG_HBM0_ECC_OFFSET, and FW_IO_REG_HBM1_ECC_OFFSET
+ * @param ecc_err_count: output ecc error count
+ * 
+ * @return 0 on success
+ */
+int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count);
 
 #endif
