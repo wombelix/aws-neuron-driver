@@ -2,6 +2,7 @@
 /*
  * Copyright 2020, Amazon.com, Inc. or its affiliates. All Rights Reserved
  */
+
 /** Exposes device node interface(/dev/neuron0) for each device.
  *  see neuron_ioctl.h for all the operations that can be done this node.
  */
@@ -18,13 +19,19 @@
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
 #include "neuron_core.h"
+#include "neuron_mmap.h"
+#include "neuron_crwl.h"
 #include "neuron_dma.h"
 #include "neuron_mempool.h"
+#include "neuron_topsp.h"
 #include "neuron_trace.h"
+#include "neuron_arch.h"
+#include "neuron_reset.h"
 
 #include "v1/address_map.h"
+#include "v2/address_map.h"
+#include "neuron_fw_io.h"
 #include "v1/fw_io.h"
-
 static dev_t neuron_dev;
 static int major;
 static struct class *neuron_dev_class;
@@ -49,18 +56,12 @@ static u64 ncdev_mem_chunk_to_mem_handle(struct mem_chunk *mc)
 
 static struct mem_chunk *ncdev_mem_handle_to_mem_chunk(u64 mh)
 {
-	return (struct mem_chunk *)mh;
-}
-
-static int ncdev_dma_engine_init(struct neuron_device *nd, void *param)
-{
-	int ret;
-	struct neuron_ioctl_dma_eng_init arg;
-	ret = copy_from_user(&arg, (struct neuron_ioctl_dma_eng_init *)param, sizeof(arg));
-	if (ret)
-		return ret;
-
-	return ndmar_eng_init(nd, arg.eng_id);
+	struct mem_chunk *mc = (struct mem_chunk *)mh;
+	if (!mc || mc->magic != MEMCHUNK_MAGIC) {
+		pr_err("invalid memory handle %llx\n", mh);
+		return NULL;
+	}
+	return mc;
 }
 
 static int ncdev_dma_engine_set_state(struct neuron_device *nd, void *param)
@@ -105,6 +106,10 @@ static int ncdev_dma_queue_init(struct neuron_device *nd, void *param)
 		rxc_mc = ncdev_mem_handle_to_mem_chunk(arg.rxc_handle);
 	else
 		rxc_mc = NULL;
+	if (!rx_mc || !tx_mc)
+		return -EINVAL;
+	if (arg.rxc_handle && !rxc_mc)
+		return -EINVAL;
 	ret = ndmar_queue_init(nd, arg.eng_id, arg.qid, arg.tx_desc_count, arg.rx_desc_count, tx_mc,
 			       rx_mc, rxc_mc, arg.axi_port);
 	return ret;
@@ -131,7 +136,7 @@ static int ncdev_dma_copy_descriptors(struct neuron_device *nd, void *param)
 	}
 
 	remaining = arg.num_descs * sizeof(union udma_desc);
-	ret = mc_alloc(&nd->mpset, &src_mc, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0, mc->nc_id);
+	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0, mc->nc_id, &src_mc);
 	if (ret) {
 		ret = -ENOMEM;
 		goto out;
@@ -282,8 +287,8 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 		location = MEM_LOC_HOST;
 	else
 		location = MEM_LOC_DEVICE;
-	ret = mc_alloc(&nd->mpset, &mc, mem_alloc_arg.size, location, mem_alloc_arg.dram_channel,
-		       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id);
+	ret = mc_alloc(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, location, mem_alloc_arg.dram_channel,
+		       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, &mc);
 	if (ret)
 		return ret;
 
@@ -298,11 +303,10 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 	return 0;
 }
 
-static int ncdev_mem_get_pa(void *param)
+static int ncdev_mem_get_pa_deprecated(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_mem_get_pa mem_get_pa_arg;
 	struct mem_chunk *mc;
-	u64 pa;
 	int ret;
 
 	ret = copy_from_user(&mem_get_pa_arg, (struct neuron_ioctl_mem_get_pa *)param,
@@ -311,18 +315,16 @@ static int ncdev_mem_get_pa(void *param)
 		return ret;
 
 	mc = ncdev_mem_handle_to_mem_chunk(mem_get_pa_arg.mem_handle);
-	if (mc->mem_location == MEM_LOC_HOST)
-		pa = mc->pa | PCIEX8_0_BASE;
-	else
-		pa = mc->pa;
-	return copy_to_user(mem_get_pa_arg.pa, &pa, sizeof(u64));
+	if (!mc)
+		return -EINVAL;
+	return copy_to_user(mem_get_pa_arg.pa, &mc->pa, sizeof(u64));
 }
 
-static int ncdev_mem_get_info(void *param)
+static int ncdev_mem_get_info_deprecated(void *param)
 {
 	struct neuron_ioctl_mem_get_info arg;
 	struct mem_chunk *mc;
-	u64 pa, mmap_offset;
+	u64 mmap_offset;
 	int ret;
 
 	ret = copy_from_user(&arg, param, sizeof(arg));
@@ -330,21 +332,47 @@ static int ncdev_mem_get_info(void *param)
 		return ret;
 
 	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
-	if (mc->mem_location == MEM_LOC_HOST)
-		pa = mc->pa | PCIEX8_0_BASE;
-	else
-		pa = mc->pa;
-
-	ret = copy_to_user(arg.pa, &pa, sizeof(pa));
+	if (!mc)
+		return -EINVAL;
+	ret = copy_to_user(arg.pa, &mc->pa, sizeof(u64));
 	if (ret)
 		return ret;
 
 	if (arg.mmap_offset) {
-		mmap_offset = nc_hm_mmap_offset(mc);
+		mmap_offset = nmmap_offset(mc);
 		ret = copy_to_user(arg.mmap_offset, &mmap_offset, sizeof(mmap_offset));
 	}
 
 	return ret;
+}
+
+static int ncdev_mem_get_extended_info(void *param)
+{
+	struct neuron_ioctl_mem_get_extended_info arg, local;
+	struct mem_chunk *mc;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
+	if (!mc)
+		return EINVAL;
+
+	if (mc->mem_location == MEM_LOC_HOST) {
+		local.pa = mc->pa | PCIEX8_0_BASE;
+		local.host_memory = true;
+	} else {
+		local.pa = mc->pa;
+		local.host_memory = false;
+	}
+	local.size = mc->size;
+	local.mmap_offset = nmmap_offset(mc);
+	local.mem_handle = (u64)mc;
+	local.pid = mc->pid;
+
+	return copy_to_user(param, &local, sizeof(local));
 }
 
 static int ncdev_mem_free(struct neuron_device *nd, void *param)
@@ -358,6 +386,8 @@ static int ncdev_mem_free(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 	mc = ncdev_mem_handle_to_mem_chunk(mem_free_arg.mem_handle);
+	if (!mc)
+		return -EINVAL;
 	trace_ioctl_mem_alloc(nd, mc);
 	mc_free(&mc);
 	return 0;
@@ -373,6 +403,8 @@ static int ncdev_memset(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
+	if (!mc)
+		return -EINVAL;
 	// check access is within the range.
 	if (arg.offset + arg.size > mc->size) {
 		pr_err("offset+size is too large for mem handle\n");
@@ -393,6 +425,9 @@ static int ncdev_mem_copy(struct neuron_device *nd, void *param)
 		return ret;
 	src_mc = ncdev_mem_handle_to_mem_chunk(arg.src_mem_handle);
 	dst_mc = ncdev_mem_handle_to_mem_chunk(arg.dst_mem_handle);
+	if (!src_mc || !dst_mc)
+		return -EINVAL;
+
 	// check access is within the range.
 	if (arg.src_offset + arg.size > src_mc->size) {
 		pr_err("src offset+size is too large for mem handle\n");
@@ -412,6 +447,74 @@ static int ncdev_mem_copy(struct neuron_device *nd, void *param)
 	return 0;
 }
 
+static int ncdev_verify_mem_region(struct neuron_device *nd, u64 addr)
+{
+	struct mem_region {
+		u64 start;
+		u64 size;
+	};
+	struct mem_region v1_mem_regions[] = {
+		{ V1_MMAP_TPB_OFFSET, V1_MMAP_NC_SIZE * V1_NC_PER_DEVICE },
+	};
+	struct mem_region v2_mem_regions[] = {
+		{ V2_MMAP_TPB_OFFSET, V2_MMAP_TPB_SIZE * V2_MMAP_TPB_COUNT },
+		{ V2_TOP_SP_0_BASE, V2_TOP_SP_0_SIZE * V2_TS_PER_DEVICE },
+	};
+	struct mem_region *mrs;
+	int mrs_n;
+	int i;
+
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		mrs = v1_mem_regions;
+		mrs_n = sizeof(v1_mem_regions) / sizeof(v1_mem_regions[0]);
+	} else {
+		mrs = v2_mem_regions;
+		mrs_n = sizeof(v2_mem_regions) / sizeof(v2_mem_regions[0]);
+	}
+
+	for (i = 0; i < mrs_n; i++) {
+		if ((addr >= mrs[i].start) && (addr <= (mrs[i].start + mrs[i].size)))
+			return 0;
+	}
+
+	pr_err("Address out of range addr:0x%llx", (u64)addr);
+	return -ENOMEM;
+}
+
+int ncdev_program_engine(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_program_engine arg;
+	int ret;
+	struct mem_chunk *src_mc;
+
+	ret = copy_from_user(&arg, (struct neuron_ioctl_program__engine *)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	if (ncdev_verify_mem_region(nd, arg.dst))
+		return -ENOMEM;
+
+	if (arg.size > MAX_DMA_DESC_SIZE)
+		return -EINVAL;
+
+	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0, 0, &src_mc);
+	if (ret) {
+		ret = -ENOMEM;
+		return ret;
+	}
+
+	ret = copy_from_user(src_mc->va, arg.buffer + arg.offset, arg.size);
+	if (ret)
+		goto error;
+
+	ret = ndma_memcpy(nd, 0, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
+			  arg.dst + arg.offset, arg.size);
+
+error:
+	mc_free(&src_mc);
+	return ret;
+}
+
 int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_mem_buf_copy arg;
@@ -422,6 +525,8 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
+	if (!mc)
+		return -EINVAL;
 	// check access is within the range.
 	if (arg.offset + arg.size > mc->size) {
 		pr_err("offset+size is too large for mem handle\n");
@@ -446,8 +551,8 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 		u32 offset = 0;
 		int remaining = arg.size;
 		u32 copy_size = 0;
-		ret = mc_alloc(&nd->mpset, &src_mc, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0,
-			       mc->nc_id);
+		ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0,
+			       mc->nc_id, &src_mc);
 		if (ret) {
 			ret = -ENOMEM;
 			return ret;
@@ -533,15 +638,19 @@ static long ncdev_bar_read(struct neuron_device *nd, u8 bar, u64 *reg_addresses,
 {
 	int ret;
 	u64 data_size = data_count * sizeof(u32);
+	int i;
 	if (bar == 0) {
 		u32 *data = NULL;
 		data = kmalloc(data_size, GFP_KERNEL);
 		if (data == NULL)
 			return -ENOMEM;
-		ret = fw_io_read_csr_array((void **)reg_addresses, data, data_count);
+		ret = reg_read32_array((void **)reg_addresses, data, data_count);
 		if (ret) {
 			kfree(data);
 			return ret;
+		}
+		for (i = 0; i < data_count; i++) {
+			trace_bar_read(nd, bar, reg_addresses[i], data[i]);
 		}
 		ret = copy_to_user(user_va, data, data_size);
 		kfree(data);
@@ -550,14 +659,18 @@ static long ncdev_bar_read(struct neuron_device *nd, u8 bar, u64 *reg_addresses,
 		u32 nc_id = 0;
 		dma_addr_t src_addr = reg_addresses[0];
 
-		ret = mc_alloc(&nd->mpset, &mc, data_size, MEM_LOC_HOST, 0, 0, nc_id);
+		ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, data_size, MEM_LOC_HOST, 0, 0, nc_id, &mc);
 		if (ret)
 			return -ENOMEM;
 
-		ret = ndma_memcpy(nd, mc->nc_id, src_addr, mc->pa | PCIEX8_0_BASE, data_size);
+		ret = ndma_memcpy(nd, mc->nc_id, src_addr, mc->pa, data_size);
 		if (ret) {
 			mc_free(&mc);
 			return ret;
+		}
+		for (i = 0; i < data_count; i++) {
+			uint32_t *data = mc->va;
+			trace_bar_read(nd, bar, src_addr + (i * sizeof(uint32_t)), data[i]);
 		}
 		ret = copy_to_user(user_va, mc->va, data_size);
 		mc_free(&mc);
@@ -580,8 +693,11 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 		goto done;
 
 	/*
+	 * V1:
 	 * For BAR0 the addresses are passed as array(random access).
 	 * For BAR2 a single address is provided and driver does sequential writes.
+	 * V2:
+	 * Only BAR0 is used right now. TODO: change runtime ioctl
 	 */
 	if (bar == 0) {
 		int i;
@@ -592,16 +708,27 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 				goto done;
 			}
 			writel(data[i], nd->npdev.bar0 + off);
+			nc_track_register_write(nd, 0, off, data[i]);
+			trace_bar_write(nd, 0, off, data[i]);
 		}
 	} else {
-		int i;
-		u64 off = reg_addresses[0] - (u64)nd->npdev.bar2;
-		for (i = 0; i < data_count; i++, off += sizeof(u32)) {
-			if (off > nd->npdev.bar2_size) {
-				ret = -EINVAL;
-				goto done;
+		if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+			int i;
+			u64 off = reg_addresses[0] - (u64)nd->npdev.bar2;
+			for (i = 0; i < data_count; i++, off += sizeof(u32)) {
+				if (off > nd->npdev.bar2_size) {
+					ret = -EINVAL;
+					goto done;
+				}
+				writel(data[i], nd->npdev.bar2 + off);
+				trace_bar_write(nd, 2, off, data[i]);
 			}
-			writel(data[i], nd->npdev.bar2 + off);
+		} else {
+			dma_addr_t dst_addr = reg_addresses[0] - (u64)nd->npdev.bar0;
+
+			ret = ndma_memcpy(nd, 0, virt_to_phys(data) | PCI_HOST_BASE(nd), dst_addr, data_size);
+			if (ret)
+				return ret;
 		}
 	}
 done:
@@ -703,27 +830,27 @@ done:
 	return ret;
 }
 
-static long ncdev_device_reset(struct neuron_device *nd)
+static long ncdev_device_reset_deprecated(struct neuron_device *nd)
 {
-	fw_io_initiate_reset(nd->npdev.bar0);
+	ndmar_close(nd);
+	nr_start(nd);
 	return 0;
 }
 
-static long ncdev_device_reset_status(struct neuron_device *nd, void *param)
+static long ncdev_device_reset_status_deprecated(struct neuron_device *nd, void *param)
 {
-	bool ret;
-	u8 result = 0;
-	ret = fw_io_is_reset_initiated(nd->npdev.bar0);
-	if (ret) {
-		result = 1;
-	}
+	u8 result = 1; // always return reset status as started.
 	return copy_to_user(param, &result, 1);
 }
 
-static long ncdev_device_ready(struct neuron_device *nd, void *param)
+static long ncdev_device_ready_deprecated(struct neuron_device *nd, void *param)
 {
+	int ret;
 	u8 result;
-	result = fw_io_is_device_ready(nd->npdev.bar0);
+	result = nr_wait(nd);
+	ret = ndmar_init(nd);
+	if (ret)
+		result = 0;
 	return copy_to_user(param, &result, 1);
 }
 
@@ -734,23 +861,10 @@ static long ncdev_device_info(struct neuron_device *nd, void *param)
 	int i, ret;
 	struct neuron_ioctl_device_info result;
 
-	result.architecture = nd->architecture;
-	result.revision = nd->revision;
+	result.architecture = narch_get_arch();
+	result.revision = narch_get_revision();
 
 	mutex_lock(&ncdev_discovery_lock);
-
-	/**
-	 * UMD runtime directly access PCI config space to enable/disable device.
-	 * When UMD runtime process is stopped it would remove master and memory enable bits from device.
-	 * If system had driver and UMD runtime is installed then when installing KMD runtime,
-	 * the UMD runtime is stopped(which will make Mem- and BusMaster- on device as cleanup) and
-	 * KMD runtime process is started. The KMD runtime then would fail to access the device
-	 * because of "Mem-".
-	 *
-	 * To avoid this always directly write to config space until old runtime goes away.
-	 * We cant use pci_enable_device() since the device is already enabled during driver start.
-	 */
-	pci_write_config_word(nd->pdev, PCI_COMMAND, PCI_COMMAND_MASTER | PCI_COMMAND_MEMORY);
 
 	// if topology discovery is not yet done, do it and cache the result
 	if (nd->connected_device_count <= 0) {
@@ -778,152 +892,303 @@ out:
 	return ret;
 }
 
-/* Only one process can take ownership of a device. */
-static DEFINE_MUTEX(ncdev_device_lock);
-static long ncdev_device_init(struct neuron_device *nd, void *param)
-{
-	int ret = 0;
-	struct neuron_ioctl_device_init arg;
-	u64 device_dram_addr[V1_MAX_DRAM_CHANNELS] = { P_0_DRAM_0_BASE, P_0_DRAM_1_BASE };
-	u64 device_dram_size[V1_MAX_DRAM_CHANNELS] = { P_0_DRAM_0_SIZE, P_0_DRAM_1_SIZE };
 
-	mutex_lock(&ncdev_device_lock);
-	ret = copy_from_user(&arg, (struct neuron_ioctl_device_init *)param, sizeof(arg));
+static long ncdev_device_app_pid_deprecated(struct neuron_device *nd, void *param)
+{
+	return copy_to_user(param, &nd->attached_processes[0].pid, sizeof(int));
+}
+
+static long ncdev_device_get_all_apps_info(struct neuron_device *nd, void *param)
+{
+	int ret;
+	int added_items_count;
+	int proc_index;
+	int nc_index;
+	__u8 nc_lock_map;
+	struct neuron_attached_process *proc_entry;
+	struct neuron_ioctl_get_apps_info *arg;
+	struct neuron_ioctl_get_apps_info *user_arg = (struct neuron_ioctl_get_apps_info *) param;
+
+	arg = kmalloc(sizeof(struct neuron_ioctl_get_apps_info) +
+		      sizeof(struct neuron_app_info) * NEURON_MAX_PROCESS_PER_DEVICE, GFP_KERNEL);
+	if (arg == NULL)
+		return -ENOMEM;
+
+	ret = copy_from_user(arg, user_arg, sizeof(struct neuron_ioctl_get_apps_info));
 	if (ret) {
+		kfree(arg);
 		return ret;
 	}
 
-	if (nd->current_pid == 0) {
-		ret = mpset_init(&nd->mpset, V1_MAX_DRAM_CHANNELS, arg.mem_regions,
-				 device_dram_addr, device_dram_size);
-		if (ret)
-			goto done;
-		nd->current_pid = task_tgid_nr(current);
-		nd->current_pid_open_count = 1; //since the ioctl done after open set to 1
-		ret = ndmar_init(nd);
-	} else if (nd->current_pid != task_tgid_nr(current)) {
-		pr_err("device inuse by pid:%d\n", nd->current_pid);
-		ret = -EBUSY;
-	}
+	added_items_count = 0;
+	proc_index = 0;
 
-done:
-	mutex_unlock(&ncdev_device_lock);
+	while(added_items_count < arg->capacity && proc_index < NEURON_MAX_PROCESS_PER_DEVICE) {
+		proc_entry = &nd->attached_processes[proc_index++];
+		if (proc_entry->pid == 0)
+			continue;
+
+		nc_lock_map = 0;
+		if (arg->apps_info_flags & APP_INFO_PID_NC_LOCK_INFO)
+			for (nc_index = 0; nc_index < MAX_NC_PER_DEVICE; nc_index++) {
+				mutex_lock(&nd->crwl[nc_index].lock);
+				if(nd->crwl[nc_index].writer_pid == proc_entry->pid && (
+				   nd->crwl[nc_index].writer_acquired ||
+				   nd->crwl[nc_index].reader_count > 0)) {
+					nc_lock_map |= (__u8)(1 << nc_index);
+					memcpy(&arg->app_data[added_items_count].uuid_data[nc_index], &nd->crwl[nc_index].uuid,
+					       sizeof(nd->crwl[nc_index].uuid));
+				}
+				mutex_unlock(&nd->crwl[nc_index].lock);
+			}
+
+		arg->app_data[added_items_count].pid = proc_entry->pid;
+		arg->app_data[added_items_count].nc_lock_map = nc_lock_map;
+
+		arg->app_data[added_items_count].host_mem_size = 0;
+		arg->app_data[added_items_count].device_mem_size = 0;
+		if (arg->apps_info_flags & APP_INFO_PID_MEM_USAGE) {
+			arg->app_data[added_items_count].host_mem_size = proc_entry->memory_used[MEM_LOC_HOST - 1];
+			arg->app_data[added_items_count].device_mem_size = proc_entry->memory_used[MEM_LOC_DEVICE - 1];
+		}
+
+		added_items_count++;
+	}
+	arg->size = added_items_count;
+	ret = copy_to_user(user_arg, arg, sizeof(struct neuron_ioctl_get_apps_info) +
+			   sizeof(struct neuron_app_info) * arg->size);
+	kfree(arg);
+
 	return ret;
 }
 
-static long ncdev_device_release(struct ncdev *dev, struct neuron_device *nd)
+static long ncdev_nc_nq_init_v1(struct neuron_device *nd, void *param)
 {
-	int ret = 0;
-	mutex_lock(&ncdev_device_lock);
-
-	if ((nd->current_pid_open_count == 0) && ((nd->current_pid == task_tgid_nr(current)) ||
-						  nd->current_pid == task_ppid_nr(current))) {
-		nd->current_pid = 0;
-	}
-
-	if (dev->open_count == 0) {
-		nc_nq_destroy_all(nd);
-		ndmar_close(nd);
-		mpset_release(&nd->mpset);
-	}
-
-	mutex_unlock(&ncdev_device_lock);
-	return ret;
-}
-
-static long ncdev_device_app_pid(struct neuron_device *nd, void *param)
-{
-	return copy_to_user(param, &nd->current_pid, sizeof(int));
-}
-
-static long ncdev_nc_nq_init(struct neuron_device *nd, void *param)
-{
-	struct neuron_ioctl_notifications_init arg;
+	struct neuron_ioctl_notifications_init_v1 arg;
+	struct mem_chunk *mc;
 	int ret;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_notifications_init *)param, sizeof(arg));
-	if (ret) {
-		return ret;
-	}
-
-	ret = nc_nq_init(nd, arg.nc_id, arg.engine_index, arg.nq_type, arg.size);
-	if (ret) {
-		return ret;
-	}
-	ret = nc_get_nq_mmap_offset(arg.nc_id, arg.engine_index, arg.nq_type, &arg.mmap_offset);
-	if (ret) {
-		return ret;
-	}
-	return copy_to_user(&((struct neuron_ioctl_notifications_init *)param)->mmap_offset,
-			    &arg.mmap_offset, sizeof(arg.mmap_offset));
-}
-
-static long ncdev_nc_nq_destroy(struct neuron_device *nd, void *param)
-{
-	struct neuron_ioctl_notifications_destroy arg;
-	int ret, nc_id, nq_type, eng_index;
-
 	ret = copy_from_user(&arg, param, sizeof(arg));
-	if (ret) {
+	if (ret)
 		return ret;
-	}
 
-	ret = nc_get_nq_from_mmap_offset(arg.mmap_offset, &nc_id, &eng_index, &nq_type);
-	if (ret) {
+	ret = nnq_init(nd, arg.nc_id, arg.engine_index, arg.nq_type, arg.size, true, 0, 0, &mc,
+		       &arg.mmap_offset);
+	if (ret)
 		return ret;
-	}
-	return nc_nq_destroy(nd, nc_id, eng_index, nq_type);
+
+	return copy_to_user(param, &arg, sizeof(arg));
 }
 
-static long ncdev_nc_nq_init_mem(struct neuron_device *nd, void *param)
+static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 {
-	struct neuron_ioctl_notifications_init_nq arg;
+	struct neuron_ioctl_notifications_init_v2 arg;
 	int ret;
 	struct mem_chunk *mc;
 
-	ret = copy_from_user(&arg, (struct neuron_ioctl_notifications_init_mem *)param,
-			     sizeof(arg));
+	ret = copy_from_user(&arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
-	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
-	if (!mc)
-		return -EINVAL;
-
-	ret = nc_nq_init_mc(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size, mc);
+	if (arg.nq_topsp)
+		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+				 arg.on_host_memory, arg.dram_channel, arg.dram_region, &mc,
+				 &arg.mmap_offset);
+	else
+		ret = nnq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+			       arg.on_host_memory, arg.dram_channel, arg.dram_region, &mc,
+			       &arg.mmap_offset);
 	if (ret)
 		return ret;
 
-	if (mc->mem_location == MEM_LOC_HOST) {
-		ret = nc_get_nq_mmap_offset(arg.nq_dev_id, arg.engine_index, arg.nq_type, &arg.mmap_offset);
-		if (ret)
-			return ret;
-
-		return copy_to_user(&((struct neuron_ioctl_notifications_init_nq *)param)->mmap_offset,
-					&arg.mmap_offset, sizeof(arg.mmap_offset));
-	}
-
-	return ret;
-
+	arg.mem_handle = ncdev_mem_chunk_to_mem_handle(mc);
+	return copy_to_user(param, &arg, sizeof(arg));
 }
 
-static long ncdev_nc_nq_destroy_mem(struct neuron_device *nd, void *param)
+static long ncdev_nc_nq_info(struct neuron_device *nd, void *param)
 {
-	struct neuron_ioctl_notifications_destroy_nq arg;
+	struct neuron_ioctl_notifications_queue_info arg;
 	int ret;
 
 	ret = copy_from_user(&arg, param, sizeof(arg));
 	if (ret)
 		return ret;
 
-	return nc_nq_destroy(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type);
+	ret = nnq_get_nq_info(nd, arg.nq_dev_id, arg.nq_top_sp, arg.engine_index, arg.nq_type,
+			      &arg.head, &arg.phase_bit);
+	if (ret)
+		return ret;
+
+	return copy_to_user(param, &arg, sizeof(arg));
 }
 
-static long ncdev_get_neuron_counters_info(struct neuron_device *nd, void *param)
+static long ncdev_acquire_neuron_ds(struct neuron_device *nd, void *param)
 {
-	struct neuron_ioctl_neuron_counters_info arg = { .mmap_offset = nc_hm_mmap_offset(
-								 nd->counter_store),
-							 .size = NEURON_DEVICE_COUNTER_STORE_SIZE };
+	int ret;
+	struct neuron_ioctl_neuron_ds_info arg;
+	struct mem_chunk *mc;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	// If PID is 0, then a new datastore is acquired for the caller (an inference app), otherwise
+	// the caller tries to acquire an existing datastore (in case of a monitoring app)
+	ret = neuron_ds_acquire_pid(&nd->datastore, arg.pid, &mc);
+	if (ret)
+		return ret;
+
+	arg.mmap_offset = nmmap_offset(mc);
+	arg.size = mc->size;
+
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+static long ncdev_release_neuron_ds(struct neuron_device *nd, void *param)
+{
+	int ret;
+	struct neuron_ioctl_neuron_ds_info arg;
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+	neuron_ds_release_pid(&nd->datastore, arg.pid);
+	return 0;
+}
+
+static long ncdev_crwl_reader_enter(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_crwl arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	return ncrwl_reader_enter(nd, arg.nc_id, arg.uuid);
+}
+
+static long ncdev_crwl_reader_exit(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_crwl arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	return ncrwl_reader_exit(nd, arg.nc_id, arg.uuid);
+}
+
+static long ncdev_crwl_writer_enter(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_crwl arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	return ncrwl_writer_enter(nd, arg.nc_id, arg.uuid);
+}
+
+static long ncdev_crwl_writer_downgrade(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_crwl arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	return ncrwl_writer_downgrade(nd, arg.nc_id, arg.uuid);
+}
+
+static long ncdev_crwl_nc_range_mark(void *param)
+{
+	struct neuron_ioctl_crwl_nc_map arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	ret = ncrwl_nc_range_mark(arg.nc_count, arg.start_nc_index, arg.end_nc_index,
+				  &arg.max_nc_available, &arg.bitmap);
+	if (ret) {
+		copy_to_user(param, &arg, sizeof(arg));
+		return ret;
+	}
+
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+static long ncdev_crwl_nc_range_unmark(void *param)
+{
+	struct neuron_ioctl_crwl_nc_map arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	ncrwl_nc_range_unmark(arg.bitmap);
+	return 0;
+}
+
+static long ncdev_cinit_set_state(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_cinit_set arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret) {
+		return ret;
+	}
+
+	nci_set_state(nd, arg.nc_id, arg.state, &arg.new_state);
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_nc_model_started_count arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret) {
+		return ret;
+	}
+
+	arg.started_count = nd->nc_model_started_count[arg.nc_id];
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+// IMPORTANT these variables track the range of "compatible" versions of the RT
+// i.e. the range of RT versions that is compatible with
+// this version of the driver.
+// This value is independent from the "release" version because
+// "release" number is controlled by PM, marketing, etc. considerations.
+//
+// MAX should be incremented when the driver API/behavior
+// changes in a way that is meaningful to the RT.  In that case
+// both the MAX here and the version expected by the RT should be
+// incremented to prevent the new RT from starting on an old driver
+//
+// MIN should be incremented when we make changes in the driver
+// that are not compatible with old RT.  When MIN is incremented
+// it will prevent old RT from starting up.
+
+// TODO the driver might need to return different sets on different
+// architectures.
+#define RT_MIN_COMPATIBLE_VERSION 2
+#define RT_MAX_COMPATIBLE_VERSION 2
+
+static long ncdev_compatible_version(void *param)
+{
+	struct neuron_ioctl_compatible_version arg;
+
+	arg.min = RT_MIN_COMPATIBLE_VERSION;
+	arg.max = RT_MAX_COMPATIBLE_VERSION;
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
@@ -941,37 +1206,41 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return -EINVAL;
 	}
 	// the following IOCTL allowed only for the process which did DEVICE_INIT
-	if (cmd == NEURON_IOCTL_DEVICE_RESET || cmd == NEURON_IOCTL_DEVICE_RESET_STATUS ||
-	    cmd == NEURON_IOCTL_DMA_ENG_INIT || cmd == NEURON_IOCTL_DMA_ENG_SET_STATE ||
+	if (cmd == NEURON_IOCTL_DMA_ENG_INIT || cmd == NEURON_IOCTL_DMA_ENG_SET_STATE ||
 	    cmd == NEURON_IOCTL_DMA_QUEUE_INIT || cmd == NEURON_IOCTL_DMA_ACK_COMPLETED ||
 	    cmd == NEURON_IOCTL_DMA_QUEUE_RELEASE || cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS ||
 	    cmd == NEURON_IOCTL_MEM_ALLOC || cmd == NEURON_IOCTL_MEM_FREE ||
 	    cmd == NEURON_IOCTL_MEM_COPY || cmd == NEURON_IOCTL_MEM_GET_PA ||
 	    cmd == NEURON_IOCTL_MEM_GET_INFO || cmd == NEURON_IOCTL_BAR_WRITE ||
-	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT ||
-	    cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_NQ ||
-		cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_NQ || cmd == NEURON_IOCTL_MEMSET) {
-		if (nd->current_pid != task_tgid_nr(current)) {
+	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V1 ||
+	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2) {
+		if (!npid_is_attached(nd)) {
 			return -EACCES;
 		}
 	}
 
 	if (cmd == NEURON_IOCTL_DEVICE_RESET) {
-		return ncdev_device_reset(nd);
+		return ncdev_device_reset_deprecated(nd);
 	} else if (cmd == NEURON_IOCTL_DEVICE_RESET_STATUS) {
-		return ncdev_device_reset_status(nd, (void *)param);
+		return ncdev_device_reset_status_deprecated(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_CINIT_SET_STATE) {
+		return ncdev_cinit_set_state(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NC_MODEL_STARTED_COUNT) {
+		return ncdev_nc_model_started_count(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_READY) {
-		return ncdev_device_ready(nd, (void *)param);
+		return ncdev_device_ready_deprecated(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_INFO) {
 		return ncdev_device_info(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_INIT) {
-		return ncdev_device_init(nd, (void *)param);
+		return 0;
 	} else if (cmd == NEURON_IOCTL_DEVICE_RELEASE) {
-		return ncdev_device_release(ncd, nd);
+		return 0;
 	} else if (cmd == NEURON_IOCTL_DEVICE_APP_PID) {
-		return ncdev_device_app_pid(nd, (void *)param);
+		return ncdev_device_app_pid_deprecated(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_DEVICE_GET_ALL_APPS_INFO) {
+		return ncdev_device_get_all_apps_info(nd, (void*)param);
 	} else if (cmd == NEURON_IOCTL_DMA_ENG_INIT) {
-		return ncdev_dma_engine_init(nd, (void *)param);
+		return 0;
 	} else if (cmd == NEURON_IOCTL_DMA_ENG_SET_STATE) {
 		return ncdev_dma_engine_set_state(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_QUEUE_INIT) {
@@ -992,16 +1261,20 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_dma_descriptor_copyout(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC) {
 		return ncdev_mem_alloc(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_MEM_GET_EXTENDED_INFO) {
+		return ncdev_mem_get_extended_info((void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_INFO) {
-		return ncdev_mem_get_info((void *)param);
+		return ncdev_mem_get_info_deprecated((void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_PA) {
-		return ncdev_mem_get_pa((void *)param);
+		return ncdev_mem_get_pa_deprecated(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_FREE) {
 		return ncdev_mem_free(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_COPY) {
 		return ncdev_mem_copy(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_BUF_COPY) {
 		return ncdev_mem_buf_copy(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE) {
+		return ncdev_program_engine(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEMSET) {
 		return ncdev_memset(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_SEMAPHORE_READ) {
@@ -1022,40 +1295,76 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_bar_rw(nd, (void *)param, false);
 	} else if (cmd == NEURON_IOCTL_POST_METRIC) {
 		return ncdev_post_metric(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT) {
-		return ncdev_nc_nq_init(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_NQ) {
-		return ncdev_nc_nq_init_mem(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY) {
-		return ncdev_nc_nq_destroy(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_NQ) {
-		return ncdev_nc_nq_destroy_mem(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V1) {
+		return ncdev_nc_nq_init_v1(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2) {
+		return ncdev_nc_nq_init_v2(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_V1) {
+		return 0;
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_QUEUE_INFO) {
+		return ncdev_nc_nq_info(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_READ_HW_COUNTERS) {
 		return ncdev_read_hw_counters(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_GET_NEURON_COUNTERS_INFO) {
-		return ncdev_get_neuron_counters_info(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_ACQUIRE_NEURON_DS) {
+		return ncdev_acquire_neuron_ds(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_RELEASE_NEURON_DS) {
+		return ncdev_release_neuron_ds(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_READER_ENTER) {
+		return ncdev_crwl_reader_enter(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_READER_EXIT) {
+		return ncdev_crwl_reader_exit(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_WRITER_ENTER) {
+		return ncdev_crwl_writer_enter(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_WRITER_DOWNGRADE) {
+		return ncdev_crwl_writer_downgrade(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) {
+		return ncdev_crwl_nc_range_mark((void *)param);
+	} else if (cmd == NEURON_IOCTL_CRWL_NC_RANGE_UNMARK) {
+		return ncdev_crwl_nc_range_unmark((void *)param);
+	} else if (cmd == NEURON_IOCTL_COMPATIBLE_VERSION) {
+		return ncdev_compatible_version((void*)param);
 	} else {
 		pr_err("invalid IOCTL %d\n", cmd);
 		return -EINVAL;
 	}
 }
 
+/* Only one process can take ownership of a device. */
+static DEFINE_MUTEX(ncdev_device_lock);
+
 static int ncdev_open(struct inode *inode, struct file *filep)
 {
+	int ret;
 	struct ncdev *dev;
 	struct neuron_device *nd;
+
 	dev = &devnodes[iminor(inode)];
-	nd = dev->ndev;
 	if (!dev) {
-		pr_err("unable to lock device\n");
+		pr_err("invalid device %d\n", iminor(inode));
 		return -ENODEV;
 	}
-	mutex_lock(&ncdev_device_lock);
-	dev->open_count++;
-	if (nd && (nd->current_pid == task_tgid_nr(current) ||
-		   nd->current_pid == task_ppid_nr(current))) {
-		nd->current_pid_open_count++;
+	nd = dev->ndev;
+
+	// wait for reset to complete.
+	ret = nr_wait(nd);
+	if (!ret) {
+		pr_err("nd%d: failed to reset device\n", nd->device_index);
+		return EAGAIN;
 	}
+	mutex_lock(&ncdev_device_lock);
+	ret = ndmar_init(nd);
+	if (ret) {
+		pr_err("nd%d: failed to initialize DMA engines\n", nd->device_index);
+		mutex_unlock(&ncdev_device_lock);
+		return EAGAIN;
+	}
+	if (!npid_attach(nd)) {
+		pr_err("nd%d: pid %d failed to open\n", nd->device_index, task_tgid_nr(current));
+		npid_print_usage(nd);
+		mutex_unlock(&ncdev_device_lock);
+		return -EBUSY;
+	}
+	dev->open_count++;
 	mutex_unlock(&ncdev_device_lock);
 	filep->private_data = dev;
 	return 0;
@@ -1065,15 +1374,27 @@ static int ncdev_close(struct inode *inode, struct file *filep)
 {
 	struct ncdev *dev = (struct ncdev *)filep->private_data;
 	struct neuron_device *nd = dev->ndev;
+
 	mutex_lock(&ncdev_device_lock);
 	dev->open_count--;
-	if (nd && (nd->current_pid == task_tgid_nr(current) ||
-		   nd->current_pid == task_ppid_nr(current))) {
-		nd->current_pid_open_count--;
+
+	// if the current process is going away then cleanup per process state
+	if (npid_is_attached(nd) == 1) {
+		ncrwl_release_current_process(nd);
+		neuron_ds_release_pid(&nd->datastore, task_tgid_nr(current));
+		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_CUR_PROCESS);
 	}
+	npid_detach(nd);
+
+	// if no process is attached then free ALL_PROCESS mc
+	if (dev->open_count == 0) {
+		neuron_ds_destroy(&nd->datastore);
+		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_ALL_PROCESS);
+	}
+
 	mutex_unlock(&ncdev_device_lock);
 
-	return ncdev_device_release(dev, nd);
+	return 0;
 }
 
 static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
@@ -1082,15 +1403,14 @@ static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
 	struct neuron_device *nd;
 
 	ncd = filep->private_data;
-	if (ncd == NULL) {
+	if (ncd == NULL)
 		return -EINVAL;
-	}
-	nd = ncd->ndev;
-	if (nd == NULL) {
-		return -EINVAL;
-	}
 
-	return nc_mmap(nd, vma);
+	nd = ncd->ndev;
+	if (nd == NULL)
+		return -EINVAL;
+
+	return nmmap_mem(nd, vma);
 }
 
 static struct file_operations ncdev_fops = {

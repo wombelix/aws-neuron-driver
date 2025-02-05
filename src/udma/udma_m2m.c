@@ -76,12 +76,33 @@ static const union tdma_m2s_meta_ctrl tdma_m2s_meta_ctrl_default_value = { {
 	.rsvd0 = 0,
 } };
 
+struct sdma_cme_desc_word {
+	uint32_t block_attr : 3;
+	uint32_t rsvd_5_to_3 : 3;
+	uint32_t endian_type : 8;
+	uint32_t validate_crc : 1;
+	uint32_t rsvd_15 : 1;
+	uint32_t send_crc : 1;
+	uint32_t rsvd_18_to_17 : 2;
+	uint32_t copy_src_data : 1;
+	uint32_t optype : 3;
+	uint32_t op : 3;
+	uint32_t write_barrier : 1;
+	uint32_t netag0_rsvd : 5;
+} __attribute__((__packed__));
+
+void sdma_m2s_set_write_barrier(uint32_t *meta_ctrl)
+{
+	((struct sdma_cme_desc_word *)meta_ctrl)->write_barrier = 1;
+	return;
+}
+
 /* set maximum number descriptors per one DMA packet */
 static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
 {
 	u32 pref_thr = max_descs;
 	u32 min_burst_above_thr = 4;
-	u32 mask, value;
+	u32 value;
 	if (max_descs == 0 || max_descs > UDMA_M2S_MAX_ALLOWED_DESCS_PER_PACKET_V4) {
 		pr_err("invalid number of descriptors %d(max %d)\n", max_descs,
 		       UDMA_M2S_MAX_ALLOWED_DESCS_PER_PACKET_V4);
@@ -96,19 +117,14 @@ static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
 		pref_thr = 4;
 	}
 
-	mask = UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_MASK;
-	value = max_descs << UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_SHIFT;
-	if (reg_write32_masked(&udma->udma_regs_m2s->m2s_rd.desc_pref_cfg_2, mask, value)) {
-		return -EIO;
-	}
+	value = (max_descs << UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_SHIFT) |
+		(1 << UDMA_M2S_RD_DESC_PREF_CFG_2_PERF_FORCE_RR_SHIFT);
+	reg_write32(&udma->udma_regs_m2s->m2s_rd.desc_pref_cfg_2, value);
 
-	mask = UDMA_M2S_RD_DESC_PREF_CFG_3_PREF_THR_MASK |
-	       UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_MASK;
 	value = (pref_thr << UDMA_M2S_RD_DESC_PREF_CFG_3_PREF_THR_SHIFT) |
-		(min_burst_above_thr << UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT);
-	if (reg_write32_masked(&udma->udma_regs_m2s->m2s_rd.desc_pref_cfg_3, mask, value)) {
-		return -EIO;
-	}
+		(min_burst_above_thr << UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT) |
+		(1 << UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT);
+	reg_write32(&udma->udma_regs_m2s->m2s_rd.desc_pref_cfg_3, value);
 
 	return 0;
 }
@@ -179,7 +195,7 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 
 /* initialize one DMA engine */
 int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_queues, char *eng_name,
-			 int disable_phase_bit)
+			 int disable_phase_bit, int max_desc_per_packet)
 {
 	int ret;
 	struct udma_params params;
@@ -206,7 +222,7 @@ int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_que
 	}
 
 	/* set packet size to defined MAX. */
-	return udma_m2s_max_descs_set(udma, UDMA_M2S_MAX_ALLOWED_DESCS_PER_PACKET_V4);
+	return udma_m2s_max_descs_set(udma, max_desc_per_packet);
 }
 
 /* build one m2s (TX) descriptor */
@@ -274,18 +290,23 @@ static int udma_m2m_build_rx_descriptor(union udma_desc *rx_desc_ptr, u32 rx_rin
  */
 static int udma_m2m_build_descriptor(union udma_desc *rx_desc_ptr, union udma_desc *tx_desc_ptr,
 				     u32 rx_ring_id, u32 tx_ring_id, dma_addr_t s_addr,
-				     dma_addr_t d_addr, u32 size, bool set_dmb, bool set_dst_int)
+				     dma_addr_t d_addr, u32 size, bool set_dmb,
+				     bool use_write_barrier, bool set_dst_int)
 {
 	int ret;
 	u32 rx_flags = 0;
+	uint32_t meta_ctrl = tdma_m2s_meta_ctrl_default_value.uint32_data;
 	/* Just one descriptor in packet - set appropriate first/last flags */
 	u32 tx_flags = M2S_DESC_FIRST | M2S_DESC_LAST;
 	if (set_dmb) {
-		tx_flags |= M2S_DESC_DMB;
+		if (use_write_barrier)
+			sdma_m2s_set_write_barrier(&meta_ctrl);
+		else
+			tx_flags |= M2S_DESC_DMB;
 	}
 
 	ret = udma_m2m_build_tx_descriptor(tx_desc_ptr, tx_ring_id, s_addr, size,
-					   tdma_m2s_meta_ctrl_default_value.uint32_data, tx_flags);
+					   meta_ctrl, tx_flags);
 	if (ret)
 		return ret;
 
@@ -300,7 +321,7 @@ static int udma_m2m_build_descriptor(union udma_desc *rx_desc_ptr, union udma_de
  * this is a simple case of one m2s and one s2m descriptor in DMA packet
  */
 int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma_addr_t d_addr,
-			      u32 size, bool set_dmb, bool set_dst_int)
+			      u32 size, bool set_dmb, bool use_write_barrier, bool set_dst_int)
 {
 	u32 ndesc;
 	struct udma_q *txq;
@@ -342,7 +363,7 @@ int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma
 	union udma_desc *tx_desc = udma_desc_get(txq);
 	return udma_m2m_build_descriptor(rx_desc, tx_desc, udma_ring_id_get(rxq),
 					 udma_ring_id_get(txq), s_addr, d_addr, size, set_dmb,
-					 set_dst_int);
+					 use_write_barrier, set_dst_int);
 }
 
 /* Start DMA data transfer for m2s_count/s2m_count number or descriptors.

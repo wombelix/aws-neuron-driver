@@ -320,6 +320,49 @@ TRACE_EVENT(dma_memcpy,
 		__entry->pending_transfers
 	));
 
+TRACE_EVENT(bar_write,
+	TP_PROTO(struct neuron_device *nd, u32 bar, u64 offset, u32 data),
+	TP_ARGS(nd, bar, offset, data),
+	TP_STRUCT__entry(
+		__field(u32,              device_index)
+		__field(u32,              bar)
+		__field(u64,              offset)
+		__field(u32,              data)
+		),
+	TP_fast_assign(
+		__entry->device_index = nd->device_index;
+		__entry->bar = bar;
+		__entry->offset = offset;
+		__entry->data = data;
+	),
+	TP_printk("nd%d bar%d offset:%llx data:%x",
+		__entry->device_index,
+		__entry->bar,
+		__entry->offset,
+		__entry->data
+	));
+
+TRACE_EVENT(bar_read,
+	TP_PROTO(struct neuron_device *nd, u32 bar, u64 offset, u32 data),
+	TP_ARGS(nd, bar, offset, data),
+	TP_STRUCT__entry(
+		__field(u32,              device_index)
+		__field(u32,              bar)
+		__field(u64,              offset)
+		__field(u32,              data)
+	),
+	TP_fast_assign(
+		__entry->device_index = nd->device_index;
+		__entry->bar = bar;
+		__entry->offset = offset;
+		__entry->data = data;
+	),
+	TP_printk("nd%d bar%d offset:%llx data:%x",
+		__entry->device_index,
+		__entry->bar,
+		__entry->offset,
+		__entry->data
+	));
 #endif
 
 #undef TRACE_INCLUDE_PATH

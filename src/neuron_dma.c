@@ -12,6 +12,8 @@
 #include "udma/udma.h"
 #include "v1/address_map.h"
 
+#include "v2/address_map.h"
+
 #include "neuron_trace.h"
 #include "neuron_device.h"
 #include "neuron_dma.h"
@@ -50,6 +52,12 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 
 	// One descriptor takes ~4 usec to transfer (64K at 16G/sec) -  wait 100x longer
 	u64 wait = 4 * count * 100;
+
+	if (narch_is_qemu())
+		wait *= 10 * 1000;
+	else if (narch_is_emu())
+		wait *= 100 * 1000;
+
 	unsigned long one_loop_sleep = 10; // poll every 10 usecs
 	u64 loop = wait / one_loop_sleep + 1;
 
@@ -70,10 +78,10 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	WRITE_ONCE(*src, DMA_COMPLETION_MARKER);
 	WRITE_ONCE(*dst, 0);
 
-	completion.addr = virt_to_phys(completion.ptr) | PCIEX8_0_BASE;
+	completion.addr = virt_to_phys(completion.ptr) | PCI_HOST_BASE(eng->nd);
 	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, completion.addr,
 					completion.addr + DMA_COMPLETION_MARKER_SIZE,
-					DMA_COMPLETION_MARKER_SIZE, false, false);
+					DMA_COMPLETION_MARKER_SIZE, false, false, false);
 	if (ret) {
 		pr_err("failed to prepare DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
 		ret = -1;
@@ -127,7 +135,11 @@ static int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr
 			  dma_addr_t dst, u32 size, bool set_dmb)
 {
 	int ret = -1;
-	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, src, dst, size, set_dmb, false);
+	bool use_write_barrier = false;
+
+	use_write_barrier = narch_get_arch() == NEURON_ARCH_TRN && set_dmb;
+	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, src, dst, size, set_dmb,
+					use_write_barrier, false);
 	if (ret) {
 		pr_err("failed to prepare DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
 		return ret;
@@ -159,10 +171,17 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 	struct ndma_eng *eng;
 	struct ndma_queue *queue;
 	struct ndma_ring *ring;
-	int eng_id = DMA_ENG_IDX_H2T + (nc_id * V1_DMA_ENG_PER_NC);
+	int eng_id;
+	int max_dma_rings;
+	int qid;
+
+	eng_id = DMA_ENG_IDX_H2T(nd) + (nc_id * DMA_ENG_PER_NC(nd));
+	max_dma_rings = narch_get_arch() == NEURON_ARCH_TRN ? V2_MAX_DMA_RINGS : V1_MAX_DMA_RINGS;
+	// for v2 the last one is reserved for collectives
+	qid = narch_get_arch() == NEURON_ARCH_TRN ? max_dma_rings - 2 : max_dma_rings - 1;
 
 	eng = &(nd->ndma_engine[eng_id]);
-	queue = &eng->queues[MAX_DMA_RINGS - 1];
+	queue = &eng->queues[qid];
 	ring = &queue->ring_info;
 
 	chunk_size = size < MAX_DMA_DESC_SIZE ? size : MAX_DMA_DESC_SIZE;
@@ -242,16 +261,16 @@ int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct me
 	dma_addr_t src_pa, dst_pa;
 	u32 nc_id = 0; //default use NC 0
 
-	if (src_mc->mem_location == MEM_LOC_HOST) {
-		src_pa = virt_to_phys(src_mc->va) | PCIEX8_0_BASE;
-	} else {
+	if (src_mc->mem_location == MEM_LOC_HOST)
+		src_pa = virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd);
+	else {
 		src_pa = src_mc->pa;
 		nc_id = src_mc->nc_id;
 	}
 	src_pa += src_offset;
 
 	if (dst_mc->mem_location == MEM_LOC_HOST) {
-		dst_pa = virt_to_phys(dst_mc->va) | PCIEX8_0_BASE;
+		dst_pa = virt_to_phys(dst_mc->va) | PCI_HOST_BASE(nd);
 	} else {
 		dst_pa = dst_mc->pa;
 		nc_id = dst_mc->nc_id;
@@ -268,11 +287,11 @@ int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset
 	dma_addr_t dst_pa;
 	u32 nc_id = 0;
 
-	src_pa = virt_to_phys(buffer) | PCIEX8_0_BASE;
+	src_pa = virt_to_phys(buffer) | PCI_HOST_BASE(nd);
 	src_pa += src_offset;
 
 	if (dst_mc->mem_location == MEM_LOC_HOST) {
-		dst_pa = virt_to_phys(dst_mc->va) | PCIEX8_0_BASE;
+		dst_pa = virt_to_phys(dst_mc->va) | PCI_HOST_BASE(nd);
 	} else {
 		dst_pa = dst_mc->pa;
 		nc_id = dst_mc->nc_id;
@@ -289,11 +308,11 @@ int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offs
 	dma_addr_t dst_pa;
 	u32 nc_id = 0;
 
-	dst_pa = virt_to_phys(buffer) | PCIEX8_0_BASE;
+	dst_pa = virt_to_phys(buffer) | PCI_HOST_BASE(nd);
 	dst_pa += dst_offset;
 
 	if (src_mc->mem_location == MEM_LOC_HOST) {
-		src_pa = virt_to_phys(src_mc->va) | PCIEX8_0_BASE;
+		src_pa = virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd);
 	} else {
 		src_pa = src_mc->pa;
 		nc_id = src_mc->nc_id;
@@ -306,7 +325,7 @@ int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offs
 /**
  * Check whether given address is allocated in host memory by given pid and in given ND.
  */
-static bool ndma_is_valid_host_mem_from_nd(pid_t pid, u8 nd_index, phys_addr_t pa)
+static bool ndma_is_valid_host_mem_from_nd(u8 nd_index, phys_addr_t pa)
 {
 	struct neuron_device *nd;
 	if (nd_index >= MAX_NEURON_DEVICE_COUNT)
@@ -314,14 +333,17 @@ static bool ndma_is_valid_host_mem_from_nd(pid_t pid, u8 nd_index, phys_addr_t p
 	nd = neuron_pci_get_device(nd_index);
 	if (nd == NULL)
 		return false;
-	if (pid != nd->current_pid)
+	if (!npid_is_attached(nd))
 		return false;
 
 	return mpset_search_mc(&nd->mpset, pa) != NULL;
 }
 
-/**
- * Check whether given PA is valid host memory allocation.
+/** ndma_is_valid_host_mem() - Check whether given PA is valid host memory.
+ *
+ * A PA is valid only if it is allocated by the current process.
+ *
+ * Return: True if PA is valid, false otherwise.
  */
 static bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa)
 {
@@ -330,14 +352,14 @@ static bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa)
 
 	read_lock(&nd->mpset.rblock);
 	// common case - check whether the PA is allocated from the current ND
-	found = ndma_is_valid_host_mem_from_nd(nd->current_pid, nd->device_index, pa);
+	found = ndma_is_valid_host_mem_from_nd(nd->device_index, pa);
 	if (found)
 		goto done;
 	// chaining - check neighbor NDs
-	found = ndma_is_valid_host_mem_from_nd(nd->current_pid, nd->device_index - 1, pa);
+	found = ndma_is_valid_host_mem_from_nd(nd->device_index - 1, pa);
 	if (found)
 		goto done;
-	found = ndma_is_valid_host_mem_from_nd(nd->current_pid, nd->device_index + 1, pa);
+	found = ndma_is_valid_host_mem_from_nd(nd->device_index + 1, pa);
 	if (found)
 		goto done;
 	// check all devices
@@ -345,7 +367,7 @@ static bool ndma_is_valid_host_mem(struct neuron_device *nd, phys_addr_t pa)
 		// skip already checked devices
 		if (i >= nd->device_index - 1 && i <= nd->device_index + 1)
 			continue;
-		found = ndma_is_valid_host_mem_from_nd(nd->current_pid, i, pa);
+		found = ndma_is_valid_host_mem_from_nd(i, pa);
 		if (found)
 			goto done;
 	}
@@ -367,23 +389,28 @@ int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32
 
 	// Check the validity of the desc physical addresses
 	while (curr_size > 0) {
-		if (desc_type == NEURON_DMA_QUEUE_TYPE_TX) {
+		if (desc_type == NEURON_DMA_QUEUE_TYPE_TX)
 			pa = desc->tx.buf_ptr;
-		} else if (desc_type == NEURON_DMA_QUEUE_TYPE_RX) {
+		else if (desc_type == NEURON_DMA_QUEUE_TYPE_RX)
 			pa = desc->rx.buf1_ptr;
-		} else {
+		else
 			return -1;
-		}
 
 		// west side: PCIEX4_1_BASE: 0x00c00000000000 host: PCIEX8_0_BASE: 0x00400000000000
 		// If west side is set then even host bit is set. When mc_alloc is called we set only the host bit
 		// and insert into tree.. If some one sets the west side on that PA, then there is no way to check that,
 		// since there could be a tdram address that could have the west side set
 		// (that will look as though host is also set)
-		if (((pa & PCIEX8_0_BASE) == PCIEX8_0_BASE) &&
+		if (((pa & PCIEX8_0_BASE) == PCI_HOST_BASE(nd)) &&
 		    ((pa & PCIEX4_1_BASE) != PCIEX4_1_BASE)) {
-			if (!ndma_is_valid_host_mem(nd, pa & ~PCIEX8_0_BASE))
+			if (!ndma_is_valid_host_mem(nd, pa))
 				return -EINVAL;
+		} else {
+			// For V1 need to set the first model start state. If the desc has pa for PE instr fifo, then
+			// whichever dma engine queue that has this mc is set to have the pe instr.
+			if (narch_get_arch() == NEURON_ARCH_INFERENTIA &&
+			    desc_type == NEURON_DMA_QUEUE_TYPE_RX)
+				ndmar_set_model_started_v1(nd, pa, dst_mc);
 		}
 		curr_size = curr_size - sizeof(union udma_desc);
 		desc++;

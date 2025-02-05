@@ -19,12 +19,18 @@
 #include <linux/mutex.h>
 #include <linux/rbtree.h>
 
+#include "share/neuron_driver_shared.h"
+
 #include "v1/address_map.h"
+#include "v2/address_map.h"
+
+struct neuron_device;
 
 enum mem_location {
 	MEM_LOC_INVALID = 0, // Invalid type
 	MEM_LOC_HOST = 1, // Memory chunk is from Host DRAM
-	MEM_LOC_DEVICE = 2 // Memory chunk is from Device DRAM
+	MEM_LOC_DEVICE = 2, // Memory chunk is from Device DRAM
+	MEM_LOC_COUNT = MEM_LOC_DEVICE
 };
 
 /** Memory pool to manage Device memory.
@@ -44,8 +50,6 @@ struct mempool {
 
 	struct gen_pool *gen_pool; // backing gen_pool allocator
 
-	struct list_head mc_list_head; // list of allocated chunks
-
 	size_t region_size; // size of the initial region
 	size_t allocated_size; // total allocated memory size in bytes
 
@@ -58,32 +62,59 @@ struct mempool {
 
 // DRAM region is split into multiple regions.
 #define MAX_DDR_REGIONS 4
+#define MAX_DRAM_CHANNELS 2
 
 // start page size for host MP
 #define MP_HOST_PAGE_SIZE_MIN (256UL * 1024)
 // Number for MPs for host allocation
-#define MP_HOST_POOL_COUNT 4
+#define MP_HOST_RESERVE_MEMORY_POOL_COUNT 4
 
 struct mempool_set {
-	atomic_t freed; // if 1, the structure is already freed.
 	struct mutex lock;
+
+	struct neuron_device *nd; // backponter to neuron_device
+
 	u32 mp_device_num_regions; // number of regions in the device pool
-	struct mempool mp_device[V1_MAX_DRAM_CHANNELS][MAX_DDR_REGIONS]; // device memory pools
+	u32 num_channels; // number of regions in the device pool
+	struct mempool mp_device[MAX_DRAM_CHANNELS][MAX_DDR_REGIONS]; // device memory pools
 
-	struct mempool mp_host[MP_HOST_POOL_COUNT]; // host memory pools
+	struct mempool mp_hrm[MP_HOST_RESERVE_MEMORY_POOL_COUNT]; // host reserve memory pools
 
-	struct list_head host_allocated_head; // list of allocated host memory
+	// linked list head to store mem_chunk of different lifespan
+	struct list_head mc_lifespan_local_head;
+	struct list_head mc_lifespan_cur_process_head[NEURON_MAX_PROCESS_PER_DEVICE];
+	struct list_head mc_lifespan_all_process_head;
+	struct list_head mc_lifespan_device_head;
 
 	// for stats and debugging
 	u64 host_mem_size; // host memory used
 	u64 device_mem_size; // device memory used
 
 	void *pdev; // pci_dev->dev pointer
-	struct rb_root root; //rbtree that has all host mem chunks allocated
+	struct rb_root root; //rbtree that has all mem chunks allocated
 	rwlock_t rblock; //protect the rbtree access
+
+	struct rb_root mmap_root; //rbtree that tracks all mmap'd device mem va
+	rwlock_t rbmmaplock; //protect the dmm root tree access
+};
+
+enum mc_lifespan {
+	MC_LIFESPAN_LOCAL = 1,  	// MC is freed when current IOCTL/syscall ends
+	MC_LIFESPAN_CUR_PROCESS,	// MC is freed when the current process exits
+	MC_LIFESPAN_ALL_PROCESS,	// MC is freed when all the processes associated with ND exits
+	MC_LIFESPAN_DEVICE,		// MC is freed when the device is detached
+};
+
+#define MEMCHUNK_MAGIC 0xE1C2D3F4
+
+struct model_start_tracker {
+	bool has_pe_iram_inst; // whether this memchunk is used for copying PE instructions. used to detect/record model start
+	u32 nc_id; // the NC on which the model is started
 };
 
 struct mem_chunk {
+	u32 magic; // magic pattern to validate the structure is actually mem_chunk.
+
 	struct rb_node node; // valid when this chunk is added to the rbtree
 	phys_addr_t pa; // physical address of the chunk
 	void *va; // virtual address of the chunk
@@ -92,7 +123,6 @@ struct mem_chunk {
 
 	struct mempool *mp; // backpointer to mp
 	struct mempool_set *mpset; // back pointer to mpset
-	bool used_by_nq; // used by notification queue
 
 	u32 dram_channel; // DRAM channel
 	u32 dram_region; // TDRAM region
@@ -100,15 +130,16 @@ struct mem_chunk {
 
 	enum mem_location mem_location; // location of memory - Host or Device
 
-	struct list_head device_allocated_list; // link for the allocated list in mempool
-	struct list_head host_allocated_list; // link for the allocated host list in mpset
-};
+	pid_t pid; // process which allocated the memory
 
-// List of chunks
-struct mc_list {
-	int count;
-	struct mem_chunk *head;
-	struct mem_chunk *tail;
+	int ref_count; // reference count
+
+	enum mc_lifespan lifespan; // how long this mc should live.
+	struct list_head lifespan_list; // link for the lifespan list
+
+	void *caller_pc; // the function allocated this MC.
+
+	struct model_start_tracker model_start_tracker;
 };
 
 /**
@@ -116,10 +147,11 @@ struct mc_list {
  *
  * @mpset: Pointer to mpset which need to be initialized
  * @pdev: Pointer to device structure.
+ * @nd: Neuron device to initialize
  *
  * Return: 0 if initialization succeeds, a negative error code otherwise.
  */
-int mpset_constructor(struct mempool_set *mpset, void *pdev);
+int mpset_constructor(struct mempool_set *mpset, void *pdev, struct neuron_device *nd);
 
 /**
  * mpset_destructor() - Free all mp in the set.
@@ -127,27 +159,6 @@ int mpset_constructor(struct mempool_set *mpset, void *pdev);
  * @mpset: Pointer to mpset which need to be destroyed.
  */
 void mpset_destructor(struct mempool_set *mpset);
-
-/**
- * mpset_init() - Prepare mpset for application use.
- *
- * @mpset: Pointer to mpset which need to be initialized
- * @num_channels: Number of DRAM channels in the device
- * @num_regions: Number of regions inside each DRAM channel
- * @device_dram_addr: Array of start addresses of DRAM channel
- * @device_dram_size: Array of size of each DRAM channel
- *
- * Return: 0 if initialization succeeds, a negative error code otherwise.
- */
-int mpset_init(struct mempool_set *mpset, int num_channels, int num_regions,
-	       const phys_addr_t *device_dram_addr, const u64 *device_dram_size);
-
-/**
- * mpset_destructor() - Release mpset from application use.
- *
- * @mpset: Pointer to mpset
- */
-void mpset_release(struct mempool_set *mpset);
 
 /** mpset_search_mc() - Find memory chunk which maps given physical address
  *
@@ -161,17 +172,19 @@ struct mem_chunk *mpset_search_mc(struct mempool_set *mp, phys_addr_t pa);
 /**
  * mc_alloc() - Allocate a memory chunk of size from given mpset.
  *
- * @mpset: mpset from which the mc should be allocated
- * @result: Buffer to store the allocated memory chunk pointer
+ * @nd: neuron_device to which the mc should be associated
+ * @lifespan: When the MC needs to be automatically freed(if not freed already).
  * @size: Allocation size
  * @location: Backing DRAM location(host/device)
  * @channel: Backing DRAM channel
  * @region: Region in the backing DRAM
+ * @result: Buffer to store the allocated memory chunk pointer
  *
  * Return: 0 if allocation succeeds, a negative error code otherwise.
  */
-int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
-	     enum mem_location location, u32 channel, u32 region, u32 nc_id);
+int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
+	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
+	     struct mem_chunk **result);
 
 /**
  * mc_free() - Free memory chunk and associated backing memory.
@@ -181,11 +194,18 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 void mc_free(struct mem_chunk **mcp);
 
 /**
- * mc_used_by_nq() - Sets/unsets if the mc is used by nq
+ * mpset_free_expired_mc() - Frees all MCs with given lifespan.
  *
- * @mc: Pointer to memory chunk to be set
- * @used: used or not
+ * @mpset: Pointer to mpset
+ * @lifespan: Lifespan list to use
  */
-void mc_set_used_by_nq(struct mem_chunk *mc, bool used);
+void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan);
+
+/**
+ * mc_inc_refcount() - Increases reference count of the given mc.
+ *
+ * @mc: Pointer to memory chunk
+ */
+void mc_inc_refcount(struct mem_chunk *mc);
 
 #endif

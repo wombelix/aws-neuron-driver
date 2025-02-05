@@ -36,9 +36,26 @@ struct neuron_ioctl_mem_get_info {
 	__u64 *pa; // [out] Physical address of the memory
 };
 
+struct neuron_ioctl_get_apps_info {
+	__u16 apps_info_flags; // Requested entries
+	__u32 capacity; // [in] Size of the array allocated by the caller for the data (in number of items)
+	__u32 size; // [out] Number of entries the driver has wrote in app_data
+	struct neuron_app_info app_data[]; // [out] Array containing app data
+};
+
 struct neuron_ioctl_mem_get_pa {
 	__u64 mem_handle; // [in] Memory handle of the allocated memory.
 	__u64 *pa; // [out] Physical address of the memory
+};
+
+struct neuron_ioctl_mem_get_extended_info {
+	__u64 mem_handle; // [in] Memory handle of the allocated memory.
+	__u32 version; // [in] version of this structure - (current version is 1).
+	__u32 host_memory; // [out] true if allocation is from host memory
+	__u64 mmap_offset; // [out] offset where this mem can be mmapped
+	__u64 pa; // [out] Physical address of the memory
+	__u64 pid; // [out] Process that allocated this memory
+	__u64 size; // [out] Memory allocation size
 };
 
 struct neuron_ioctl_mem_free {
@@ -66,6 +83,13 @@ struct neuron_ioctl_mem_buf_copy {
 	__u32 size; // [in] Size of the data to be copied.
 	__u32 offset; // [in] Offset in the memory handle where the data to be written/read.
 	__u32 copy_to_mem_handle; // [in] if set to True copies from buffer to memhandle else copies from memhandle to buffer.
+};
+
+struct neuron_ioctl_program_engine {
+	__u64 dst; // [in] Destination engine address
+	void *buffer; // [in] Buffer from/to where data to be copied.
+	__u32 size; // [in] Size of the data to be copied.
+	__u32 offset; // [in] Offset in the dst address where the data to be written/read.
 };
 
 struct neuron_ioctl_bar_rw {
@@ -159,7 +183,7 @@ struct neuron_ioctl_event {
 	__u32 value; //[in/out] Value to read/write
 };
 
-struct neuron_ioctl_notifications_init {
+struct neuron_ioctl_notifications_init_v1 {
 	__u32 nc_id; // [in] Neuron Core Index
 	__u32 nq_type; // [in] Notification queue type
 	__u32 engine_index; // [in] Engine Index.
@@ -167,18 +191,23 @@ struct neuron_ioctl_notifications_init {
 	__u64 mmap_offset; // [out] mmap() offset for this NQ
 };
 
-struct neuron_ioctl_notifications_init_nq {
+struct neuron_ioctl_notifications_init_v2 {
 	__u32 nq_dev_id; // [in] Notification device Index
+	__u32 nq_topsp; // [in] If true, notification for TopSp else NeuronCore.
 	__u32 nq_type; // [in] Notification queue type
 	__u32 engine_index; // [in] Engine Index.
 	__u32 size; // [in] Notification queue size in bytes
-	__u64 mem_handle; // [in] memory to be used for notification queue
+	__u32 on_host_memory; // [in] If true allocates NQ in host memory; else allocates in device memory
+	__u32 dram_channel; // [in] DRAM channel in device memory
+	__u32 dram_region; // [in] DRAM region in device memory
 	__u64 mmap_offset; // [out] mmap() offset for this NQ
+	__u64 mem_handle; // [out] mem_handle for this NQ
 };
 
-struct neuron_ioctl_neuron_counters_info {
-	__u64 mmap_offset; // [out] mmap() offset for the counters
-	__u32 size; // [out] size of memory allocated for counters
+struct neuron_ioctl_neuron_ds_info {
+	pid_t pid; // [in] PID for this request, 0 to use own requester PID
+	__u64 mmap_offset; // [out] mmap() offset for this ds
+	__u32 size; // [out] size of memory allocated for this ds
 };
 
 struct neuron_ioctl_notifications_destroy {
@@ -191,10 +220,48 @@ struct neuron_ioctl_notifications_destroy_nq {
 	__u32 engine_index; // [in] Engine Index.
 };
 
+struct neuron_ioctl_notifications_queue_info {
+	__u8 nq_dev_id; // [in] Neuron Core Index or top sp index
+	__u8 nq_top_sp; // [in] If set then get info for top sp NQ
+	__u8 nq_type; // [in] Notification queue type
+	__u8 engine_index; // [in] Engine Index.
+	__u32 head; // [out] Notification queue head
+	__u32 phase_bit; // [out] Notification queue's current phase_bit
+};
+
 struct neuron_ioctl_read_hw_counters {
 	__u64 *address; // [in] Array of register addresses.
 	__u32 *data; // [iout] Buffer from where to data written.
 	__u32 count; // [in] Number of registers to read or write.
+};
+
+struct neuron_ioctl_crwl {
+	__u32 nc_id; // [in] neuron core index
+	struct neuron_uuid uuid; // [in] model identifier
+};
+
+struct neuron_ioctl_crwl_nc_map {
+	__u32 nc_count; // [in] number of neuron cores needed/available.
+	__u32 start_nc_index; // [in] starting neuron core index from which search should start.
+	__u32 end_nc_index; // [in] ending neuron core index.
+	__u32 max_nc_available; // [out] max free nc available.
+	volatile long unsigned int bitmap; // [in/out] bitmap of neuron cores.
+};
+
+struct neuron_ioctl_cinit_set {
+	__u32 nc_id; // [in] neuron code id whose init state that needs to be set
+	__u32 state; // [in] state to set
+	__u32 new_state; // [out] new state after the set is called
+};
+
+struct neuron_ioctl_nc_model_started_count {
+	__u32 nc_id; // [in] neuron code id whose init state that needs to be set
+	__u64 started_count; // [out] number of times model start is called
+};
+
+struct neuron_ioctl_compatible_version {
+	__u32 max; // [out] the highest supported RT version
+	__u32 min; // [out] the lowest supported RT version
 };
 
 #define NEURON_IOCTL_MAX_CONNECTED_DEVICES 8
@@ -210,11 +277,7 @@ struct neuron_ioctl_device_info {
 
 #define NEURON_IOCTL_BASE 'N'
 
-/** Send "Reset" Request to the hardware.
- *  Reset would clear device DRAM and initializes few hardware blocks and might take few seconds.
- *  NEURON_IOCTL_DEVICE_RESET_STATUS should be used to check whether HW started reset process.
- *  NEURON_IOCTL_DEVICE_READY needs to be checked to find if reset is completed and device ready for use.
- */
+/* Deprecated reset related IOCTLs. Now it would always return success. */
 #define NEURON_IOCTL_DEVICE_RESET _IO(NEURON_IOCTL_BASE, 1)
 #define NEURON_IOCTL_DEVICE_RESET_STATUS _IOR(NEURON_IOCTL_BASE, 2, __u8)
 #define NEURON_IOCTL_DEVICE_READY _IOR(NEURON_IOCTL_BASE, 2, __u8)
@@ -222,15 +285,13 @@ struct neuron_ioctl_device_info {
 /** Returns devices information and connection topology. */
 #define NEURON_IOCTL_DEVICE_INFO _IOR(NEURON_IOCTL_BASE, 3, struct neuron_ioctl_device_info *)
 
-/** Initializes DMA ring so that the applications can do DMA from and out of the device.
- *  This will bind the process to this device. Until this process calls NEURON_IOCTL_DEVICE_RELEASE or
- *  closes the device node(/dev/neuron), no other process can use this device for DMA.
- */
+/* Deprecated reset related IOCTLs. Now it would always return success. */
 #define NEURON_IOCTL_DEVICE_INIT _IOR(NEURON_IOCTL_BASE, 4, struct neuron_ioctl_device_init *)
 #define NEURON_IOCTL_DEVICE_RELEASE _IO(NEURON_IOCTL_BASE, 5)
 
 /** Returns current application pid using the device. */
 #define NEURON_IOCTL_DEVICE_APP_PID _IOR(NEURON_IOCTL_BASE, 6, __s32)
+#define NEURON_IOCTL_DEVICE_GET_ALL_APPS_INFO _IOR(NEURON_IOCTL_BASE, 7, struct neuron_ioctl_get_apps_info *)
 
 /** Read from BAR */
 #define NEURON_IOCTL_BAR_READ _IOR(NEURON_IOCTL_BASE, 11, struct neuron_ioctl_bar_rw *)
@@ -247,21 +308,22 @@ struct neuron_ioctl_device_info {
 #define NEURON_IOCTL_MEM_COPY _IOR(NEURON_IOCTL_BASE, 23, struct neuron_ioctl_mem_copy *)
 /** Copy data from/to given host buffer to/from memory_handle. (using DMA)*/
 #define NEURON_IOCTL_MEM_BUF_COPY _IOWR(NEURON_IOCTL_BASE, 24, struct neuron_ioctl_mem_buf_copy *)
-/** Returns physical address of given memory_handle.
- *  This can be used by applications to DMA.
- */
+/** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
 #define NEURON_IOCTL_MEM_GET_PA _IOR(NEURON_IOCTL_BASE, 25, struct neuron_ioctl_mem_get_pa *)
-
-/** Returns information of given memory_handle such as PA and mmap offset.
- *  This can be used by applications to DMA.
- */
+#define NEURON_IOCTL_PROGRAM_ENGINE _IOWR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_program_engine *)
+/** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
 #define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_mem_get_info *)
 /** Meset zeros on the hanlde */
 #define NEURON_IOCTL_MEMSET _IOR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_memset *)
+/** Returns information of given memory_handle such as PA and mmap offset and size.
+ *  Application can use this info to generate DMA descriptors or mmap memory.
+ */
+#define NEURON_IOCTL_MEM_GET_EXTENDED_INFO _IOR(NEURON_IOCTL_BASE, 28, struct neuron_ioctl_mem_get_extended_info *)
 
 
-/** Initialize DMA engine. */
+/** Deprecated - Initialize DMA engine. */
 #define NEURON_IOCTL_DMA_ENG_INIT _IOR(NEURON_IOCTL_BASE, 30, struct neuron_ioctl_dma_eng_init *)
+
 /** Change DMA engine state to - Start or Disable */
 #define NEURON_IOCTL_DMA_ENG_SET_STATE _IOR(NEURON_IOCTL_BASE, 31, struct neuron_ioctl_dma_eng_set_state *)
 /** Returns current state of the DMA engine*/
@@ -292,15 +354,31 @@ struct neuron_ioctl_device_info {
 #define NEURON_IOCTL_EVENT_GET _IOWR(NEURON_IOCTL_BASE, 46, struct neuron_ioctl_semaphore *)
 
 /** Initializes notification queues in the neuron core. */
-#define NEURON_IOCTL_NOTIFICATIONS_INIT _IOR(NEURON_IOCTL_BASE, 51, struct neuron_ioctl_notifications_init *)
-#define NEURON_IOCTL_NOTIFICATIONS_DESTROY _IOR(NEURON_IOCTL_BASE, 52, struct neuron_ioctl_notifications_destroy *)
-#define NEURON_IOCTL_NOTIFICATIONS_INIT_NQ _IOR(NEURON_IOCTL_BASE, 53, struct neuron_ioctl_notifications_init_nq *)
-#define NEURON_IOCTL_NOTIFICATIONS_DESTROY_NQ _IOR(NEURON_IOCTL_BASE, 54, struct neuron_ioctl_notifications_destroy_nq *)
+#define NEURON_IOCTL_NOTIFICATIONS_INIT_V1 _IOR(NEURON_IOCTL_BASE, 51, struct neuron_ioctl_notifications_init_v1 *)
+#define NEURON_IOCTL_NOTIFICATIONS_DESTROY_V1 _IOR(NEURON_IOCTL_BASE, 52, struct neuron_ioctl_notifications_destroy *)
+#define NEURON_IOCTL_NOTIFICATIONS_INIT_V2 _IOR(NEURON_IOCTL_BASE, 53, struct neuron_ioctl_notifications_init_v2 *)
+
+#define NEURON_IOCTL_NOTIFICATIONS_QUEUE_INFO _IOR(NEURON_IOCTL_BASE, 58, struct neuron_ioctl_notifications_queue_info *)
 
 /** Gets the HW counters */
 #define NEURON_IOCTL_READ_HW_COUNTERS _IOR(NEURON_IOCTL_BASE, 61, struct neuron_ioctl_read_hw_counters *)
 
-/** Get neuron counters info */
-#define NEURON_IOCTL_GET_NEURON_COUNTERS_INFO _IOR(NEURON_IOCTL_BASE, 71, struct neuron_ioctl_neuron_counters_info *)
+/** Neuron DS functionality */
+#define NEURON_IOCTL_ACQUIRE_NEURON_DS _IOR(NEURON_IOCTL_BASE, 71, struct neuron_ioctl_neuron_ds_info *)
+#define NEURON_IOCTL_RELEASE_NEURON_DS _IOR(NEURON_IOCTL_BASE, 72, struct neuron_ioctl_neuron_ds_info *)
 
+/** Increment/decrement neuron core use count */
+#define NEURON_IOCTL_CRWL_READER_ENTER _IOW(NEURON_IOCTL_BASE, 81, struct neuron_ioctl_crwl *)
+#define NEURON_IOCTL_CRWL_READER_EXIT  _IOW(NEURON_IOCTL_BASE, 82, struct neuron_ioctl_crwl *)
+#define NEURON_IOCTL_CRWL_WRITER_ENTER _IOW(NEURON_IOCTL_BASE, 83, struct neuron_ioctl_crwl *)
+#define NEURON_IOCTL_CRWL_WRITER_DOWNGRADE  _IOW(NEURON_IOCTL_BASE, 84, struct neuron_ioctl_crwl *)
+#define NEURON_IOCTL_CRWL_NC_RANGE_MARK _IOW(NEURON_IOCTL_BASE, 85, struct neuron_ioctl_crwl_nc_map *)
+#define NEURON_IOCTL_CRWL_NC_RANGE_UNMARK _IOW(NEURON_IOCTL_BASE, 86, struct neuron_ioctl_crwl_nc_map *)
+
+/** Neuron Core Init State */
+#define NEURON_IOCTL_CINIT_SET_STATE _IOW(NEURON_IOCTL_BASE, 91, struct  neuron_ioctl_cinit_set *)
+#define NEURON_IOCTL_NC_MODEL_STARTED_COUNT _IOW(NEURON_IOCTL_BASE, 92, struct  neuron_ioctl_nc_model_started_count *)
+
+/** Compatibility check */
+#define NEURON_IOCTL_COMPATIBLE_VERSION _IOW(NEURON_IOCTL_BASE, 93, struct  neuron_ioctl_compatible_version *)
 #endif

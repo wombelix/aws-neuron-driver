@@ -1,8 +1,18 @@
 obj-m += neuron.o
 
-neuron-objs := neuron_module.o neuron_pci.o neuron_mempool.o neuron_dma.o neuron_ring.o
-neuron-objs += neuron_core.o neuron_cdev.o
-neuron-objs += udma/udma_iofic.o udma/udma_m2m.o udma/udma_main.o v1/fw_io.o
+neuron-objs := neuron_module.o neuron_pci.o neuron_mempool.o neuron_dma.o neuron_ring.o neuron_ds.o
+neuron-objs += neuron_core.o neuron_crwl.o neuron_cdev.o neuron_topsp.o neuron_pid.o
+neuron-objs += neuron_reset.o neuron_cinit.o neuron_mmap.o neuron_p2p.o
+neuron-objs += neuron_nq.o
+neuron-objs += neuron_metrics.o
+neuron-objs += udma/udma_iofic.o udma/udma_m2m.o udma/udma_main.o
+neuron-objs += neuron_arch.o
+neuron-objs += neuron_fw_io.o
+neuron-objs += v1/fw_io.o
+neuron-objs += v1/putils.o
+neuron-objs += v2/notific.o
+neuron-objs += v1/dma.o
+neuron-objs += v2/dma.o
 
 ccflags-y += -O3 -Wall -Werror -Wno-declaration-after-statement -Wunused-macros -Wunused-local-typedefs
 ccflags-y += -I$(src)/

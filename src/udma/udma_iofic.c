@@ -6,6 +6,8 @@
 /** Interrupt and abort configurations.
  */
 
+#define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
+
 #include "udma.h"
 #include "udma_regs.h"
 
@@ -271,7 +273,7 @@ static void iofic_unmask(void __iomem *regs_base, int group, u32 mask)
 static void iofic_abort_mask_clear(void __iomem *regs_base, int group, u32 mask)
 {
 	struct iofic_regs __iomem *regs = (struct iofic_regs __iomem *)(regs_base);
-	reg_write32_masked(&regs->ctrl[group].int_abort_msk_grp, mask, ~mask);
+	reg_write32(&regs->ctrl[group].int_abort_msk_grp, ~mask);
 }
 
 /** Get the interrupt controller base address.

@@ -3,8 +3,8 @@
  * Copyright 2020, Amazon.com, Inc. or its affiliates. All Rights Reserved
  */
 
-#ifndef NEURON_NOTIFICATION_H
-#define NEURON_NOTIFICATION_H
+#ifndef NEURON_CORE_H
+#define NEURON_CORE_H
 
 /**
  * nc_semaphore_read() - Read current semaphore value
@@ -78,23 +78,13 @@ int nc_event_get(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 *resul
  */
 int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value);
 
-#define MAX_NQ_TYPE 4
-#define MAX_NQ_ENGINE 4
-#define NQ_TYPE_PER_ENGINE 4
+// followin defines have the max between versions of chip
+// please check the chip's address_map.h to find the values
+#define MAX_NQ_TYPE 5  //for v1 4 and v2 5
+#define MAX_NQ_ENGINE 16 // for v1 4 engines for v2 16 queues
+#define NQ_TYPE_PER_ENGINE 5 // for v1 4 and for v2 5
 
 #define MAX_NQ_SUPPORTED (MAX_NQ_TYPE * MAX_NQ_ENGINE)
-
-/**
- * nc_get_nq_mmap_offset() - Get notification queue's mmap offset for given neuron core.
- *
- * @nc_id: neuron core index.
- * @engine_index: engine index in the neuron core.
- * @nq_type: notification type.
- * @offset: mmap offset for the notification queue is stored here.
- *
- * Return: 0 on success, a negative error code otherwise.
- */
-int nc_get_nq_mmap_offset(int nc_id, int engine_index, int nq_type, u64 *offset);
 
 /**
  * nc_get_nq_mem_handle() - Get notification queue's mem handle for given neuron core.
@@ -110,80 +100,95 @@ int nc_get_nq_mmap_offset(int nc_id, int engine_index, int nq_type, u64 *offset)
 int nc_get_nq_mem_handle(struct neuron_device *nd, int nc_id, int engine_index, int nq_type, u64 *handle);
 
 /**
- * nc_get_nq_from_mmap_offset() - Get notification queue's index from given mmap offset.
+ * nc_get_nq_mem_handle() - Get notification queue's mem handle for given neuron core.
  *
- * @offset: mmap offset.
- * @nc_id: neuron core index which is mapped by this mmap offset is updated here.
- * @engine_index: engine index in the neuron core which mapped by this mmap offset is updated here.
- * @nq_type: notification type for the engine is updated here.
+ * @nd: neuron device
+ * @nc_id: neuron core index.
+ * @engine_index: engine index in the neuron core.
+ * @nq_type: notification type.
+ * @handle: handle for the notification queue is stored here.
  *
  * Return: 0 on success, a negative error code otherwise.
  */
-int nc_get_nq_from_mmap_offset(u64 offset, int *nc_id, int *engine_index, int *nq_type);
+int nc_get_nq_mem_handle(struct neuron_device *nd, int nc_id, int engine_index, int nq_type, u64 *handle);
 
 /**
- * nc_nq_init() - Initialize notification queue in host memory
+ * nnq_init() - Initialize notification queue for NeuronCore
  *
  * @nd: neuron device
  * @nc_id: core index in the device
  * @eng_index: notification engine index in the core
  * @nq_type: type of the notification queue
- * @size: size of queue
+ * @size: size of queue in bytes
+ * @on_host_memory: if true, NQ is created in host memory
+ * @dram_channel: If NQ is created on device memory which DRAM channel to use.
+ * @dram_region: If NQ is created on device memory which DRAM region to use.
+ * @nq_mc[out]: memchunk used by the NQ will be written here
+ * @mc_ptr[out]: Pointer to memchunk backing this NQ
  *
  * Return: 0 on if initialization succeeds, a negative error code otherwise.
  */
-int nc_nq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size);
+int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size,
+	       u32 on_host_memory, u32 dram_channel, u32 dram_region,
+	       struct mem_chunk **nq_mc, u64 *mmap_offset);
+
 
 /**
- * nc_nq_init_mc() - Initialize notification queue with given memory
- *
- * @nd: neuron device
- * @nc_id: core index in the device
- * @eng_index: notification engine index in the core
- * @nq_type: type of the notification queue
- * @size: size of queue
- * @mc: memory used for this nq
- *
- * Return: 0 on if initialization succeeds, a negative error code otherwise.
- */
-int nc_nq_init_mc(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size, struct mem_chunk *mc);
-
-/**
- * nc_nq_destroy() - Cleanup and free notification queue.
- *
- * @nd: neuron device
- * @nc_id: core index in the device
- * @eng_index: notification engine index in the core
- * @nq_type: type of the notification queue
- *
- * Return: 0 on success, a negative error code otherwise.
- */
-int nc_nq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type);
-
-/**
- * nc_nq_destroy_all() - Disable notification in the device
+ * nnq_destroy_all() - Disable notification in the device
  *
  * @nd: neuron device
  *
  */
-void nc_nq_destroy_all(struct neuron_device *nd);
+void nnq_destroy_all(struct neuron_device *nd);
 
 /**
- * nc_hm_mmap_offset() - Return mmap offset for given memory chunk.
+ * nc_nq_device_init() - Initialize the mc's in device
  *
- * @mc: memory chunk which needs to be mapped
- *
- * Return: offset to be used to mmap in the /dev/ndX file.
- */
-u64 nc_hm_mmap_offset(struct mem_chunk *mc);
-
-/**
- * nc_mmap() - mmap a range into userspace
  * @nd: neuron device
- * @vma: mmap area.
  *
- * Return: 0 on success, a negative error code otherwise.
  */
-int nc_mmap(struct neuron_device *nd, struct vm_area_struct *vma);
+void nc_nq_device_init(struct neuron_device *nd);
+
+/**
+ * nc_ds_mmap_offset() - Return mmap offset for the datastore for the given nc.
+ *
+ * @nc_index: neuroncore index
+ * @nd: neuron device
+ *
+ * Return: offset to be used to mmap in the /dev/ndX file or (u64)(-1) in case of invalid nc index
+ */
+u64 nc_ds_mmap_offset(struct neuron_device *nd, u8 nc_index);
+
+/**
+ * nnq_get_nq_info() - Get notification queue information.
+ *
+ * @nd: neuron device
+ * @nq_dev_id: neuron core index or top_sp index
+ * @use_top_sp: if 1 then use top_sp else use neuron core
+ * @eng_index: engine index
+ * @nq_type: NQ type
+ * @head: Current head pointer would be stored here.
+ * @phase_bit: Current phase bit of the queue would be stored here.
+ *
+ * @return 0 on success
+ */
+int nnq_get_nq_info(struct neuron_device *nd, u8 nq_dev_id, u8 use_top_sp, u8 eng_index, u32 nq_type, u32 *head, u32 *phase_bit);
+
+/**
+ * nc_track_register_write() - This function would be called when register write is called.
+ *
+ * @nd: neuron device
+ * @bar: BAR number where write is destined.
+ * @offset: Offset in the BAR.
+ * @value: Value being written.
+ */
+void nc_track_register_write(struct neuron_device *nd, int bar, u64 offset, u32 value);
+
+/**
+ * nnq_reset() - Reset software state for all NQ in given device.
+ *
+ * @nd: neuron device
+ */
+void nnq_reset(struct neuron_device *nd);
 
 #endif

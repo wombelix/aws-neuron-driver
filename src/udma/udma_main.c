@@ -27,6 +27,8 @@ struct udma_m2s_pkt_len_conf {
 	bool encode_64k_as_zero;
 };
 
+#define UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB (1 << 2)
+
 /*  dma_q flags */
 #define UDMA_Q_FLAGS_NO_COMP_UPDATE BIT(1)
 
@@ -36,8 +38,7 @@ struct udma_m2s_pkt_len_conf {
  */
 static int udma_m2s_packet_size_cfg_set(struct udma *udma, struct udma_m2s_pkt_len_conf *conf)
 {
-	u32 reg;
-	int ret;
+	u32 reg = 0;
 	u32 max_supported_size = UDMA_M2S_CFG_LEN_MAX_PKT_SIZE_MASK;
 
 	if (conf->max_pkt_size > max_supported_size) {
@@ -45,10 +46,6 @@ static int udma_m2s_packet_size_cfg_set(struct udma *udma, struct udma_m2s_pkt_l
 		       conf->max_pkt_size, max_supported_size);
 		return -EINVAL;
 	}
-
-	ret = reg_read32(&udma->udma_regs_m2s->m2s.cfg_len, &reg);
-	if (ret)
-		return -EIO;
 
 	if (conf->encode_64k_as_zero)
 		reg |= UDMA_M2S_CFG_LEN_ENCODE_64K;
@@ -62,13 +59,15 @@ static int udma_m2s_packet_size_cfg_set(struct udma *udma, struct udma_m2s_pkt_l
 	return 0;
 }
 
+#define UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY (1 << 16)
+
 /* set default configuration of one DMA engine */
 static int udma_set_defaults(struct udma *udma)
 {
 	struct udma_gen_ex_regs __iomem *gen_ex_regs;
 	u8 rev_id = udma->rev_id;
 	unsigned int i;
-	u32 mask, value;
+	u32 value;
 
 	// Init TX
 	struct udma_m2s_pkt_len_conf conf = {
@@ -80,19 +79,16 @@ static int udma_set_defaults(struct udma *udma)
 	 *This allows the UDMA to have 128 outstanding writes
 	 */
 	unsigned int num_beats = (rev_id >= UDMA_REV_ID_4) ? 1024 : 256;
-	mask = UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_MASK;
-	value = num_beats << UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_SHIFT;
-	if (reg_write32_masked(&udma->udma_regs_m2s->m2s_rd.data_cfg, mask, value))
-		return -EIO;
+	value = (num_beats << UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_SHIFT) |
+		(UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_RESET_VALUE << UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_SHIFT);
+	reg_write32(&udma->udma_regs_m2s->m2s_rd.data_cfg, value);
 
-	mask = UDMA_AXI_M2S_OSTAND_CFG_MAX_DATA_RD_MASK | UDMA_AXI_M2S_OSTAND_CFG_MAX_DESC_RD_MASK |
-	       UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_MASK;
 	value = (128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DATA_RD_SHIFT) |
 		(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_DESC_RD_SHIFT) |
-		(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_SHIFT);
+		(128 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_SHIFT) |
+		(32 << UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_DATA_WR_SHIFT);
 	/* Set M2S max number of outstanding transactions */
-	if (reg_write32_masked(&udma->udma_regs_m2s->axi_m2s.ostand_cfg, mask, value))
-		return -EIO;
+	reg_write32(&udma->udma_regs_m2s->axi_m2s.ostand_cfg, value);
 
 	/* set AXI timeout to 1M (~2.6 ms) */
 	reg_write32(&udma->gen_axi_regs->cfg_1, 1000000);
@@ -108,6 +104,10 @@ static int udma_set_defaults(struct udma *udma)
 	for (i = 0; i < DMA_MAX_Q_V4; i++)
 		reg_write32(&gen_ex_regs->vmpr_v4[i].tx_sel, 0xffffffff);
 
+	if (v2_chip)
+		reg_write32(&udma->udma_regs_m2s->axi_m2s.data_rd_cfg,
+			    UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY | 0x8);
+
 	/* Ack time out */
 	reg_write32(&udma->udma_regs_s2m->s2m_comp.cfg_application_ack, 0);
 
@@ -120,18 +120,15 @@ static int udma_set_defaults(struct udma *udma)
 	}
 
 	/* Set S2M max number of outstanding transactions */
-	mask = UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_MASK;
-	value = 128 << UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_SHIFT;
-	if (reg_write32_masked(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_rd, mask, value)) {
-		return -EIO;
-	}
+	value = (128 << UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_SHIFT) |
+            (0x40 << UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_STREAM_ACK_SHIFT);
+	reg_write32(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_rd, value);
 
-	mask = UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_DATA_WR_OSTAND_MASK |
-	       UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_REQ_MASK;
 	value = (128 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_DATA_WR_OSTAND_SHIFT) |
-		(128 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_REQ_SHIFT);
-	if (reg_write32_masked(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_wr, mask, value))
-		return -EIO;
+		(0x40 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_DATA_BEATS_WR_SHIFT) |
+		(128 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_REQ_SHIFT) |
+		(0x40 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_DATA_WR_SHIFT);
+	reg_write32(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_wr, value);
 
 	/* disable completion pointer increments if completion ring is disabled.
 	 * This register only affects behavior when S2M completion ring is disabled
@@ -144,39 +141,25 @@ static int udma_set_defaults(struct udma *udma)
 	return 0;
 }
 
-/* Each DMA engine has 16 queues, all queues have the same default values.
- * Since CSR reads are expensive read defaults for queue 0 and use them
- * for all other queues.  This speeds up DMA engine initialization.
+#define M2S_CFG_RESET_VALUE (3<<24)
+#define S2M_CFG_RESET_VALUE (3<<24)
+#define M2S_RATE_LIMIT_RESET_VALUE 0b111
+
+/* Cache frequently use CSR values.
+ *
+ * CSR reads are very slow and only one application(neuron) is using the DMA.
+ * So instead of reading CSR use hardware reset value(from datasheet) as
+ * default value.
  */
 static int udma_cache_defaults(struct udma *udma)
 {
-	/* cfg values are the same for all 16 queues, but different between m2s and s2m
-	 * read defaults from the first queue and use for the rest of the queues
-	 */
-	int ret;
 	int i;
 	for (i = 0; i < DMA_MAX_Q_V4; i++) {
-		struct udma_q *q0_m2s = &udma->udma_q_m2s[0];
-		struct udma_q *q0_s2m = &udma->udma_q_s2m[0];
-		if (i == 0) {
-			/* read the first one */
-			ret = reg_read32(&q0_m2s->q_regs->rings.cfg, &q0_m2s->cfg);
-			if (ret)
-				return -EIO;
-			ret = reg_read32(&q0_m2s->q_regs->m2s_q.rlimit.mask, &q0_m2s->rlimit_mask);
-			if (ret)
-				return -EIO;
-			ret = reg_read32(&q0_s2m->q_regs->rings.cfg, &q0_s2m->cfg);
-			if (ret)
-				return -EIO;
-		} else {
-			/* copy from the first one */
-			struct udma_q *q = &udma->udma_q_m2s[i];
-			q->cfg = q0_m2s->cfg;
-			q->rlimit_mask = q0_m2s->rlimit_mask;
-			q = &udma->udma_q_s2m[i];
-			q->cfg = q0_s2m->cfg;
-		}
+		struct udma_q *q = &udma->udma_q_m2s[i];
+		q->cfg = M2S_CFG_RESET_VALUE;
+		q->rlimit_mask = M2S_RATE_LIMIT_RESET_VALUE;
+		q = &udma->udma_q_s2m[i];
+		q->cfg = S2M_CFG_RESET_VALUE;
 	}
 	return 0;
 }
@@ -256,30 +239,15 @@ static void udma_q_enable(struct udma_q *udma_q, int enable)
 	udma_q->cfg = reg;
 }
 
-unsigned int udma_revision_get(void __iomem *regs_base)
-{
-	struct udma_m2s_regs_v4 __iomem *m2s_regs = (struct udma_m2s_regs_v4 __iomem *)regs_base;
-	u32 dma_version;
-
-	reg_read32(&m2s_regs->m2s_feature.dma_version, &dma_version);
-
-	return dma_version;
-}
-
 /** Initialize UDMA handle and allow to read current statuses from registers
  */
 static int udma_handle_init_aux(struct udma *udma, struct udma_params *udma_params)
 {
 	int i;
 
-	udma->rev_id = udma_revision_get(udma_params->udma_regs_base);
 	/* note, V1 hardware uses DMA rev4, no need to support other version */
-	if (udma->rev_id == UDMA_REV_ID_4) {
-		udma->num_of_queues_max = DMA_MAX_Q_V4;
-	} else {
-		pr_err("unsupported DMA rev id: %d\n", udma->rev_id);
-		return -EINVAL;
-	}
+	udma->rev_id = UDMA_REV_ID_4;
+	udma->num_of_queues_max = DMA_MAX_Q_V4;
 
 	if (udma_params->num_of_queues == UDMA_NUM_QUEUES_MAX)
 		udma->num_of_queues = udma->num_of_queues_max;
@@ -351,21 +319,16 @@ int udma_init(struct udma *udma, struct udma_params *udma_params)
 	udma_iofic_s2m_error_ints_unmask(udma);
 
 	udma->cdesc_size = udma_params->cdesc_size;
-	/* set the completion queue size */
-	ret = reg_read32(&udma->udma_regs_s2m->s2m_comp.cfg_1c, &val);
-	if (ret) {
-		return -EIO;
-	}
-	val &= ~UDMA_S2M_COMP_CFG_1C_DESC_SIZE_MASK;
-	/* the register expects it to be in words */
-	val |= (udma_params->cdesc_size >> 2) & UDMA_S2M_COMP_CFG_1C_DESC_SIZE_MASK;
+	val = (1 << UDMA_S2M_COMP_CFG_1C_Q_PROMOTION_SHIFT) |
+	      (udma_params->cdesc_size >> 2) << UDMA_S2M_COMP_CFG_1C_DESC_SIZE_SHIFT; /* the register expects it to be in words */
 	reg_write32(&udma->udma_regs_s2m->s2m_comp.cfg_1c, val);
 	ret = udma_cache_defaults(udma);
 	if (ret) {
 		return ret;
 	}
 
-	pr_debug("%s initialized. base m2s: %p, s2m: %p\n", udma->name, udma->udma_regs_m2s, udma->udma_regs_s2m);
+	pr_debug("%s initialized. base m2s: %p, s2m: %p\n", udma->name, udma->udma_regs_m2s,
+		 udma->udma_regs_s2m);
 	return 0;
 }
 
@@ -440,6 +403,17 @@ static void udma_q_init_internal(struct udma *udma, u32 qid, struct udma_q_param
 	udma_q->status = QUEUE_DISABLED;
 	udma_q->udma = udma;
 	udma_q->qid = qid;
+
+	if (v2_chip && udma_q->type == UDMA_TX) {
+		uint32_t *reg_addr;
+		uint32_t val;
+
+		reg_addr = &udma_q->q_regs->m2s_q.rlimit.mask;
+		val = udma_q->rlimit_mask;
+		// enable DMB
+		val &= ~UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB;
+		reg_write32(reg_addr, val);
+	}
 
 	/* clear all queue ptrs */
 	udma_q_reset(udma_q);

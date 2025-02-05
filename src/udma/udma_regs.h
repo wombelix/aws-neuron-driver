@@ -12,10 +12,14 @@
 #include <linux/types.h>
 
 struct udma_axi_m2s {
-	u32 reserved0[9];
+	uint32_t reserved0[6];
+	/* [0x18] Data read master configuration */
+	uint32_t data_rd_cfg;
+	uint32_t reserved1[2];
+	/* [0x24] AXI outstanding  configuration */
 	/* [0x24] AXI outstanding  configuration */
 	u32 ostand_cfg;
-	u32 reserved1[54];
+	u32 reserved2[54];
 };
 
 struct udma_m2s {
@@ -140,14 +144,16 @@ struct udma_m2s_regs_v4 {
  */
 #define UDMA_M2S_CFG_LEN_ENCODE_64K (1 << 24)
 
+#define UDMA_M2S_RD_DESC_PREF_CFG_2_PERF_FORCE_RR_SHIFT 16
 /* Maximum number of descriptors per packet */
-#define UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_MASK 0x00000FFF
 #define UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_SHIFT 0
 
 /* Minimum descriptor burst size when prefetch FIFO level is above the descriptor prefetch threshold
  */
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_MASK 0x000000F0
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT 4
+
+#define UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT 0
 
 /* Descriptor fetch threshold.
  * Used as a threshold to determine the allowed minimum descriptor burst size.
@@ -161,6 +167,12 @@ struct udma_m2s_regs_v4 {
  */
 #define UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_MASK 0x00000FFF
 #define UDMA_M2S_RD_DATA_CFG_DATA_FIFO_DEPTH_SHIFT 0
+
+/** Maximum number of packets in the data read FIFO.
+ *  Defined based on header FIFO size.
+ */
+#define UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_SHIFT 16
+#define UDMA_M2S_RD_DATA_CFG_MAX_PKT_LIMIT_RESET_VALUE 0x100
 
 /* Enable prefetch operation of this queue.*/
 #define UDMA_M2S_Q_CFG_EN_PREF (1 << 16)
@@ -334,14 +346,17 @@ struct udma_s2m_regs_v4 {
 /* Maximum number of outstanding descriptor reads to the AXI.*/
 #define UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_MASK 0x000000FF
 #define UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_DESC_RD_OSTAND_SHIFT 0
+/* Maximum number of outstanding stream acknowledges. */
+#define UDMA_AXI_S2M_OSTAND_CFG_RD_MAX_STREAM_ACK_SHIFT 16
 
 /* Maximum number of outstanding data writes to the AXI. */
-#define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_DATA_WR_OSTAND_MASK 0x000000FF
 #define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_DATA_WR_OSTAND_SHIFT 0
-
 /* Maximum number of outstanding descriptor writes to the AXI. */
-#define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_REQ_MASK 0x00FF0000
+#define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_DATA_BEATS_WR_SHIFT 8
+/* Maximum number of outstanding data beats for data write to AXI. (AXI beats). */
 #define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_REQ_SHIFT 16
+/* Maximum number of outstanding data beats for descriptor write to AXI. (AXI beats). */
+#define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_DATA_WR_SHIFT 24
 
 /* Disables the stream interface operation.
  * Changing to 1 stops at the end of packet reception.
@@ -356,8 +371,11 @@ struct udma_s2m_regs_v4 {
 /* Stop descriptor prefetch when the stream is disabled and the S2M is idle. */
 #define UDMA_S2M_STREAM_CFG_STOP_PREFETCH (1 << 8)
 
+/* Enable promotion of the current queue in progress in the completion write scheduler. */
+#define UDMA_S2M_COMP_CFG_1C_Q_PROMOTION_SHIFT 12
+
 /* Completion descriptor size(words). */
-#define UDMA_S2M_COMP_CFG_1C_DESC_SIZE_MASK 0x0000000F
+#define UDMA_S2M_COMP_CFG_1C_DESC_SIZE_SHIFT 0x0
 
 /* Reset the queue */
 #define UDMA_S2M_Q_SW_CTRL_RST_Q (1 << 8)
@@ -376,6 +394,9 @@ struct udma_s2m_regs_v4 {
 /* Maximum number of outstanding descriptor writes to the AXI (AXI transactions) - up to 128 */
 #define UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_MASK 0x00FF0000
 #define UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_REQ_SHIFT 16
+
+/* Maximum number of outstanding data beats for descriptor write to AXI (AXI beats) - up to 32 */
+#define UDMA_AXI_M2S_OSTAND_CFG_MAX_COMP_DATA_WR_SHIFT 24
 
 /* Completion control */
 #define UDMA_M2S_STATE_COMP_CTRL_MASK 0x00000003

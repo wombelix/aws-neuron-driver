@@ -7,14 +7,17 @@
 #define NEURON_RING_H
 
 #include "udma/udma.h"
-#include "v1/tdma.h"
 #include "v1/address_map.h"
+#include "v1/tdma.h"
+#include "v2/address_map.h"
+#include "v2/sdma.h"
 
-#define DMA_ENG_IDX_H2T 2
+#define DMA_ENG_IDX_H2T(nd)                                                                        \
+	(narch_get_arch() == NEURON_ARCH_TRN ? V2_DMA_ENG_PER_NC - 1 : V1_DMA_ENG_PER_NC - 1)
+#define DMA_ENG_PER_NC(nd)                                                                         \
+	(narch_get_arch() == NEURON_ARCH_TRN ? V2_DMA_ENG_PER_NC : V1_DMA_ENG_PER_NC)
 #define DMA_H2T_DESC_COUNT 4096
-#define MAX_DMA_RINGS 16
-
-#define NUM_DMA_ENG_PER_DEVICE (V1_NC_PER_DEVICE * V1_DMA_ENG_PER_NC)
+#define NUM_DMA_ENG_PER_DEVICE 32
 
 struct neuron_device;
 struct neuron_dma_eng_state;
@@ -191,5 +194,23 @@ int ndmar_eng_get_state(struct neuron_device *nd, int eng_id, struct neuron_dma_
  */
 int ndmar_queue_get_state(struct neuron_device *nd, int eng_id, int qid,
 			  struct neuron_dma_queue_state *tx, struct neuron_dma_queue_state *rx);
+
+
+/** ndmar_set_model_started_v1() -
+ *
+ * Checks to see if the pa belongs to PE IRAM FIFO offset. If so, then these
+ * descs are used to load the iram. The mem chunk is going to have all the descriptors
+ * to load the instructions in iram. So go through all the dma queues and check if this mem chunk is
+ * in that queue. Once we have the queue we set that queue to have descs
+ * for iram. The actual copy start of the queue would come when model is started and at that time
+ * set the state of model start for this nc.
+ *
+ * @nd: Neuron device which contains the DMA engine
+ * @pa: pa to check
+ * @mc: mem chunk that has descs
+ *
+ * Return: None
+ */
+void ndmar_set_model_started_v1(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc);
 
 #endif

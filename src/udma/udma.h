@@ -88,17 +88,17 @@ union udma_cdesc {
 
 /** UDMA queue type */
 enum udma_type {
-    UDMA_TX,
-    UDMA_RX
+	UDMA_TX,
+	UDMA_RX
 };
 
 /** UDMA state */
 enum udma_state {
-    UDMA_DISABLE = 0,
-    UDMA_IDLE,
-    UDMA_NORMAL,
-    UDMA_ABORT,
-    UDMA_RESET
+	UDMA_DISABLE = 0,
+	UDMA_IDLE,
+	UDMA_NORMAL,
+	UDMA_ABORT,
+	UDMA_RESET
 };
 
 extern const char *const udma_states_name[];
@@ -182,15 +182,6 @@ struct udma {
 	unsigned int rev_id; // UDMA revision ID
 	u32 cdesc_size;
 };
-
-/**
- * udma_revision_get() - Get the UDMA revision
- *
- * @regs_base: pointer to the UDMA registers
- *
- * Return: revision id of the hardware
- */
-unsigned int udma_revision_get(void __iomem *regs_base);
 
 /**
  * udma_init() - Initialize udma engine.
@@ -400,7 +391,7 @@ struct udma_ring_ptr {
  * Return: 0 if initialization is successful, a negative error code otherwise.
  */
 int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_queues, char *eng_name,
-			 int disable_phase_bit);
+			 int disable_phase_bit, int allowed_desc_per_pkt);
 
 /**
  * udma_m2m_init_queue() - Initialize a queue in the M2M engine.
@@ -429,12 +420,13 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
  * @d_addr: Destination physical address.
  * @size: - Size of the transfer(max 64K).
  * @set_dmb: Set memory barrier bit. This would make sure all previous transfer are done before starting this.
+ * @set_dmb: If set dmb is set for trn chip this will use the write barrier
  * @param en_int[in] - Enable interrupt bit.
  *
  * Return: 0 if successful, a negative error code otherwise.
  */
 int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma_addr_t d_addr,
-			      u32 size, bool set_dmb, bool en_int);
+			      u32 size, bool set_dmb, bool use_write_barrier, bool en_int);
 
 /**
  * udma_m2m_copy_start() - Start DMA transfer or prefetch s2m descriptors

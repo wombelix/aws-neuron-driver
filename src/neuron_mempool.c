@@ -18,6 +18,7 @@
 
 #include "neuron_mempool.h"
 #include "neuron_device.h"
+#include "neuron_reg_access.h"
 
 int mempool_min_alloc_size = 256;
 int mempool_host_memory_size = 32 * 1024 * 1024;
@@ -76,9 +77,9 @@ void mc_remove_node(struct rb_root *root, struct mem_chunk *mc)
 
 /**
  * mp_init_device_mem() Initialize the mempool structure to manage device memory.
- * Creates a backing gen_pool if the mem_location is device DRAM.
  *
  * @mp: pointer to mempool that needs to be initialized
+ * @mpset: ponter to mpset to which the given mp blongs.
  * @start_addr: starting address of the pool
  * @pool_size: size of the pool.
  * @mem_location: location of the backing memory.
@@ -91,6 +92,7 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 			      u64 start_addr, size_t pool_size,	u32 dram_channel, u32 dram_region)
 {
 	int ret;
+	int min_alloc_size = mempool_min_alloc_size;
 
 	memset(mp, 0, sizeof(*mp));
 
@@ -98,16 +100,27 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 	mp->mem_location = MEM_LOC_DEVICE;
 	mp->dram_channel = dram_channel;
 	mp->dram_region = dram_region;
-	INIT_LIST_HEAD(&mp->mc_list_head);
-	mp->gen_pool = gen_pool_create(ilog2(mempool_min_alloc_size), -1);
+
+	// v2 has a bigger mem size and gen pool create fails if < 1024
+	if (v2_chip && min_alloc_size < 1024) {
+		min_alloc_size = 1024;
+	}
+
+	mp->gen_pool = gen_pool_create(ilog2(min_alloc_size), -1);
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
 
 	// 0 is special since we cant differentiate failure(NULL) in gen_pool_alloc().
 	// so avoid starting at 0 by sacrificing first chunk.
 	if (start_addr == 0) {
-		start_addr = mempool_min_alloc_size;
-		pool_size -= mempool_min_alloc_size;
+		// For mmap the offset has to be page size. so start at page size boundary.
+		if (min_alloc_size % PAGE_SIZE != 0) {
+			start_addr = ((min_alloc_size/PAGE_SIZE) + 1) * PAGE_SIZE;
+			pool_size -= start_addr;
+		} else {
+			start_addr = min_alloc_size;
+			pool_size -= min_alloc_size;
+		}
 	}
 	ret = gen_pool_add_virt(mp->gen_pool, start_addr, start_addr, pool_size, -1);
 	if (ret) {
@@ -123,36 +136,10 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 }
 
 /**
- * Frees all the chunks associated with the mempool.
+ * Frees all backing pages allocated for reserved host_mem pool.
+ * Does opposite work of mp_init_hrm_pool
  */
-static void mp_free_device_mem(struct mempool *mp)
-{
-	BUG_ON(mp == NULL);
-	if (!mp->initialized)
-		return;
-
-	if (mp->gen_pool != NULL) {
-		// Free all entries
-		struct list_head *this, *next;
-
-		list_for_each_safe (this, next, &mp->mc_list_head) {
-			struct mem_chunk *mc =
-				list_entry(this, struct mem_chunk, device_allocated_list);
-			if (mc->va) {
-				gen_pool_free(mp->gen_pool, (unsigned long)mc->va, mc->size);
-				mc->va = NULL;
-			}
-			list_del(&mc->device_allocated_list);
-			kfree(mc);
-		}
-		mp->allocated_size = 0;
-	}
-}
-
-/**
- * Frees all the chunks associated with the mempool.
- */
-static void mp_free_host_mem(struct mempool *mp)
+static void mp_destroy_hrm_pool(struct mempool *mp)
 {
 	int i = 0;
 	if (mp->page_va_array == NULL)
@@ -174,7 +161,7 @@ static void mp_free_host_mem(struct mempool *mp)
 }
 
 /**
- * mp_init_host_mem() Initialize the mempool structure to manage host memory.
+ * mp_init_hrm_pool() Initialize the mempool structure to manage host memory.
  * Create a genpool with backing memory from host.
  * Any page allocation failure is ignored.
  *
@@ -185,7 +172,7 @@ static void mp_free_host_mem(struct mempool *mp)
  *
  * Return: 0 if pool is created, a negative error code otherwise.
  */
-static int mp_init_host_mem(struct mempool *mp, struct mempool_set *mpset,
+static int mp_init_hrm_pool(struct mempool *mp, struct mempool_set *mpset,
 			    u32 page_size, u32 page_count)
 {
 	int ret;
@@ -195,7 +182,6 @@ static int mp_init_host_mem(struct mempool *mp, struct mempool_set *mpset,
 
 	mp->mpset = mpset;
 	mp->mem_location = MEM_LOC_HOST;
-	INIT_LIST_HEAD(&mp->mc_list_head);
 	mp->gen_pool = gen_pool_create(ilog2(mempool_min_alloc_size), -1);
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
@@ -246,7 +232,7 @@ fail:
 /**
  * Frees all the chunks associated with the mempool and releases the mempool.
  */
-static void mp_destroy(struct mempool *mp)
+static void mp_destroy_gen_pool(struct mempool *mp)
 {
 	BUG_ON(mp == NULL);
 	if (!mp->initialized)
@@ -255,79 +241,48 @@ static void mp_destroy(struct mempool *mp)
 	if (mp->gen_pool == NULL)
 		return;
 
-	// Free all entries
-	if (mp->mem_location == MEM_LOC_HOST)
-		mp_free_host_mem(mp);
-	else
-		mp_free_device_mem(mp);
 	gen_pool_destroy(mp->gen_pool);
 	mp->gen_pool = NULL;
 }
 
-int mpset_constructor(struct mempool_set *mpset, void *pdev)
-{
-	int host_page_index;
-	u64 host_allocated_size = 0;
-
-	memset(mpset, 0, sizeof(*mpset));
-
-	mutex_init(&mpset->lock);
-	INIT_LIST_HEAD(&mpset->host_allocated_head);
-	mpset->root = RB_ROOT;
-	mpset->pdev = pdev;
-
-	// reserve host memory
-	for (host_page_index = MP_HOST_POOL_COUNT - 1; host_page_index >= 0; host_page_index--) {
-		u32 page_size = MP_HOST_PAGE_SIZE_MIN << host_page_index;
-		u32 page_count = mempool_host_memory_size / page_size;
-		int ret = 0;
-		ret = mp_init_host_mem(&mpset->mp_host[host_page_index], mpset,
-				       page_size, page_count);
-		if (ret) {
-			pr_err("neuron: mpset host init failed %d\n", ret);
-			goto fail;
-		}
-		host_allocated_size += mpset->mp_host[host_page_index].region_size;
-	}
-	pr_info("reserved %llu bytes of host memory\n", host_allocated_size);
-
-	return 0;
-
-fail:
-	for (; host_page_index < MP_HOST_POOL_COUNT; host_page_index++)
-		mp_destroy(&mpset->mp_host[host_page_index]);
-
-	return -ENOMEM;
-}
-
-void mpset_destructor(struct mempool_set *mpset)
-{
-	int i;
-
-	mpset_release(mpset);
-	mutex_lock(&mpset->lock);
-	for (i = 0; i < MP_HOST_POOL_COUNT; i++)
-		mp_destroy(&mpset->mp_host[i]);
-	mutex_unlock(&mpset->lock);
-}
-
-int mpset_init(struct mempool_set *mpset, int num_channels, int num_regions,
-	       const phys_addr_t *device_dram_addr, const u64 *device_dram_size)
+/**
+ * mpset_init_device_pools() - Prepare device mp in given mpset.
+ *
+ * @mpset: Pointer to mpset which need to be initialized
+ * @nd: Neuron device
+ *
+ * Return: 0 if initialization succeeds, a negative error code otherwise.
+ */
+static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_device *nd)
 {
 	int ret;
 	int channel = 0, region = 0;
 	u64 region_sz;
+	u64 device_dram_addr[MAX_DRAM_CHANNELS];
+	u64 device_dram_size[MAX_DDR_REGIONS];
 
-	if (num_regions <= 0 || num_regions > 4)
-		num_regions = 1;
-	mpset->mp_device_num_regions = num_regions;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		mpset->num_channels = V1_MAX_DRAM_CHANNELS;
+		device_dram_addr[0] = P_0_DRAM_0_BASE;
+		device_dram_addr[1] = P_0_DRAM_1_BASE;
+		device_dram_size[0] = P_0_DRAM_0_SIZE;
+		device_dram_size[1] = P_0_DRAM_1_SIZE;
+		mpset->mp_device_num_regions = 4;
+	} else {
+		mpset->num_channels = V2_MAX_DRAM_CHANNELS;
+		device_dram_addr[0] = V2_DRAM_0_BASE;
+		device_dram_addr[1] = V2_DRAM_1_BASE;
+		device_dram_size[0] = V2_DRAM_0_SIZE;
+		device_dram_size[1] = V2_DRAM_1_SIZE;
+		mpset->mp_device_num_regions = 1;
+	}
 
-	for (channel = 0; channel < num_channels; channel++) {
+	for (channel = 0; channel < mpset->num_channels; channel++) {
 		region_sz = device_dram_size[channel] / mpset->mp_device_num_regions;
 		for (region = 0; region < mpset->mp_device_num_regions; region++) {
 			dma_addr_t addr = device_dram_addr[channel] + (region * region_sz);
 			ret = mp_init_device_mem(&mpset->mp_device[channel][region], mpset, addr,
-						 region_sz, channel, region);
+									 region_sz, channel, region);
 			if (ret) {
 				pr_err("neuron: mpset device init failed %d\n", ret);
 				goto fail;
@@ -335,14 +290,12 @@ int mpset_init(struct mempool_set *mpset, int num_channels, int num_regions,
 		}
 	}
 
-	atomic_set(&mpset->freed, 0);
-
 	return 0;
 
 fail:
 	for (; channel >= 0; channel--) {
 		for (; region >= 0; region--) {
-			mp_destroy(&mpset->mp_device[channel][region]);
+			mp_destroy_gen_pool(&mpset->mp_device[channel][region]);
 		}
 	}
 	memset(mpset, 0, sizeof(struct mempool_set));
@@ -350,46 +303,116 @@ fail:
 	return ret;
 }
 
-static void mpset_free_host_memory(struct mempool_set *mpset)
+/** Prints all entries in given lifespan list and returns the number of MC.
+ */
+static int mpset_print_lifespan_list(const char *name, struct list_head *head)
 {
+	int count = 0;
 	struct list_head *this, *next;
-	if (mpset->host_allocated_head.next == NULL)
-		return;
-	list_for_each_safe (this, next, &mpset->host_allocated_head) {
-		struct mem_chunk *mc = list_entry(this, struct mem_chunk, host_allocated_list);
-		if (mc->va) {
-			write_lock(&mpset->rblock);
-			mc_remove_node(&mpset->root, mc);
-			write_unlock(&mpset->rblock);
-			if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
-				dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa);
-			} else {
-				kfree(mc->va);
-			}
-			mc->va = NULL;
-		}
-		list_del(&mc->host_allocated_list);
-		kfree(mc);
+	if (list_empty(head->next))
+		return 0;
+
+	pr_err("%s has unfreed mcs:\n", name);
+	list_for_each_safe (this, next, head) {
+		struct mem_chunk *mc = list_entry(this, struct mem_chunk, lifespan_list);
+		pr_err("mc:%px ref_count:%d pid:%d caller:%pf location:%d size:%d\n", mc, mc->ref_count, mc->pid, mc->caller_pc, mc->mem_location, mc->size);
+		count++;
 	}
-	mpset->host_mem_size = 0;
+	return count;
 }
 
-void mpset_release(struct mempool_set *mpset)
+/** Verifies all MC allocated from the mpset is freed.
+ */
+static void mpset_verify_all_mc_freed(struct mempool_set *mpset)
 {
-	u32 channel, region;
-	int already_freed;
+	int i, count;
+	count = mpset_print_lifespan_list("LOCAL", &mpset->mc_lifespan_local_head);
+	for (i = 0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++) {
+		count += mpset_print_lifespan_list("PROCESS",
+						   &mpset->mc_lifespan_cur_process_head[i]);
+	}
+	count += mpset_print_lifespan_list("ALL_PROCESS", &mpset->mc_lifespan_all_process_head);
+	count += mpset_print_lifespan_list("DEVICE", &mpset->mc_lifespan_device_head);
+	BUG_ON(count != 0);
+}
 
-	already_freed = atomic_xchg(&mpset->freed, 1);
-	if (already_freed)
-		return;
+int mpset_constructor(struct mempool_set *mpset, void *pdev, struct neuron_device *nd)
+{
+	int host_page_index;
+	u64 host_allocated_size = 0;
+	int i;
 
-	mutex_lock(&mpset->lock);
-	for (channel = 0; channel < V1_MAX_DRAM_CHANNELS; channel++) {
-		for (region = 0; region < mpset->mp_device_num_regions; region++) {
-			mp_destroy(&mpset->mp_device[channel][region]);
+	memset(mpset, 0, sizeof(*mpset));
+
+	mutex_init(&mpset->lock);
+
+	INIT_LIST_HEAD(&mpset->mc_lifespan_local_head);
+	for(i = 0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++)
+		INIT_LIST_HEAD(&mpset->mc_lifespan_cur_process_head[i]);
+	INIT_LIST_HEAD(&mpset->mc_lifespan_all_process_head);
+	INIT_LIST_HEAD(&mpset->mc_lifespan_device_head);
+
+	mpset->root = RB_ROOT;
+	mpset->mmap_root = RB_ROOT;
+	mpset->pdev = pdev;
+	mpset->nd = nd;
+
+	// reserve host memory
+	for (host_page_index = MP_HOST_RESERVE_MEMORY_POOL_COUNT - 1; host_page_index >= 0; host_page_index--) {
+		u32 page_size = MP_HOST_PAGE_SIZE_MIN << host_page_index;
+		u32 page_count = mempool_host_memory_size / page_size;
+		int ret = 0;
+		ret = mp_init_hrm_pool(&mpset->mp_hrm[host_page_index], mpset, page_size,
+				       page_count);
+		if (ret) {
+			pr_err("neuron: mpset host init failed %d\n", ret);
+			goto fail;
+		}
+		host_allocated_size += mpset->mp_hrm[host_page_index].region_size;
+	}
+	pr_info("reserved %llu bytes of host memory\n", host_allocated_size);
+
+	return mpset_init_device_pools(&nd->mpset, nd);
+fail:
+	for (; host_page_index < MP_HOST_RESERVE_MEMORY_POOL_COUNT; host_page_index++)
+		mp_destroy_gen_pool(&mpset->mp_hrm[host_page_index]);
+
+	return -ENOMEM;
+}
+
+static void mpset_free_lifespan_list(struct list_head *head, struct list_head *new_head);
+static struct list_head * mpset_get_lifespan_head(struct mempool_set *mpset, enum mc_lifespan lifespan);
+
+void mpset_destructor(struct mempool_set *mpset)
+{
+	int i, channel, region;
+	struct list_head *head;
+	struct neuron_device *nd;
+
+	for(i = 0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++) {
+		nd = mpset->nd;
+		if (nd->attached_processes[i].pid != 0) {
+			pr_err("Found a still attached process: %d open_count: %d", nd->attached_processes[i].pid,
+			       nd->attached_processes[i].open_count);
+			head = &mpset->mc_lifespan_cur_process_head[i];
+			mpset_free_lifespan_list(head, mpset_get_lifespan_head(mpset, MC_LIFESPAN_DEVICE));
 		}
 	}
-	mpset_free_host_memory(mpset);
+	mpset_free_expired_mc(mpset, MC_LIFESPAN_ALL_PROCESS);
+	mpset_free_expired_mc(mpset, MC_LIFESPAN_DEVICE);
+	mpset_verify_all_mc_freed(mpset);
+
+	mutex_lock(&mpset->lock);
+	for (i = 0; i < MP_HOST_RESERVE_MEMORY_POOL_COUNT; i++) {
+		mp_destroy_hrm_pool(&mpset->mp_hrm[i]);
+		mp_destroy_gen_pool(&mpset->mp_hrm[i]);
+	}
+
+	for (channel = 0; channel < mpset->num_channels; channel++) {
+		for (region = 0; region < mpset->mp_device_num_regions; region++) {
+			mp_destroy_gen_pool(&mpset->mp_device[channel][region]);
+		}
+	}
 	mutex_unlock(&mpset->lock);
 }
 
@@ -411,11 +434,80 @@ struct mem_chunk *mpset_search_mc(struct mempool_set *mp, phys_addr_t pa)
 	return NULL;
 }
 
-int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
-	     enum mem_location location, u32 channel, u32 region, u32 nc_id)
+static inline struct list_head * mpset_get_lifespan_head(struct mempool_set *mpset, enum mc_lifespan lifespan)
+{
+	struct list_head *head = NULL;
+	if (lifespan == MC_LIFESPAN_LOCAL) {
+		head = &mpset->mc_lifespan_local_head;
+	} else if (lifespan == MC_LIFESPAN_CUR_PROCESS) {
+		int slot = npid_find_process_slot(mpset->nd);
+		BUG_ON(slot == -1);
+		head = &mpset->mc_lifespan_cur_process_head[slot];
+	} else if (lifespan == MC_LIFESPAN_ALL_PROCESS) {
+		head = &mpset->mc_lifespan_all_process_head;
+	} else if (lifespan == MC_LIFESPAN_DEVICE) {
+		head = &mpset->mc_lifespan_device_head;
+	}
+	return head;
+}
+
+static void mc_add_to_lifespan_list(struct mem_chunk *mc)
+{
+	struct mempool_set *mpset = mc->mpset;
+	struct list_head *head;
+	head = mpset_get_lifespan_head(mpset, mc->lifespan);
+	list_add(&mc->lifespan_list, head);
+}
+
+static void mc_remove_from_lifespan_list(struct mem_chunk *mc)
+{
+	list_del(&mc->lifespan_list);
+}
+
+/** Free MCs in given lifespan list if their refcount == 1 else move the MC to new_head
+ */
+static void mpset_free_lifespan_list(struct list_head *head, struct list_head *new_head)
+{
+	struct list_head *this, *next;
+
+	if (list_empty(head->next))
+		return;
+
+	list_for_each_safe (this, next, head) {
+		struct mem_chunk *mc = list_entry(this, struct mem_chunk, lifespan_list);
+		mc_free(&mc); // freeing would remove from this list
+		// if not freed, it means there is still some refcount pending so add it to new head
+		if (mc) {
+			if (new_head) {
+				pr_info("mc lifespan extended mc:%p refcount:%d lifespan:%d caller:%pf\n", mc,
+				       mc->ref_count, mc->lifespan, mc->caller_pc);
+				list_del(&mc->lifespan_list);
+				list_add(&mc->lifespan_list, new_head);
+			} else { // no new head, so force free the mc
+				pr_err("mc leaked mc:%p refcount:%d lifespan:%d caller:%pf\n", mc,
+				       mc->ref_count, mc->lifespan, mc->caller_pc);
+				mc->ref_count = 1;
+				mc_free(&mc);
+			}
+		}
+	}
+}
+
+void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
+{
+	struct list_head *head, *next_head;
+	head = mpset_get_lifespan_head(mpset, lifespan);
+	next_head = mpset_get_lifespan_head(mpset, lifespan+1);
+	mpset_free_lifespan_list(head, next_head);
+}
+
+int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u32 size,
+	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
+	     struct mem_chunk **result)
 {
 	struct mem_chunk *mc;
 	struct mempool *mp = NULL;
+	struct mempool_set *mpset = &nd->mpset;
 	int ret = 0;
 
 	*result = NULL;
@@ -457,25 +549,20 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 		// try to fill from reserved host memory
 		if (mc->va == NULL) {
 			int i;
-			for (i = 0; i < MP_HOST_POOL_COUNT; i++) {
+			for (i = 0; i < MP_HOST_RESERVE_MEMORY_POOL_COUNT; i++) {
 				u32 page_size = MP_HOST_PAGE_SIZE_MIN << i;
 				if (page_size < size)
 					continue;
-				mp = &mpset->mp_host[i];
+				mp = &mpset->mp_hrm[i];
 				mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
 				if (mc->va)
 					break;
 			}
 		}
-		if (mc->va) {
-			INIT_LIST_HEAD(&mc->host_allocated_list);
-			list_add(&mc->host_allocated_list, &mpset->host_allocated_head);
-			write_lock(&mpset->rblock);
-			mc_insert_node(&mpset->root, mc);
-			write_unlock(&mpset->rblock);
-		} else {
+		if (mc->va)
+			mc->pa |= PCI_HOST_BASE(nd);
+		else
 			pr_info("host mem occupied %lld\n", mpset->host_mem_size);
-		}
 	} else {
 		mp = &mpset->mp_device[channel][region];
 		if (!mp->gen_pool) {
@@ -486,8 +573,7 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 
 		mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
 		if (mc->va) {
-			INIT_LIST_HEAD(&mc->device_allocated_list);
-			list_add(&mc->device_allocated_list, &mp->mc_list_head);
+			mp->allocated_size += size;
 		} else {
 			pr_info("%s total %ld occupied %ld needed %d available %ld\n", mp->name,
 				mp->region_size, mp->allocated_size, size,
@@ -495,13 +581,13 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 			pr_info("device regions %d occupied %lld\n", mpset->mp_device_num_regions,
 				mpset->device_mem_size);
 		}
-		mp->allocated_size += size;
 	}
 	if (mc->va == NULL) {
 		ret = -ENOMEM;
 		goto exit;
 	}
 
+	mc->magic = MEMCHUNK_MAGIC;
 	mc->mpset = mpset;
 	mc->mp = mp;
 	mc->size = size;
@@ -509,12 +595,22 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 	mc->dram_channel = channel;
 	mc->dram_region = region;
 	mc->nc_id = nc_id;
+	mc->pid = task_tgid_nr(current);
+	mc->ref_count = 1;
+	mc->lifespan = lifespan;
+	mc->caller_pc = __builtin_return_address(0);
+	mc_add_to_lifespan_list(mc);
+
+	write_lock(&mpset->rblock);
+	mc_insert_node(&mpset->root, mc);
+	write_unlock(&mpset->rblock);
 
 	if (location == MEM_LOC_HOST)
 		mpset->host_mem_size += size;
 	else
 		mpset->device_mem_size += size;
 
+	npid_add_allocated_memory(nd, location, size);
 exit:
 	mutex_unlock(&mpset->lock);
 	if (ret) {
@@ -524,32 +620,39 @@ exit:
 	return ret;
 }
 
+void mc_inc_refcount(struct mem_chunk *mc)
+{
+	struct mempool_set *mpset = mc->mpset;
+	mutex_lock(&mpset->lock);
+	mc->ref_count++;
+	mutex_unlock(&mpset->lock);
+}
+
 void mc_free(struct mem_chunk **mcp)
 {
 	struct mempool_set *mpset;
 	struct mem_chunk *mc = *mcp;
 
-	if (mc == NULL)
-		return;
-
+	BUG_ON(mc == NULL);
+	BUG_ON(mc->magic != MEMCHUNK_MAGIC);
 	mpset = mc->mpset;
+	BUG_ON(mpset == NULL);
 	mutex_lock(&mpset->lock);
-
-	if (mc->used_by_nq) {
-		pr_err("Trying to free memory that is still used by nq");
+	mc->ref_count--;
+	if (mc->ref_count > 0) {
 		mutex_unlock(&mpset->lock);
 		return;
 	}
+
+	write_lock(&mpset->rblock);
+	mc_remove_node(&mpset->root, mc);
+	write_unlock(&mpset->rblock);
 	if (mc->mem_location == MEM_LOC_HOST) {
-		list_del(&mc->host_allocated_list);
-		write_lock(&mpset->rblock);
-		mc_remove_node(&mpset->root, mc);
-		write_unlock(&mpset->rblock);
 		if (mc->mp) {
 			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
 			mc->mp->allocated_size -= mc->size;
 		} else if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
-			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa);
+			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~PCI_HOST_BASE(nd));
 		} else {
 			kfree(mc->va);
 			mc->va = NULL;
@@ -558,7 +661,6 @@ void mc_free(struct mem_chunk **mcp)
 	} else if (mc->mem_location == MEM_LOC_DEVICE) {
 		struct mempool *mp;
 		mp = &mpset->mp_device[mc->dram_channel][mc->dram_region];
-		list_del(&mc->device_allocated_list);
 		gen_pool_free(mp->gen_pool, (u64)mc->va, mc->size);
 		mp->allocated_size -= mc->size;
 		mpset->device_mem_size -= mc->size;
@@ -566,21 +668,11 @@ void mc_free(struct mem_chunk **mcp)
 		BUG();
 	}
 
+	npid_dec_allocated_memory(mpset->nd, mc->mem_location, mc->size);
 	*mcp = NULL;
+	mc_remove_from_lifespan_list(mc);
+	mc->magic = 0xDEAD;
 	mutex_unlock(&mpset->lock);
 
 	kfree(mc);
-}
-
-void mc_set_used_by_nq(struct mem_chunk *mc, bool used)
-{
-	struct mempool_set *mpset;
-
-	if (mc == NULL)
-		return;
-
-	mpset = mc->mpset;
-	mutex_lock(&mpset->lock);
-	mc->used_by_nq = used;
-	mutex_unlock(&mpset->lock);
 }
