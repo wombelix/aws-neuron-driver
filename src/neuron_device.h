@@ -18,6 +18,9 @@
 // Number of u64 values used for counter storage
 #define NEURON_DEVICE_COUNTER_STORE_SIZE 4096
 
+// Global host memory buf size used for memset the device memory
+#define MEMSET_HOST_BUF_SIZE MAX_DMA_DESC_SIZE // guessed optimal DMA transfer and PCIe TLP size.
+
 enum neuron_device_arch { NEURON_ARCH_INVALID, NEURON_ARCH_INFERENTIA = 1, NEURON_ARCH_NUM = 3 };
 
 struct neuron_pci_device {
@@ -54,6 +57,10 @@ struct neuron_device {
 	u32 connected_devices[MAX_NEURON_DEVICE_COUNT]; // device ids of the connected devices
 
 	struct mem_chunk *counter_store;
+
+	// memory chunk for setting device mem
+	struct mem_chunk *memset_mc;
+	struct mutex memset_lock;;
 };
 
 /**

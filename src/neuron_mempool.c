@@ -20,9 +20,13 @@
 #include "neuron_device.h"
 
 int mempool_min_alloc_size = 256;
+int mempool_host_memory_size = 32 * 1024 * 1024;
 
 module_param(mempool_min_alloc_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(mempool_min_alloc_size, "Minimum size for device memory allocation");
+MODULE_PARM_DESC(mempool_min_alloc_size, "Minimum size for memory allocation");
+
+module_param(mempool_host_memory_size, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(mempool_host_memory_size, "Host memory to reserve(in bytes)");
 
 #ifdef CONFIG_FAULT_INJECTION
 DECLARE_FAULT_ATTR(neuron_fail_mc_alloc);
@@ -71,29 +75,30 @@ void mc_remove_node(struct rb_root *root, struct mem_chunk *mc)
 }
 
 /**
- * mp_init() Initialize the mempool structure with given values.
+ * mp_init_device_mem() Initialize the mempool structure to manage device memory.
  * Creates a backing gen_pool if the mem_location is device DRAM.
  *
  * @mp: pointer to mempool that needs to be initialized
  * @start_addr: starting address of the pool
  * @pool_size: size of the pool.
  * @mem_location: location of the backing memory.
- * @dram_channel: device dram channel backing this pool(applicable only if mem_location is device).
- * @dram_region: device dram region backing this pool(applicable only if mem_location is device).
+ * @dram_channel: device dram channel backing this pool.
+ * @dram_region: device dram region backing this pool.
  *
  * Return: 0 if pool is created, a negative error code otherwise.
  */
-static int mp_init(struct mempool *mp, u64 start_addr, size_t pool_size,
-		   enum mem_location mem_location, u32 dram_channel, u32 dram_region)
+static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
+			      u64 start_addr, size_t pool_size,	u32 dram_channel, u32 dram_region)
 {
 	int ret;
 
 	memset(mp, 0, sizeof(*mp));
 
-	mp->mem_location = mem_location;
+	mp->mpset = mpset;
+	mp->mem_location = MEM_LOC_DEVICE;
 	mp->dram_channel = dram_channel;
 	mp->dram_region = dram_region;
-	INIT_LIST_HEAD(&mp->device_allocated_head);
+	INIT_LIST_HEAD(&mp->mc_list_head);
 	mp->gen_pool = gen_pool_create(ilog2(mempool_min_alloc_size), -1);
 	if (mp->gen_pool == NULL)
 		return -ENOMEM;
@@ -130,7 +135,7 @@ static void mp_free_device_mem(struct mempool *mp)
 		// Free all entries
 		struct list_head *this, *next;
 
-		list_for_each_safe (this, next, &mp->device_allocated_head) {
+		list_for_each_safe (this, next, &mp->mc_list_head) {
 			struct mem_chunk *mc =
 				list_entry(this, struct mem_chunk, device_allocated_list);
 			if (mc->va) {
@@ -145,6 +150,100 @@ static void mp_free_device_mem(struct mempool *mp)
 }
 
 /**
+ * Frees all the chunks associated with the mempool.
+ */
+static void mp_free_host_mem(struct mempool *mp)
+{
+	int i = 0;
+	if (mp->page_va_array == NULL)
+		return;
+	if (mp->page_pa_array == NULL)
+		return;
+	for(i = 0; i < mp->page_count; i++) {
+		if (mp->page_va_array[i] == NULL)
+			break;
+		dma_free_coherent(mp->mpset->pdev, mp->page_size, mp->page_va_array[i],
+				  mp->page_pa_array[i]);
+		mp->page_va_array[i] = NULL;
+		mp->page_pa_array[i] = 0;
+	}
+	kfree(mp->page_pa_array);
+	kfree(mp->page_va_array);
+	mp->page_pa_array = NULL;
+	mp->page_va_array = NULL;
+}
+
+/**
+ * mp_init_host_mem() Initialize the mempool structure to manage host memory.
+ * Create a genpool with backing memory from host.
+ * Any page allocation failure is ignored.
+ *
+ * @mp: pointer to mempool that needs to be initialized
+ * @mpset: pointer to parent mempool_set
+ * @page_size: backing host memory's page size
+ * @page_count: Max number of pages to allocate
+ *
+ * Return: 0 if pool is created, a negative error code otherwise.
+ */
+static int mp_init_host_mem(struct mempool *mp, struct mempool_set *mpset,
+			    u32 page_size, u32 page_count)
+{
+	int ret;
+	int i;
+
+	memset(mp, 0, sizeof(*mp));
+
+	mp->mpset = mpset;
+	mp->mem_location = MEM_LOC_HOST;
+	INIT_LIST_HEAD(&mp->mc_list_head);
+	mp->gen_pool = gen_pool_create(ilog2(mempool_min_alloc_size), -1);
+	if (mp->gen_pool == NULL)
+		return -ENOMEM;
+	mp->page_va_array = kzalloc(sizeof(void *) * page_count, GFP_KERNEL);
+	if (mp->page_va_array == NULL)
+		goto fail;
+	mp->page_pa_array = kzalloc(sizeof(dma_addr_t) * page_count, GFP_KERNEL);
+	if (mp->page_pa_array == NULL)
+		goto fail;
+	mp->page_size = page_size;
+	for(i = 0; i < page_count; i++) {
+		mp->page_va_array[i] = dma_alloc_coherent(mp->mpset->pdev, page_size,
+							  &mp->page_pa_array[i],
+							  GFP_KERNEL | GFP_DMA32);
+		if (mp->page_va_array[i] == NULL)
+			break;
+		ret = gen_pool_add_virt(mp->gen_pool, (unsigned long)mp->page_va_array[i],
+					mp->page_pa_array[i], mp->page_size, -1);
+		if (ret) {
+			dma_free_coherent(mpset->pdev, mp->page_size,
+					  mp->page_va_array[i],
+					  mp->page_pa_array[i]);
+			break;
+		}
+	}
+	mp->page_requested_count = page_count;
+	mp->page_count = i;
+
+	snprintf(mp->name, sizeof(mp->name), "host mempool [%d]", page_size);
+	mp->region_size = mp->page_size * mp->page_count;
+	mp->initialized = 1;
+
+	return 0;
+fail:
+	if (mp->page_pa_array)
+		kfree(mp->page_pa_array);
+	if (mp->page_va_array)
+		kfree(mp->page_va_array);
+	if (mp->gen_pool)
+		gen_pool_destroy(mp->gen_pool);
+	mp->page_pa_array = NULL;
+	mp->page_va_array = NULL;
+	mp->gen_pool = NULL;
+
+	return -ENOMEM;
+}
+
+/**
  * Frees all the chunks associated with the mempool and releases the mempool.
  */
 static void mp_destroy(struct mempool *mp)
@@ -153,23 +252,67 @@ static void mp_destroy(struct mempool *mp)
 	if (!mp->initialized)
 		return;
 
-	if (mp->gen_pool != NULL) {
-		// Free all entries
+	if (mp->gen_pool == NULL)
+		return;
+
+	// Free all entries
+	if (mp->mem_location == MEM_LOC_HOST)
+		mp_free_host_mem(mp);
+	else
 		mp_free_device_mem(mp);
-		gen_pool_destroy(mp->gen_pool);
-	}
+	gen_pool_destroy(mp->gen_pool);
+	mp->gen_pool = NULL;
 }
 
-int mpset_host_init(struct mempool_set *mpset)
+int mpset_constructor(struct mempool_set *mpset, void *pdev)
 {
+	int host_page_index;
+	u64 host_allocated_size = 0;
+
+	memset(mpset, 0, sizeof(*mpset));
+
 	mutex_init(&mpset->lock);
 	INIT_LIST_HEAD(&mpset->host_allocated_head);
 	mpset->root = RB_ROOT;
+	mpset->pdev = pdev;
+
+	// reserve host memory
+	for (host_page_index = MP_HOST_POOL_COUNT - 1; host_page_index >= 0; host_page_index--) {
+		u32 page_size = MP_HOST_PAGE_SIZE_MIN << host_page_index;
+		u32 page_count = mempool_host_memory_size / page_size;
+		int ret = 0;
+		ret = mp_init_host_mem(&mpset->mp_host[host_page_index], mpset,
+				       page_size, page_count);
+		if (ret) {
+			pr_err("neuron: mpset host init failed %d\n", ret);
+			goto fail;
+		}
+		host_allocated_size += mpset->mp_host[host_page_index].region_size;
+	}
+	pr_info("reserved %llu bytes of host memory\n", host_allocated_size);
+
 	return 0;
+
+fail:
+	for (; host_page_index < MP_HOST_POOL_COUNT; host_page_index++)
+		mp_destroy(&mpset->mp_host[host_page_index]);
+
+	return -ENOMEM;
 }
 
-int mpset_device_init(struct mempool_set *mpset, int num_channels, int num_regions,
-		      const phys_addr_t device_dram_addr[], const u64 device_dram_size[])
+void mpset_destructor(struct mempool_set *mpset)
+{
+	int i;
+
+	mpset_release(mpset);
+	mutex_lock(&mpset->lock);
+	for (i = 0; i < MP_HOST_POOL_COUNT; i++)
+		mp_destroy(&mpset->mp_host[i]);
+	mutex_unlock(&mpset->lock);
+}
+
+int mpset_init(struct mempool_set *mpset, int num_channels, int num_regions,
+	       const phys_addr_t *device_dram_addr, const u64 *device_dram_size)
 {
 	int ret;
 	int channel = 0, region = 0;
@@ -177,14 +320,14 @@ int mpset_device_init(struct mempool_set *mpset, int num_channels, int num_regio
 
 	if (num_regions <= 0 || num_regions > 4)
 		num_regions = 1;
-	mpset->num_regions = num_regions;
+	mpset->mp_device_num_regions = num_regions;
 
 	for (channel = 0; channel < num_channels; channel++) {
-		region_sz = device_dram_size[channel] / mpset->num_regions;
-		for (region = 0; region < mpset->num_regions; region++) {
+		region_sz = device_dram_size[channel] / mpset->mp_device_num_regions;
+		for (region = 0; region < mpset->mp_device_num_regions; region++) {
 			dma_addr_t addr = device_dram_addr[channel] + (region * region_sz);
-			ret = mp_init(&mpset->mp_device[channel][region], addr, region_sz,
-				      MEM_LOC_DEVICE, channel, region);
+			ret = mp_init_device_mem(&mpset->mp_device[channel][region], mpset, addr,
+						 region_sz, channel, region);
 			if (ret) {
 				pr_err("neuron: mpset device init failed %d\n", ret);
 				goto fail;
@@ -231,7 +374,7 @@ static void mpset_free_host_memory(struct mempool_set *mpset)
 	mpset->host_mem_size = 0;
 }
 
-void mpset_destroy(struct mempool_set *mpset)
+void mpset_release(struct mempool_set *mpset)
 {
 	u32 channel, region;
 	int already_freed;
@@ -242,7 +385,7 @@ void mpset_destroy(struct mempool_set *mpset)
 
 	mutex_lock(&mpset->lock);
 	for (channel = 0; channel < V1_MAX_DRAM_CHANNELS; channel++) {
-		for (region = 0; region < mpset->num_regions; region++) {
+		for (region = 0; region < mpset->mp_device_num_regions; region++) {
 			mp_destroy(&mpset->mp_device[channel][region]);
 		}
 	}
@@ -272,6 +415,7 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id)
 {
 	struct mem_chunk *mc;
+	struct mempool *mp = NULL;
 	int ret = 0;
 
 	*result = NULL;
@@ -282,7 +426,7 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 	if (should_fail(&neuron_fail_mc_alloc, 1))
 		return -ENOMEM;
 #endif
-	if (mpset->num_regions == 1) // shared DRAM mode, always use region 0
+	if (mpset->mp_device_num_regions == 1) // shared DRAM mode, always use region 0
 		region = 0;
 
 	mc = (struct mem_chunk *)kmalloc(sizeof(struct mem_chunk), GFP_KERNEL);
@@ -310,6 +454,19 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 				mc->pa = virt_to_phys(mc->va);
 			}
 		}
+		// try to fill from reserved host memory
+		if (mc->va == NULL) {
+			int i;
+			for (i = 0; i < MP_HOST_POOL_COUNT; i++) {
+				u32 page_size = MP_HOST_PAGE_SIZE_MIN << i;
+				if (page_size < size)
+					continue;
+				mp = &mpset->mp_host[i];
+				mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
+				if (mc->va)
+					break;
+			}
+		}
 		if (mc->va) {
 			INIT_LIST_HEAD(&mc->host_allocated_list);
 			list_add(&mc->host_allocated_list, &mpset->host_allocated_head);
@@ -320,7 +477,6 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 			pr_info("host mem occupied %lld\n", mpset->host_mem_size);
 		}
 	} else {
-		struct mempool *mp = NULL;
 		mp = &mpset->mp_device[channel][region];
 		if (!mp->gen_pool) {
 			pr_err("neuron: mempool not initialized\n");
@@ -331,12 +487,12 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 		mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
 		if (mc->va) {
 			INIT_LIST_HEAD(&mc->device_allocated_list);
-			list_add(&mc->device_allocated_list, &mp->device_allocated_head);
+			list_add(&mc->device_allocated_list, &mp->mc_list_head);
 		} else {
 			pr_info("%s total %ld occupied %ld needed %d available %ld\n", mp->name,
 				mp->region_size, mp->allocated_size, size,
 				gen_pool_avail(mp->gen_pool));
-			pr_info("device regions %d occupied %lld\n", mpset->num_regions,
+			pr_info("device regions %d occupied %lld\n", mpset->mp_device_num_regions,
 				mpset->device_mem_size);
 		}
 		mp->allocated_size += size;
@@ -347,6 +503,7 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
 	}
 
 	mc->mpset = mpset;
+	mc->mp = mp;
 	mc->size = size;
 	mc->mem_location = location;
 	mc->dram_channel = channel;
@@ -378,12 +535,20 @@ void mc_free(struct mem_chunk **mcp)
 	mpset = mc->mpset;
 	mutex_lock(&mpset->lock);
 
+	if (mc->used_by_nq) {
+		pr_err("Trying to free memory that is still used by nq");
+		mutex_unlock(&mpset->lock);
+		return;
+	}
 	if (mc->mem_location == MEM_LOC_HOST) {
 		list_del(&mc->host_allocated_list);
 		write_lock(&mpset->rblock);
 		mc_remove_node(&mpset->root, mc);
 		write_unlock(&mpset->rblock);
-		if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
+		if (mc->mp) {
+			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
+			mc->mp->allocated_size -= mc->size;
+		} else if (mc->size > MEMPOOL_KMALLOC_MAX_SIZE || IS_ALIGNED(mc->size, PAGE_SIZE)) {
 			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa);
 		} else {
 			kfree(mc->va);
@@ -395,7 +560,6 @@ void mc_free(struct mem_chunk **mcp)
 		mp = &mpset->mp_device[mc->dram_channel][mc->dram_region];
 		list_del(&mc->device_allocated_list);
 		gen_pool_free(mp->gen_pool, (u64)mc->va, mc->size);
-		mc->va = NULL;
 		mp->allocated_size -= mc->size;
 		mpset->device_mem_size -= mc->size;
 	} else {
@@ -406,4 +570,17 @@ void mc_free(struct mem_chunk **mcp)
 	mutex_unlock(&mpset->lock);
 
 	kfree(mc);
+}
+
+void mc_set_used_by_nq(struct mem_chunk *mc, bool used)
+{
+	struct mempool_set *mpset;
+
+	if (mc == NULL)
+		return;
+
+	mpset = mc->mpset;
+	mutex_lock(&mpset->lock);
+	mc->used_by_nq = used;
+	mutex_unlock(&mpset->lock);
 }

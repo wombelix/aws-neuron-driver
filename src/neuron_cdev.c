@@ -363,6 +363,24 @@ static int ncdev_mem_free(struct neuron_device *nd, void *param)
 	return 0;
 }
 
+static int ncdev_memset(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_memset arg;
+	struct mem_chunk *mc;
+	int ret = 0;
+
+	ret = copy_from_user(&arg, (struct neuron_ioctl_memset *)param, sizeof(arg));
+	if (ret)
+		return ret;
+	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
+	// check access is within the range.
+	if (arg.offset + arg.size > mc->size) {
+		pr_err("offset+size is too large for mem handle\n");
+		return -EINVAL;
+	}
+	return ndma_memset(nd, mc, arg.offset, arg.value, arg.size);
+}
+
 static int ncdev_mem_copy(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_mem_copy arg;
@@ -776,8 +794,8 @@ static long ncdev_device_init(struct neuron_device *nd, void *param)
 	}
 
 	if (nd->current_pid == 0) {
-		ret = mpset_device_init(&nd->mpset, V1_MAX_DRAM_CHANNELS, arg.mem_regions,
-					device_dram_addr, device_dram_size);
+		ret = mpset_init(&nd->mpset, V1_MAX_DRAM_CHANNELS, arg.mem_regions,
+				 device_dram_addr, device_dram_size);
 		if (ret)
 			goto done;
 		nd->current_pid = task_tgid_nr(current);
@@ -806,7 +824,7 @@ static long ncdev_device_release(struct ncdev *dev, struct neuron_device *nd)
 	if (dev->open_count == 0) {
 		nc_nq_destroy_all(nd);
 		ndmar_close(nd);
-		mpset_destroy(&nd->mpset);
+		mpset_release(&nd->mpset);
 	}
 
 	mutex_unlock(&ncdev_device_lock);
@@ -857,6 +875,50 @@ static long ncdev_nc_nq_destroy(struct neuron_device *nd, void *param)
 	return nc_nq_destroy(nd, nc_id, eng_index, nq_type);
 }
 
+static long ncdev_nc_nq_init_mem(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_notifications_init_nq arg;
+	int ret;
+	struct mem_chunk *mc;
+
+	ret = copy_from_user(&arg, (struct neuron_ioctl_notifications_init_mem *)param,
+			     sizeof(arg));
+	if (ret)
+		return ret;
+
+	mc = ncdev_mem_handle_to_mem_chunk(arg.mem_handle);
+	if (!mc)
+		return -EINVAL;
+
+	ret = nc_nq_init_mc(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size, mc);
+	if (ret)
+		return ret;
+
+	if (mc->mem_location == MEM_LOC_HOST) {
+		ret = nc_get_nq_mmap_offset(arg.nq_dev_id, arg.engine_index, arg.nq_type, &arg.mmap_offset);
+		if (ret)
+			return ret;
+
+		return copy_to_user(&((struct neuron_ioctl_notifications_init_nq *)param)->mmap_offset,
+					&arg.mmap_offset, sizeof(arg.mmap_offset));
+	}
+
+	return ret;
+
+}
+
+static long ncdev_nc_nq_destroy_mem(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_notifications_destroy_nq arg;
+	int ret;
+
+	ret = copy_from_user(&arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	return nc_nq_destroy(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type);
+}
+
 static long ncdev_get_neuron_counters_info(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_neuron_counters_info arg = { .mmap_offset = nc_hm_mmap_offset(
@@ -887,7 +949,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	    cmd == NEURON_IOCTL_MEM_COPY || cmd == NEURON_IOCTL_MEM_GET_PA ||
 	    cmd == NEURON_IOCTL_MEM_GET_INFO || cmd == NEURON_IOCTL_BAR_WRITE ||
 	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT ||
-	    cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY) {
+	    cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_NQ ||
+		cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_NQ || cmd == NEURON_IOCTL_MEMSET) {
 		if (nd->current_pid != task_tgid_nr(current)) {
 			return -EACCES;
 		}
@@ -939,6 +1002,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_mem_copy(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_BUF_COPY) {
 		return ncdev_mem_buf_copy(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_MEMSET) {
+		return ncdev_memset(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_SEMAPHORE_READ) {
 		return ncdev_semaphore_ioctl(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_SEMAPHORE_WRITE) {
@@ -959,8 +1024,12 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_post_metric(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT) {
 		return ncdev_nc_nq_init(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_NQ) {
+		return ncdev_nc_nq_init_mem(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY) {
 		return ncdev_nc_nq_destroy(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_NQ) {
+		return ncdev_nc_nq_destroy_mem(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_READ_HW_COUNTERS) {
 		return ncdev_read_hw_counters(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_GET_NEURON_COUNTERS_INFO) {

@@ -75,6 +75,20 @@ int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32
 				     u32 queue_type);
 
 /**
+ * ndma_memset() - fills the size bytes at offset of the memory area
+ * pointed to by mc with the constant byte value
+ *
+ * @nd: neuron device which should be used for dma
+ * @mc: memory chunk that needs to be set with the value
+ * @offset: start offset in the chunk
+ * @value: byte value to set to
+ * @size: number of bytes to set to
+ *
+ * Return: 0 if copy succeeds, a negative error code otherwise.
+ */
+int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 value, u32 size);
+
+/**
  * ndma_memcpy() - Copy data from one physical address to another physical address.
  *
  * @nd: neuron device which should be used for dma

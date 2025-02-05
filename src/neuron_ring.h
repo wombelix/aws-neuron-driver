@@ -27,9 +27,11 @@ struct ndma_ring {
 	struct udma_ring_ptr tx;
 	struct udma_ring_ptr rx;
 	struct udma_ring_ptr rxc;
+	struct udma_ring_ptr h2t_completion;
 	struct mem_chunk *tx_mc;
 	struct mem_chunk *rx_mc;
 	struct mem_chunk *rxc_mc;
+	struct mem_chunk *h2t_completion_mc;
 	u32 dram_channel;
 };
 

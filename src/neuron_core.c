@@ -218,35 +218,17 @@ int nc_get_nq_from_mmap_offset(u64 offset, int *nc_id, int *engine_index, int *n
 	return 0;
 }
 
-int nc_nq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size)
+static void nc_nq_set_hwaddr(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type, u32 size,
+			     u64 queue_pa)
 {
-	struct mem_chunk *mc, **mc_ptr;
-	u64 queue_pa;
 	void *apb_base;
-	int ret;
-	u8 nq_id;
 	u32 low, high;
 
-	if (nd == NULL || nc_id >= V1_NC_PER_DEVICE)
-		return -EINVAL;
-
-	nq_id = (nq_type * NQ_TYPE_PER_ENGINE) + eng_index;
-	if (nq_id >= MAX_NQ_SUPPORTED)
-		return -EINVAL;
-
-	mc_ptr = &nd->nq_mc[nc_id][nq_id];
-	if (*mc_ptr == NULL) {
-		ret = mc_alloc(&nd->mpset, mc_ptr, size, MEM_LOC_HOST, 0, 0, nc_id);
-		if (ret)
-			return ret;
-	}
-	mc = *mc_ptr;
-
 	apb_base = nd->npdev.bar0 + pu_get_relative_offset(nc_id);
-	queue_pa = mc->pa | PCIEX8_0_BASE;
 
 	low = (u32)(queue_pa & 0xffffffff);
 	high = (u32)(queue_pa >> 32U);
+
 	switch (nq_type) {
 	case NQ_TYPE_ERROR:
 		pu_write_error_notification_cfg_0(apb_base, low);
@@ -259,26 +241,78 @@ int nc_nq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u3
 		pu_write_event_notification_cfg_2(apb_base, size);
 		break;
 	case NQ_TYPE_NOTIFY:
-		pu_write_expl_notification_cfg_0(apb_base, eng_index, 0, low);
-		pu_write_expl_notification_cfg_1(apb_base, eng_index, 0, high);
-		pu_write_expl_notification_cfg_2(apb_base, eng_index, 0, size);
+		pu_write_expl_notification_cfg_0(apb_base, index, 0, low);
+		pu_write_expl_notification_cfg_1(apb_base, index, 0, high);
+		pu_write_expl_notification_cfg_2(apb_base, index, 0, size);
 		break;
 	case NQ_TYPE_TRACE:
-		pu_write_impl_notification_cfg_0(apb_base, eng_index, 0, low);
-		pu_write_impl_notification_cfg_1(apb_base, eng_index, 0, high);
-		pu_write_impl_notification_cfg_2(apb_base, eng_index, 0, size);
+		pu_write_impl_notification_cfg_0(apb_base, index, 0, low);
+		pu_write_impl_notification_cfg_1(apb_base, index, 0, high);
+		pu_write_impl_notification_cfg_2(apb_base, index, 0, size);
 		break;
 	default:
-		return -1;
+		BUG();
 	}
+}
+
+int nc_nq_init_mc(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size, struct mem_chunk *mc)
+{
+	u64 queue_pa;
+	u8 nq_id;
+
+	if (nd == NULL || nc_id >= V1_NC_PER_DEVICE)
+		return -EINVAL;
+
+	nq_id = (nq_type * NQ_TYPE_PER_ENGINE) + eng_index;
+	if (nq_id >= MAX_NQ_SUPPORTED)
+		return -EINVAL;
+
+	// mc is set when nc_nq_init is called. make sure that mc is not overwritten
+	if (nd->nq_mc[nc_id][nq_id] != NULL && nd->nq_mc[nc_id][nq_id] != mc)
+		return -EINVAL;
+
+	if (mc->mem_location == MEM_LOC_HOST)
+		queue_pa = mc->pa | PCIEX8_0_BASE;
+	else
+		queue_pa = mc->pa;
+
+	nc_nq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, queue_pa);
+
+	// No error should be returned once mc is stored, cannot be freed
+	nd->nq_mc[nc_id][nq_id] = mc;
+	mc_set_used_by_nq(nd->nq_mc[nc_id][nq_id], true);
 
 	return 0;
+}
+
+int nc_nq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size)
+{
+	struct mem_chunk *mc, **mc_ptr;
+	int ret;
+	u8 nq_id;
+
+	if (nd == NULL || nc_id >= V1_NC_PER_DEVICE)
+		return -EINVAL;
+
+	nq_id = (nq_type * NQ_TYPE_PER_ENGINE) + eng_index;
+	if (nq_id >= MAX_NQ_SUPPORTED)
+		return -EINVAL;
+
+	mc_ptr = &nd->nq_mc[nc_id][nq_id];
+
+	if (*mc_ptr == NULL) {
+		ret = mc_alloc(&nd->mpset, mc_ptr, size, MEM_LOC_HOST, 0, 0, nc_id);
+		if (ret)
+			return ret;
+	}
+	mc = *mc_ptr;
+
+	return nc_nq_init_mc(nd, nc_id, eng_index, nq_type, size, mc);
 }
 
 int nc_nq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
 {
 	u8 nq_id;
-	void *apb_base;
 
 	nq_id = (nq_type * NQ_TYPE_PER_ENGINE) + eng_index;
 	if (nd == NULL || nc_id >= V1_NC_PER_DEVICE || nq_id >= MAX_NQ_SUPPORTED)
@@ -294,35 +328,12 @@ int nc_nq_destroy(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type)
 		return 0;
 	}
 
-	apb_base = nd->npdev.bar0 + pu_get_relative_offset(nc_id);
-	switch (nq_type) {
-	case NQ_TYPE_ERROR:
-		pu_write_error_notification_cfg_2(apb_base, 0);
-		pu_write_error_notification_cfg_0(apb_base, 0);
-		pu_write_error_notification_cfg_1(apb_base, 0);
-		break;
-	case NQ_TYPE_EVENT:
-		pu_write_event_notification_cfg_2(apb_base, 0);
-		pu_write_event_notification_cfg_0(apb_base, 0);
-		pu_write_event_notification_cfg_1(apb_base, 0);
-		break;
-	case NQ_TYPE_NOTIFY:
-		pu_write_expl_notification_cfg_2(apb_base, eng_index, 0, 0);
-		pu_write_expl_notification_cfg_0(apb_base, eng_index, 0, 0);
-		pu_write_expl_notification_cfg_1(apb_base, eng_index, 0, 0);
-		break;
-	case NQ_TYPE_TRACE:
-		pu_write_impl_notification_cfg_2(apb_base, eng_index, 0, 0);
-		pu_write_impl_notification_cfg_0(apb_base, eng_index, 0, 0);
-		pu_write_impl_notification_cfg_1(apb_base, eng_index, 0, 0);
-		break;
-	default:
-		return -1;
-	}
+	nc_nq_set_hwaddr(nd, nc_id, eng_index, nq_type, 0, 0);
 
 	// sleep 1msec so that hw can drain
 	msleep(1);
 
+	mc_set_used_by_nq(nd->nq_mc[nc_id][nq_id], false);
 	mc_free(&nd->nq_mc[nc_id][nq_id]);
 	return 0;
 }

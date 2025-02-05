@@ -68,11 +68,9 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 	memset(&nd->mpset, 0, sizeof(struct mempool_set));
 
 	// Initialize the host portion in mpset
-	ret = mpset_host_init(&nd->mpset);
+	ret = mpset_constructor(&nd->mpset, &(nd->pdev->dev));
 	if (ret)
 		goto fail_mpset;
-
-	nd->mpset.pdev = &(nd->pdev->dev);
 
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &nd->revision);
 	// Initialize the arch type to Inferentia
@@ -85,7 +83,7 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 	return 0;
 
 fail_chardev:
-	mpset_destroy(&nd->mpset);
+	mpset_destructor(&nd->mpset);
 fail_mpset:
 	fw_io_destroy((struct fw_io_ctx *)nd->fw_io_ctx);
 	nd->fw_io_ctx = NULL;
@@ -101,7 +99,7 @@ int neuron_pci_device_close(struct neuron_device *nd)
 		pci_info(nd->pdev, "delete device node failed\n");
 		return ret;
 	}
-	mpset_destroy(&nd->mpset);
+	mpset_destructor(&nd->mpset);
 	fw_io_destroy((struct fw_io_ctx *)nd->fw_io_ctx);
 	nd->fw_io_ctx = NULL;
 	return 0;
@@ -180,6 +178,16 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	ret = neuron_pci_device_init(nd);
 	if (ret)
 		goto fail_bar2_resource;
+
+	ret = mc_alloc(&nd->mpset, &nd->memset_mc, MEMSET_HOST_BUF_SIZE,
+		       MEM_LOC_HOST, 0, 0, 0);
+	if (ret) {
+		if (nd->architecture == NEURON_ARCH_INFERENTIA)
+			goto fail_bar2_resource;
+		else
+			goto fail_bar0_resource;
+	}
+	mutex_init(&nd->memset_lock);
 
 	ret = mc_alloc(&nd->mpset, &nd->counter_store, NEURON_DEVICE_COUNTER_STORE_SIZE,
 		       MEM_LOC_HOST, 0, 0, 0);

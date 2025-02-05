@@ -437,14 +437,14 @@ int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma
 			      u32 size, bool set_dmb, bool en_int);
 
 /**
- * udma_m2m_copy_start() - Start DMA transfer
+ * udma_m2m_copy_start() - Start DMA transfer or prefetch s2m descriptors
  *
  * udma_m2m_copy_prepare_one() should be used create descriptor and then use this function
  * to start the transfer.
  *
  * @udma: DMA structure.
  * @qid: Queue index.
- * @src_count: Number of source descriptors.
+ * @src_count: Number of source descriptors. Can be 0 when called to prefetch s2m ahead of time
  * @dst_count: Number of destination descriptors.
  *
  * Return: 0 if successful, a negative error code otherwise.

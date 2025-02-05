@@ -36,26 +36,41 @@ struct mempool {
 	char name[32]; // friendly name
 	bool initialized; // True if initialized.
 
+	struct mempool_set *mpset; // parent mpset
+
 	enum mem_location mem_location; // location of the memory
 	u32 dram_channel; // DRAM channel valid only if location is device
 	u32 dram_region; // DRAM region valid only if location is device
 
 	struct gen_pool *gen_pool; // backing gen_pool allocator
 
-	struct list_head device_allocated_head; // list of allocated chunks
+	struct list_head mc_list_head; // list of allocated chunks
 
 	size_t region_size; // size of the initial region
 	size_t allocated_size; // total allocated memory size in bytes
+
+	u32 page_size; // size of the host page backing this pool
+	u32 page_requested_count; // number pages requested during pool creation
+	u32 page_count; // number pages allocated successfully
+	void **page_va_array; // array of allocated page's kva
+	dma_addr_t *page_pa_array; // array of allocated page's pa
 };
 
 // DRAM region is split into multiple regions.
 #define MAX_DDR_REGIONS 4
 
+// start page size for host MP
+#define MP_HOST_PAGE_SIZE_MIN (256UL * 1024)
+// Number for MPs for host allocation
+#define MP_HOST_POOL_COUNT 4
+
 struct mempool_set {
 	atomic_t freed; // if 1, the structure is already freed.
 	struct mutex lock;
-	u32 num_regions; // number of regions in the device pool
+	u32 mp_device_num_regions; // number of regions in the device pool
 	struct mempool mp_device[V1_MAX_DRAM_CHANNELS][MAX_DDR_REGIONS]; // device memory pools
+
+	struct mempool mp_host[MP_HOST_POOL_COUNT]; // host memory pools
 
 	struct list_head host_allocated_head; // list of allocated host memory
 
@@ -75,7 +90,9 @@ struct mem_chunk {
 
 	u32 size; // chunk size
 
+	struct mempool *mp; // backpointer to mp
 	struct mempool_set *mpset; // back pointer to mpset
+	bool used_by_nq; // used by notification queue
 
 	u32 dram_channel; // DRAM channel
 	u32 dram_region; // TDRAM region
@@ -95,16 +112,24 @@ struct mc_list {
 };
 
 /**
- * mpset_host_init() - Initialize the mpset for host memory allocation.
+ * mpset_constructor() - Construct mpset for given device.
  *
  * @mpset: Pointer to mpset which need to be initialized
+ * @pdev: Pointer to device structure.
  *
  * Return: 0 if initialization succeeds, a negative error code otherwise.
  */
-int mpset_host_init(struct mempool_set *mpset);
+int mpset_constructor(struct mempool_set *mpset, void *pdev);
 
 /**
- * mpset_device_init() - Initialize mpset for a device memory allocation.
+ * mpset_destructor() - Free all mp in the set.
+ *
+ * @mpset: Pointer to mpset which need to be destroyed.
+ */
+void mpset_destructor(struct mempool_set *mpset);
+
+/**
+ * mpset_init() - Prepare mpset for application use.
  *
  * @mpset: Pointer to mpset which need to be initialized
  * @num_channels: Number of DRAM channels in the device
@@ -114,15 +139,15 @@ int mpset_host_init(struct mempool_set *mpset);
  *
  * Return: 0 if initialization succeeds, a negative error code otherwise.
  */
-int mpset_device_init(struct mempool_set *mpset, int num_channels, int num_regions,
-		      const phys_addr_t device_dram_addr[], const u64 device_dram_size[]);
+int mpset_init(struct mempool_set *mpset, int num_channels, int num_regions,
+	       const phys_addr_t *device_dram_addr, const u64 *device_dram_size);
 
 /**
- * mpset_destroy() - Free up all memory pool in the mpset and destroys the mpset.
+ * mpset_destructor() - Release mpset from application use.
  *
  * @mpset: Pointer to mpset
  */
-void mpset_destroy(struct mempool_set *mp);
+void mpset_release(struct mempool_set *mpset);
 
 /** mpset_search_mc() - Find memory chunk which maps given physical address
  *
@@ -154,5 +179,13 @@ int mc_alloc(struct mempool_set *mpset, struct mem_chunk **result, u32 size,
  * @mc: Pointer to memory chunk to be freed(this would be set to NULL on success)
  */
 void mc_free(struct mem_chunk **mcp);
+
+/**
+ * mc_used_by_nq() - Sets/unsets if the mc is used by nq
+ *
+ * @mc: Pointer to memory chunk to be set
+ * @used: used or not
+ */
+void mc_set_used_by_nq(struct mem_chunk *mc, bool used);
 
 #endif

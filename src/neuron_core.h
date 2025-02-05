@@ -97,6 +97,19 @@ int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 int nc_get_nq_mmap_offset(int nc_id, int engine_index, int nq_type, u64 *offset);
 
 /**
+ * nc_get_nq_mem_handle() - Get notification queue's mem handle for given neuron core.
+ *
+ * @nd: neuron device
+ * @nc_id: neuron core index.
+ * @engine_index: engine index in the neuron core.
+ * @nq_type: notification type.
+ * @handle: handle for the notification queue is stored here.
+ *
+ * Return: 0 on success, a negative error code otherwise.
+ */
+int nc_get_nq_mem_handle(struct neuron_device *nd, int nc_id, int engine_index, int nq_type, u64 *handle);
+
+/**
  * nc_get_nq_from_mmap_offset() - Get notification queue's index from given mmap offset.
  *
  * @offset: mmap offset.
@@ -109,7 +122,7 @@ int nc_get_nq_mmap_offset(int nc_id, int engine_index, int nq_type, u64 *offset)
 int nc_get_nq_from_mmap_offset(u64 offset, int *nc_id, int *engine_index, int *nq_type);
 
 /**
- * nc_nq_init() - Initialize notification queue.
+ * nc_nq_init() - Initialize notification queue in host memory
  *
  * @nd: neuron device
  * @nc_id: core index in the device
@@ -120,6 +133,20 @@ int nc_get_nq_from_mmap_offset(u64 offset, int *nc_id, int *engine_index, int *n
  * Return: 0 on if initialization succeeds, a negative error code otherwise.
  */
 int nc_nq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size);
+
+/**
+ * nc_nq_init_mc() - Initialize notification queue with given memory
+ *
+ * @nd: neuron device
+ * @nc_id: core index in the device
+ * @eng_index: notification engine index in the core
+ * @nq_type: type of the notification queue
+ * @size: size of queue
+ * @mc: memory used for this nq
+ *
+ * Return: 0 on if initialization succeeds, a negative error code otherwise.
+ */
+int nc_nq_init_mc(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size, struct mem_chunk *mc);
 
 /**
  * nc_nq_destroy() - Cleanup and free notification queue.

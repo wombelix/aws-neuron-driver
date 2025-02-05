@@ -53,6 +53,13 @@ struct neuron_ioctl_mem_copy {
 	__u32 dst_offset; // [in] Offset in the destination memory handle.
 };
 
+struct neuron_ioctl_memset {
+	__u64 mem_handle; // [in] Destination memory handle to data is to be copied.
+	__u64 offset; // [in] Offset in the memory handle.
+	__u32 value; // [in] value to set the memory with
+	__u32 size; // [in] Size of the transfer.
+};
+
 struct neuron_ioctl_mem_buf_copy {
 	__u64 mem_handle; // [in] Source or Destination memory handle from/to data needs to be copied.
 	void *buffer; // [in] Buffer from/to where data to be copied.
@@ -160,6 +167,15 @@ struct neuron_ioctl_notifications_init {
 	__u64 mmap_offset; // [out] mmap() offset for this NQ
 };
 
+struct neuron_ioctl_notifications_init_nq {
+	__u32 nq_dev_id; // [in] Notification device Index
+	__u32 nq_type; // [in] Notification queue type
+	__u32 engine_index; // [in] Engine Index.
+	__u32 size; // [in] Notification queue size in bytes
+	__u64 mem_handle; // [in] memory to be used for notification queue
+	__u64 mmap_offset; // [out] mmap() offset for this NQ
+};
+
 struct neuron_ioctl_neuron_counters_info {
 	__u64 mmap_offset; // [out] mmap() offset for the counters
 	__u32 size; // [out] size of memory allocated for counters
@@ -167,6 +183,12 @@ struct neuron_ioctl_neuron_counters_info {
 
 struct neuron_ioctl_notifications_destroy {
 	__u64 mmap_offset; // [in] NQ's mmap offset
+};
+
+struct neuron_ioctl_notifications_destroy_nq {
+	__u32 nq_dev_id; // [in] Notification device Index
+	__u32 nq_type; // [in] Notification queue type
+	__u32 engine_index; // [in] Engine Index.
 };
 
 struct neuron_ioctl_read_hw_counters {
@@ -234,6 +256,8 @@ struct neuron_ioctl_device_info {
  *  This can be used by applications to DMA.
  */
 #define NEURON_IOCTL_MEM_GET_INFO _IOR(NEURON_IOCTL_BASE, 26, struct neuron_ioctl_mem_get_info *)
+/** Meset zeros on the hanlde */
+#define NEURON_IOCTL_MEMSET _IOR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_memset *)
 
 
 /** Initialize DMA engine. */
@@ -270,6 +294,8 @@ struct neuron_ioctl_device_info {
 /** Initializes notification queues in the neuron core. */
 #define NEURON_IOCTL_NOTIFICATIONS_INIT _IOR(NEURON_IOCTL_BASE, 51, struct neuron_ioctl_notifications_init *)
 #define NEURON_IOCTL_NOTIFICATIONS_DESTROY _IOR(NEURON_IOCTL_BASE, 52, struct neuron_ioctl_notifications_destroy *)
+#define NEURON_IOCTL_NOTIFICATIONS_INIT_NQ _IOR(NEURON_IOCTL_BASE, 53, struct neuron_ioctl_notifications_init_nq *)
+#define NEURON_IOCTL_NOTIFICATIONS_DESTROY_NQ _IOR(NEURON_IOCTL_BASE, 54, struct neuron_ioctl_notifications_destroy_nq *)
 
 /** Gets the HW counters */
 #define NEURON_IOCTL_READ_HW_COUNTERS _IOR(NEURON_IOCTL_BASE, 61, struct neuron_ioctl_read_hw_counters *)

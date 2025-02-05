@@ -12,6 +12,7 @@
 #include <asm/bug.h>
 #include <asm/barrier.h>
 #include <asm/delay.h>
+#include <asm/io.h>
 
 #include "v1/fw_io.h"
 

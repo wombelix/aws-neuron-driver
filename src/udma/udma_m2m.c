@@ -345,7 +345,10 @@ int udma_m2m_copy_prepare_one(struct udma *udma, u32 qid, dma_addr_t s_addr, dma
 					 set_dst_int);
 }
 
-/* Start DMA data transfer for m2s_count/s2m_count number or descriptors */
+/* Start DMA data transfer for m2s_count/s2m_count number or descriptors.
+ * Can also be called to prefetch s2m ahead of time.  In which case m2s_count
+ * is 0.
+ */
 int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count)
 {
 	struct udma_q *txq;
@@ -367,6 +370,8 @@ int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count
 		return ret;
 	}
 	udma_desc_action_add(rxq, s2m_count);
-	udma_desc_action_add(txq, m2s_count);
+	if (m2s_count > 0) {
+		udma_desc_action_add(txq, m2s_count);
+	}
 	return ret;
 }

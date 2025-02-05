@@ -42,7 +42,7 @@ void ndma_ack_completed_desc(struct ndma_eng *eng, struct ndma_ring *ring, u32 c
  */
 int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count)
 {
-	struct udma_ring_ptr rxc;
+	struct udma_ring_ptr completion;
 	int ret = 0;
 	volatile u32 *dst;
 	volatile u32 *src;
@@ -53,21 +53,26 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	unsigned long one_loop_sleep = 10; // poll every 10 usecs
 	u64 loop = wait / one_loop_sleep + 1;
 
-	rxc.ptr = kmalloc(DMA_COMPLETION_MARKER_SIZE * 2, GFP_ATOMIC);
-	if (!rxc.ptr) {
+	// For h2t ring the memory for completion is allocated at init and so use that
+	if (eng->used_for_h2t)
+		completion.ptr = ring->h2t_completion.ptr;
+	else
+		completion.ptr = kmalloc(DMA_COMPLETION_MARKER_SIZE * 2, GFP_KERNEL);
+
+	if (!completion.ptr) {
 		pr_err("can't allocate memory for completion\n");
 		return -1;
 	}
-	dst = (volatile u32 *)(rxc.ptr + DMA_COMPLETION_MARKER_SIZE);
-	src = (volatile u32 *)rxc.ptr;
+	dst = (volatile u32 *)(completion.ptr + DMA_COMPLETION_MARKER_SIZE);
+	src = (volatile u32 *)completion.ptr;
 
 	// set the src value to the marker
 	WRITE_ONCE(*src, DMA_COMPLETION_MARKER);
 	WRITE_ONCE(*dst, 0);
 
-	rxc.addr = virt_to_phys(rxc.ptr) | PCIEX8_0_BASE;
-	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, rxc.addr,
-					rxc.addr + DMA_COMPLETION_MARKER_SIZE,
+	completion.addr = virt_to_phys(completion.ptr) | PCIEX8_0_BASE;
+	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, completion.addr,
+					completion.addr + DMA_COMPLETION_MARKER_SIZE,
 					DMA_COMPLETION_MARKER_SIZE, false, false);
 	if (ret) {
 		pr_err("failed to prepare DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
@@ -112,8 +117,8 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	}
 
 error:
-	if (rxc.ptr)
-		kfree(rxc.ptr);
+	if (completion.ptr && (completion.ptr != ring->h2t_completion.ptr))
+		kfree(completion.ptr);
 
 	return ret;
 }
@@ -137,7 +142,12 @@ static int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr
 	return ret;
 }
 
-int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size)
+/*
+ * Common function for dma content from src to dst
+ * if smove is set then the source offset will keep changing after every max desc size is copied
+ * if dmove is set then the dest offset will keep changing after every max desc size is copied
+ */
+static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size, bool smove, bool dmove)
 {
 	u32 chunk_size, remaining;
 	int pending_transfers = 0;
@@ -164,8 +174,8 @@ int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t 
 			chunk_size = remaining;
 
 		dma_addr_t src_offset, dst_offset;
-		src_offset = src + offset;
-		dst_offset = dst + offset;
+		src_offset = smove ? src + offset : src;
+		dst_offset = dmove ? dst + offset : dst;
 		if (++pending_transfers == sync_threshold || chunk_size == remaining) {
 			// no more room, transfer what's been queued so far OR last chunk
 			ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, true);
@@ -186,6 +196,44 @@ int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t 
 fail:
 	mutex_unlock(&eng->h2t_ring_lock);
 	return ret;
+}
+
+int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 value, u32 size)
+{
+	u32 transfer_size, remaining_size;
+	struct mem_chunk *memset_mc = nd->memset_mc;
+	int ret = 0;
+
+	mutex_lock(&nd->memset_lock);
+
+	// memset the preallocated host memory with the value passed
+	transfer_size = size > MEMSET_HOST_BUF_SIZE ? MEMSET_HOST_BUF_SIZE : size;
+	memset(memset_mc->va, value, transfer_size);
+
+	// transfer the contents to the memory
+	ret = ndma_memcpy_mc(nd, memset_mc, mc, 0, offset, transfer_size);
+	if (ret) {
+		pr_err("memset memory failed for size:%d\n", transfer_size);
+		goto error;
+	}
+	remaining_size = size - transfer_size;
+	if (remaining_size) {
+		// copy rest of memroy with zers from the src
+		ret = ndma_memcpy_offset_move(nd, mc->nc_id, mc->pa + offset, mc->pa + offset + transfer_size, remaining_size, false, true);
+		if (ret) {
+			pr_err("memset device to device failed for size:%d\n", remaining_size);
+			goto error;
+		}
+	}
+
+error:
+	mutex_unlock(&nd->memset_lock);
+	return ret;
+}
+
+int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size)
+{
+	return ndma_memcpy_offset_move(nd, nc_id, src, dst, size, true, true);
 }
 
 int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,

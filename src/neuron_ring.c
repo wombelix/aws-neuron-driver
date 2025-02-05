@@ -99,7 +99,7 @@ static void ndmar_ring_set_mem_chunk(struct ndma_eng *eng, u32 qid, struct mem_c
 		ring->rxc_mc = mc;
 		ring->rxc.ptr = mc->va;
 		if (mc->mem_location == MEM_LOC_HOST) {
-			ring->rxc.addr = virt_to_phys(ring->rx.ptr) | PCIEX8_0_BASE;
+			ring->rxc.addr = virt_to_phys(ring->rxc.ptr) | PCIEX8_0_BASE;
 		} else {
 			ring->rxc.addr = mc->pa;
 			if (port) {
@@ -206,7 +206,7 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 	int ndesc = DMA_H2T_DESC_COUNT;
 	u32 ring_size = ndmar_ring_get_desc_count(ndesc) * sizeof(union udma_desc);
 	int qid = MAX_DMA_RINGS - 1;
-	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL;
+	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL, *h2t_completion_mc = NULL;
 
 	eng = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
@@ -236,6 +236,16 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 	ndmar_ring_set_mem_chunk(eng, qid, tx_mc, 0, NEURON_DMA_QUEUE_TYPE_TX);
 	ndmar_ring_set_mem_chunk(eng, qid, rx_mc, 0, NEURON_DMA_QUEUE_TYPE_RX);
 
+	ret = mc_alloc(&nd->mpset, &h2t_completion_mc, sizeof(u32) * 2, MEM_LOC_HOST, 0, 0, nc_id);
+	if (ret) {
+		pr_err("can't allocate h2t_completion_mc memory for H2T\n");
+		goto error;
+	}
+
+	ring->h2t_completion_mc = h2t_completion_mc;
+	ring->h2t_completion.ptr = h2t_completion_mc->va;
+	ring->h2t_completion.addr = virt_to_phys(ring->h2t_completion.ptr) | PCIEX8_0_BASE;
+
 	mutex_init(&eng->h2t_ring_lock);
 
 	ndmar_release_engine(eng);
@@ -249,6 +259,8 @@ error:
 		mc_free(&rx_mc);
 	if (tx_mc)
 		mc_free(&tx_mc);
+	if (h2t_completion_mc)
+		mc_free(&h2t_completion_mc);
 
 	return ret;
 }
