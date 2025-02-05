@@ -403,10 +403,89 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
 	return fw_io_read(ctx, addr_in, val_out, num_counters);
 }
 
-int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
+static const int trn1_32xl_neigbor_ids[16][4] = {
+	{12, 3, 4, 1},   // neuron device 0
+	{13, 0, 5, 2},   // neuron device 1
+	{14, 1, 6, 3},   // neuron device 2
+	{15, 2, 7, 0},   // neuron device 3
+	{0, 7, 8, 5},    // neuron device 4
+	{1, 4, 9, 6},    // neuron device 5
+	{2, 5, 10, 7},   // neuron device 6
+	{3, 6, 11, 4},   // neuron device 7
+	{4, 11, 12, 9},  // neuron device 8
+	{5, 8, 13, 10},  // neuron device 9
+	{6, 9, 14, 11},  // neuron device 10
+	{7, 10, 15, 8},  // neuron device 11
+	{8, 15, 0, 13},  // neuron device 12
+	{9, 12, 1, 14},  // neuron device 13
+	{10, 13, 2, 15}, // neuron device 14
+	{11, 14, 3, 12}  // neuron device 15
+};
+
+static const int inf2_48xl_neighbor_ids[12][2] = {
+	{11, 1}, // neuron device 0
+	{0, 2},  // neuron device 1
+	{1, 3},  // neuron device 2
+	{2, 4},  // neuron device 3
+	{3, 5},  // neuron device 4
+	{4, 6},  // neuron device 5
+	{5, 7},  // neuron device 6
+	{6, 8},  // neuron device 7
+	{7, 9},  // neuron device 8
+	{8, 10}, // neuron device 9
+	{9, 11}, // neuron device 10
+	{10, 0}  // neuron device 11
+};
+
+static const int *inf2_24xl_neighbor_ids[6] = {
+	(int[]){1},		// neuron device 0
+	(int[]){0, 2},	// neuron device 1
+	(int[]){1, 3},	// neuron device 2
+	(int[]){2, 4},	// neuron device 3
+	(int[]){3, 5},	// neuron device 4
+	(int[]){4}		// neuron device 5
+};
+
+static int fw_io_topology_v2(int pdev_index, int device_id, u32 *connected_device_ids, int *count)
+{
+	// Sunda does not have Pacific support to detect east/west/south/north neighbors like Tonga,
+	// so its topology is hardcoded based on instance type.
+	*count = 0;
+
+	if (total_neuron_devices == 0)
+		return 0;
+
+	switch (pdev_index) {
+		case TRN1_DEVICE_ID0: // Trn1
+			if (total_neuron_devices == 16) { // Trn1.32xl
+				*count = 4;
+				memcpy(connected_device_ids, trn1_32xl_neigbor_ids[device_id], (*count) * sizeof(int));
+			}
+			break;
+		case INF2_DEVICE_ID0: // Inf2
+			if (total_neuron_devices == 12) { // Inf2.48xl
+				*count = 2;
+				memcpy(connected_device_ids, inf2_48xl_neighbor_ids[device_id], (*count) * sizeof(int));
+			} else if (total_neuron_devices == 6) { // Inf2.24xl
+				if (device_id == 0 || device_id == 5)
+					*count = 1;
+				else
+					*count = 2;
+				memcpy(connected_device_ids, inf2_24xl_neighbor_ids[device_id], (*count) * sizeof(int));
+			}
+			break;
+		default:
+			break;
+	}
+	return 0;
+}
+
+int fw_io_topology(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
 {
 	if (narch_get_arch() == NEURON_ARCH_V1) {
-		return fw_io_topology_v1(ctx, device_ids, count);
+		return fw_io_topology_v1(ctx, connected_device_ids, count);
+	} else if (narch_get_arch() == NEURON_ARCH_V2) {
+		return fw_io_topology_v2(pdev_index, device_id, connected_device_ids, count);
 	} else {
 		return 0;
 	}

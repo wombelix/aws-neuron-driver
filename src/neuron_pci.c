@@ -23,8 +23,8 @@
 #include "v1/fw_io.h"
 #include "v1/address_map.h"
 #include "v2/address_map.h"
-
 #include "neuron_dma.h"
+#include "neuron_dhal.h"
 
 
 static struct pci_device_id neuron_pci_dev_ids[] = {
@@ -76,6 +76,7 @@ extern int ncdev_delete_device_node(struct neuron_device *ndev);
 extern void ndmar_preinit(struct neuron_device *nd);
 
 static struct neuron_device *neuron_devices[MAX_NEURON_DEVICE_COUNT] = { 0 };
+int total_neuron_devices = 0;
 
 struct neuron_device *neuron_pci_get_device(u8 device_index)
 {
@@ -261,8 +262,8 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	nd = kzalloc(sizeof(struct neuron_device), GFP_KERNEL);
 	if (nd == NULL) {
-		pci_info(dev, "Can't allocate memory\n");
-		goto fail_alloc_mem;
+		pci_info(dev, "Can't allocate memory for neuron_device\n");
+		goto fail_alloc_nd_mem;
 	}
 
 	nd->pdev = dev;
@@ -278,6 +279,12 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	// set the architecture
 	neuron_pci_set_device_architecture(nd);
+
+	ret = neuron_dhal_init();
+	if (ret) {
+		pci_info(dev, "Failed to init neuron_dhal\n");
+		goto fail_dhal_init;
+	}
 
 	// set the bars
 	apb_bar = neuron_pci_get_apb_bar(nd);
@@ -439,9 +446,11 @@ fail_bar0_resource:
 	pci_release_region(dev, INF_APB_BAR);
 fail_bar0_map:
 	pci_disable_device(dev);
+fail_dhal_init:
+	neuron_dhal_free();
 fail_enable:
 	kfree(nd);
-fail_alloc_mem:
+fail_alloc_nd_mem:
 	return ret;
 }
 
@@ -499,10 +508,12 @@ int neuron_pci_module_init(void)
 		pr_err("Failed to register neuron inf driver %d\n", ret);
 		return ret;
 	}
+	total_neuron_devices = atomic_read(&device_count);
 	return 0;
 }
 
 void neuron_pci_module_exit(void)
 {
+	neuron_dhal_free();
 	pci_unregister_driver(&neuron_pci_driver);
 }

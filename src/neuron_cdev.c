@@ -1256,7 +1256,7 @@ static long ncdev_device_info(struct neuron_device *nd, void *param)
 	mutex_lock(&ncdev_discovery_lock);
 	// if topology discovery is not yet done, do it and cache the result
 	// if it fails, don't fail completely, wait for a retry otherwise ndl_open_device would fail
-	ret = fw_io_topology(nd->fw_io_ctx, connected_devices, &connected_device_count);
+	ret = fw_io_topology(nd->fw_io_ctx, nd->pdev->device, nd->device_index, connected_devices, &connected_device_count);
 	if (ret) {
 		connected_device_count = 0;
 		pr_err("Unable to get connected devices for device %d", nd->device_index);
@@ -2022,9 +2022,45 @@ static ssize_t neuron_core_count_show(struct device *dev, struct device_attribut
 
 static DEVICE_ATTR(core_count, S_IRUSR, neuron_core_count_show, NULL);
 
+#define CONNECTED_DEVICES_MAX_LEN 20
+static ssize_t neuron_connected_devices_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int i = 0;
+	int offset = 0;
+	int minor = MINOR(dev->devt); // neuron device id
+	struct ncdev *devnode = &devnodes[minor];
+	struct neuron_device *nd = devnode->ndev;
+	u32 connected_devices[MAX_NEURON_DEVICE_COUNT];
+	int connected_device_count = 0;
+	int ret = fw_io_topology(nd->fw_io_ctx, nd->pdev->device, minor, connected_devices, &connected_device_count);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < connected_device_count - 1; i++) {
+		offset += snprintf(buf + offset, CONNECTED_DEVICES_MAX_LEN - offset, "%d, ", connected_devices[i]);
+		if (offset >= CONNECTED_DEVICES_MAX_LEN) {
+			pr_err("snprintf failed when showing connected devices\n");
+			return 0;
+		}
+	}
+	if (connected_device_count == 0)
+		offset += snprintf(buf, CONNECTED_DEVICES_MAX_LEN, "\n");
+	else
+		offset += snprintf(buf + offset, CONNECTED_DEVICES_MAX_LEN - offset, "%d\n", connected_devices[connected_device_count - 1]);
+	if (offset >= CONNECTED_DEVICES_MAX_LEN) {
+		pr_err("snprintf failed when showing connected devices\n");
+		return 0;
+	}
+
+	return offset;
+}
+
+static DEVICE_ATTR(connected_devices, S_IRUSR, neuron_connected_devices_show, NULL);
+
 static struct attribute *attrs[] = {
 	&dev_attr_reset.attr,
 	&dev_attr_core_count.attr,
+	&dev_attr_connected_devices.attr,
    	NULL,
 };
 

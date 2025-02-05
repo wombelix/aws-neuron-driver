@@ -58,6 +58,8 @@ enum neuron_device_state {
 	NEURON_DEVICE_STATE_INVALID = 2
 };
 
+extern int total_neuron_devices;
+
 struct neuron_device {
 	struct pci_dev *pdev;
 	int device_index;

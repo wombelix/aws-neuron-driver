@@ -49,8 +49,6 @@ enum {
 	FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET = 0x800,
 };
 
-
-
 struct fw_io_ctx {
 	void __iomem *bar0;
 	u8 next_seq_num;
@@ -159,13 +157,15 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
  * fw_io_topology() - Discovers devices connected to the given device.
  *
  * @ctx: FWIO context of the device for which topology
- * @device_ids:  Connected device IDs are stored here.
+ * @pdev_index: the nd->pdev->device index
+ * @device_id: The index of the neuron device
+ * @connected_device_ids:  Connected device IDs are stored here.
  * @count: Number of devices connected to the given device.
  *
  * Return: 0 on success.
  *
  */
-int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count);
+int fw_io_topology(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count);
 
 /**
  * fw_io_device_id_read() - Read device id
