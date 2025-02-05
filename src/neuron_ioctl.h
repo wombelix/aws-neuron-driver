@@ -151,6 +151,12 @@ struct neuron_ioctl_dma_queue_init {
 	__u32 axi_port; // [in] axi port
 };
 
+#define MAX_DMA_QUEUE_INIT_BATCH 256
+struct neuron_ioctl_dma_queue_init_batch {
+	__u32 count;
+	struct neuron_ioctl_dma_queue_init entries[MAX_DMA_QUEUE_INIT_BATCH];
+};
+
 struct neuron_ioctl_dma_queue_release {
 	__u32 eng_id; // [in] DMA engine index
 	__u32 qid; // [in] Queue index in the DMA engine
@@ -409,6 +415,9 @@ struct neuron_ioctl_dmabuf_fd {
 #define NEURON_IOCTL_DMA_ENG_GET_STATE _IOWR(NEURON_IOCTL_BASE, 32, struct neuron_ioctl_dma_eng_get_state *)
 /** Initializes given DMA queue */
 #define NEURON_IOCTL_DMA_QUEUE_INIT _IOR(NEURON_IOCTL_BASE, 33, struct neuron_ioctl_dma_queue_init *)
+
+#define NEURON_IOCTL_DMA_QUEUE_INIT_BATCH _IOR(NEURON_IOCTL_BASE, 133, struct neuron_ioctl_dma_queue_init_batch)
+
 /** Releases given DMA queue */
 #define NEURON_IOCTL_DMA_QUEUE_RELEASE _IOR(NEURON_IOCTL_BASE, 34, struct neuron_ioctl_dma_queue_release *)
 /** Starts DMA transfer of given number of descriptors */

@@ -311,8 +311,9 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 			if (narch_get_arch() == NEURON_ARCH_V1)
 				continue;
 			struct mem_chunk *mc = NULL;
+			u32 nc_id = channel;
 			ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, MEM_LOC_DEVICE,
-				       channel, region, 0, &mc);
+				       channel, region, nc_id, &mc);
 			if (ret) {
 				pr_err("failed to allocate hbm carevout region: ret=%d\n", ret);
 				goto fail;

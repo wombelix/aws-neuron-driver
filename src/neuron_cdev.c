@@ -134,6 +134,60 @@ static int ncdev_dma_queue_init(struct neuron_device *nd, void *param)
 	return ret;
 }
 
+static int ncdev_dma_queue_init_batch_entry(struct neuron_device *nd, struct neuron_ioctl_dma_queue_init * arg)
+{
+	struct mem_chunk *rx_mc;
+	struct mem_chunk *tx_mc;
+	struct mem_chunk *rxc_mc;
+	int ret;
+
+	if (arg->rx_handle)
+		rx_mc = ncdev_mem_handle_to_mem_chunk(arg->rx_handle);
+	else
+		rx_mc = NULL;
+	if (arg->tx_handle)
+		tx_mc = ncdev_mem_handle_to_mem_chunk(arg->tx_handle);
+	else
+		tx_mc = NULL;
+	if (arg->rxc_handle)
+		rxc_mc = ncdev_mem_handle_to_mem_chunk(arg->rxc_handle);
+	else
+		rxc_mc = NULL;
+	ret = ndmar_queue_init(nd, arg->eng_id, arg->qid, arg->tx_desc_count, arg->rx_desc_count, tx_mc,
+						   rx_mc, rxc_mc, arg->axi_port);
+	return ret;
+}
+
+static int ncdev_dma_queue_init_batch(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_dma_queue_init_batch *arg = kmalloc(sizeof(struct neuron_ioctl_dma_queue_init_batch), GFP_KERNEL);
+	int ret;
+
+	if (!arg) {
+		return -ENOMEM;
+	}
+
+	ret = neuron_copy_from_user(__func__, arg, (struct neuron_ioctl_dma_queue_init_batch *)param, sizeof(struct neuron_ioctl_dma_queue_init_batch));
+	if (ret) {
+		return -EACCES;
+	}
+
+	if (arg->count >= MAX_DMA_QUEUE_INIT_BATCH) {
+		ret = -E2BIG;
+		goto done;
+	}
+
+	u32 i = 0;
+	for (i = 0; i < arg->count; i++) {
+		ret = ncdev_dma_queue_init_batch_entry(nd, &arg->entries[i]);
+		if (ret) goto done;
+	}
+
+done:
+	if (arg) kfree(arg);
+	return ret;
+}
+
 static int ncdev_dma_copy_descriptors(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_dma_copy_descriptors arg;
@@ -1256,7 +1310,7 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       false, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_region;  
+		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_channel;  
 		ret = ts_nq_init(nd, nc_id, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 false, &mc, &arg.mmap_offset);
@@ -1285,7 +1339,7 @@ static long ncdev_nc_nq_init_with_realloc_v2(struct neuron_device *nd, void *par
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_region;
+		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_channel;
 		ret = ts_nq_init(nd, nc_id, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 arg.force_alloc_mem, &mc, &arg.mmap_offset);
@@ -1574,6 +1628,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_dma_engine_set_state(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_QUEUE_INIT) {
 		return ncdev_dma_queue_init(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_DMA_QUEUE_INIT_BATCH) {
+		return ncdev_dma_queue_init_batch(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_QUEUE_COPY_START) {
 		return ncdev_dma_copy_start(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_ACK_COMPLETED) {
@@ -1930,7 +1986,7 @@ static void ncdev_cleanup(void)
 {
 	int i;
 	for (i = 0; i < MAX_NEURON_DEVICE_COUNT; i++) {
-		if (!devnodes[i].ndev)
+		if (devnodes[i].ndev != NULL)
 			pr_err("Error! ncdev is not NULL");
 	}
 

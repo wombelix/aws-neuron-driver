@@ -55,6 +55,12 @@
 #define V2_SEMAPHORE_COUNT 32
 #define V2_EVENTS_COUNT 256
 
+// IMPORTANT, don't change this value w/o consulting with
+// Henry/Ilya/Kun first. Current implementation (see udma_m2s_max_desc_set())
+// uses this value to set prefetching threshold.  Due to a h/w bug the threshold
+// cannot be the same as the size of the prefetch buffer (128).
+// Keeping the threshold lower than the buffer size prevents "aggressive" prefetching
+// of a single descriptor from happening which avoids triggering the bug.
 #define V2_ALLOWED_DESC_PER_PACKET 64
 
 #define V2_MAX_NQ_QUEUES 16
