@@ -271,4 +271,14 @@ int ndmar_get_h2t_qid(void);
  */
 uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id);
 
+
+/** ndmar_h2t_ring_init() - initialize a DMA ring 
+ * 
+ * @eng_id: DMA engine index
+ * @qid: DMA queue index
+ * 
+ * Return: 0 on success, a negative error code otherwise
+ */
+int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid);
+
 #endif

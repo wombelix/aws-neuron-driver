@@ -47,6 +47,8 @@ struct neuron_reset {
 	volatile struct neuron_reset_request *req_cmpl_head;
 	volatile struct neuron_reset_request *req_cmpl_tail;
 	struct mutex nr_lock;
+	uint64_t reset_start_time; // the latest reset start time
+	uint64_t reset_end_time;   // the latest reset end time
 };
 
 /**
@@ -93,5 +95,14 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
  * Return: 0 if reset was successfully completed, 1 otherwise.
  */
 int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check);
+
+/**
+ * nr_op_in_reset_wnd() - Check if an operation is possibly within a reset window
+ * 
+ * @op_start_time: The start time of the operation
+ * @nd: Neuron device
+ * 
+ */
+bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd);
 
 #endif

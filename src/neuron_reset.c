@@ -167,6 +167,7 @@ static int nr_reset_thread_fn(void *arg)
 			break;
 		volatile struct neuron_reset_request *req = nd->nr.req_pending_head;
 		enum neuron_reset_state state = NEURON_RESET_STATE_STARTED;
+		nd->nr.reset_start_time = get_jiffies_64();
 		pr_info("nd%d: initiating reset request %u\n", nd->device_index, req->request_id);
 		ret = nr_initiate_reset(nd);
 		if (ret) {
@@ -190,6 +191,7 @@ static int nr_reset_thread_fn(void *arg)
 				}
 			}
 		}
+		nd->nr.reset_end_time = get_jiffies_64();
 		mutex_lock(&nd->nr.nr_lock);
 		// delete from pending list
 		nd->nr.req_pending_head = req->next;
@@ -380,4 +382,15 @@ int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check)
 	enum neuron_reset_state ret = req->ret;
 	kfree((void *)req);
 	return ((ret == NEURON_RESET_STATE_COMPLETED) ? 0 : 1);
+}
+
+bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd)
+{
+	if (time_before_eq64(nd->nr.reset_end_time, nd->nr.reset_start_time)) {
+		return true;
+	} else if (time_before_eq64(op_start_time, nd->nr.reset_end_time)) {
+		return true;
+	}
+
+	return false;
 }

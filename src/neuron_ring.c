@@ -434,7 +434,7 @@ error:
 	return ret;
 }
 
-static int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid)
+int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid)
 {
 	int ret = -1;
 	struct ndma_queue *queue;

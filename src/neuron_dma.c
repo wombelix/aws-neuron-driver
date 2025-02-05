@@ -170,12 +170,12 @@ static int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr
  */
 static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size, bool smove, bool dmove)
 {
-	u32 chunk_size, remaining;
+	u32 chunk_size, remaining, prev_remaining;
 	int pending_transfers = 0;
 	// max number of usable descriptors - we never allocate the last 16 (max_num_... ) and need to
 	// keep one free for checking completion
 	const u32 sync_threshold = DMA_H2T_DESC_COUNT - UDMA_MAX_NUM_CDESC_PER_CACHE_LINE - 1;
-	u32 offset;
+	u32 offset, prev_offset;
 	int ret = 0;
 
 	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
@@ -188,9 +188,11 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 
 	chunk_size = size < MAX_DMA_DESC_SIZE ? size : MAX_DMA_DESC_SIZE;
 	remaining = size;
+	prev_remaining = remaining;
 	mutex_lock(&eng->h2t_ring_lock); // TODO: why is this lock needed given the eng lock?
+	uint64_t memcpy_start_time = get_jiffies_64();
 
-	for (offset = 0; remaining; offset += chunk_size, remaining -= chunk_size) {
+	for (offset = 0, prev_offset = 0; remaining; offset += chunk_size, remaining -= chunk_size) {
 		if (remaining < MAX_DMA_DESC_SIZE)
 			chunk_size = remaining;
 
@@ -203,8 +205,29 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 			if (ret)
 				goto fail;
 			ret = ndma_memcpy_wait_for_completion(eng, ring, pending_transfers);
-			if (ret)
-				goto fail;
+			if (ret) {
+				// if the memcpy possibly starts within a NeuronCore reset window, 
+				// the timeout is possible due to DMA hanging caused by hardware issue.
+				// if so, restart DMA and retry the memcpy
+				if (narch_get_arch() != NEURON_ARCH_TRN) {
+					goto fail;
+				}
+				if (!nr_op_in_reset_wnd(memcpy_start_time, nd)) {
+					goto fail;
+				}
+				pr_info("Failed to copy memory during a NeuronCore reset: nd %d, src %#llx, dst %#llx, size %u. Retrying the copy.\n", nd->device_index, src, dst, size);
+				ret = ndmar_h2t_ring_init(eng, qid);
+				if (ret) {
+					pr_err("H2T ring init failed on nd %d: ret %d\n", nd->device_index, ret);
+					goto fail;
+				}
+				offset = prev_offset - chunk_size;
+				remaining = prev_remaining + chunk_size;
+			} else {
+				prev_offset = offset;
+				prev_remaining = remaining;
+			}
+			memcpy_start_time = get_jiffies_64();
 			pending_transfers = 0;
 		} else {
 			ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, false);
@@ -279,6 +302,11 @@ int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct me
 	}
 	dst_pa += dst_offset;
 
+	// FIXME: H2H memcpy's src and dst mc should have dedicated nc_id such as -1
+	if (src_mc->mem_location == MEM_LOC_HOST && dst_mc->mem_location == MEM_LOC_HOST) {
+		nc_id = dst_mc->nc_id;
+	}
+
 	return ndma_memcpy(nd, nc_id, src_pa, dst_pa, size);
 }
 
@@ -304,7 +332,7 @@ int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset
 }
 
 int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offset,
-			    struct mem_chunk *src_mc, u32 src_offset, u32 size)
+				struct mem_chunk *src_mc, u32 src_offset, u32 size)
 {
 	dma_addr_t src_pa;
 	dma_addr_t dst_pa;
@@ -386,8 +414,8 @@ done:
 }
 
 int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32 src_offset,
-				     struct mem_chunk *dst_mc, u32 dst_offset, u32 size,
-				     u32 desc_type)
+					 struct mem_chunk *dst_mc, u32 dst_offset, u32 size,
+					 u32 desc_type)
 {
 	u32 curr_size = size;
 	union udma_desc *desc = (union udma_desc *)buffer;
