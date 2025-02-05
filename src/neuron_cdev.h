@@ -12,6 +12,10 @@
 
 #include "neuron_device.h"
 
+#ifndef RHEL_RELEASE_VERSION
+#define RHEL_RELEASE_VERSION(a,b) 1
+#endif
+
 #define MMAP_BAR0_APB_MISC_RAM_INVALID -1
 #define NCDEV_MEM_REGION_INVALID -1 // mark the end of ncdev_mem_regions array
 

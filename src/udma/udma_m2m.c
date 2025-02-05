@@ -91,7 +91,7 @@ struct sdma_cme_desc_word {
 	uint32_t netag0_rsvd : 5;
 } __attribute__((__packed__));
 
-void sdma_m2s_set_write_barrier(uint32_t *meta_ctrl)
+static void sdma_m2s_set_write_barrier(uint32_t *meta_ctrl)
 {
 	((struct sdma_cme_desc_word *)meta_ctrl)->write_barrier = 1;
 	return;

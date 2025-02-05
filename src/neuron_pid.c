@@ -26,6 +26,27 @@ int npid_find_process_slot(struct neuron_device *nd)
 	return -1;
 }
 
+static int npid_find_process_slot_by_task(struct neuron_device *nd)
+{
+	int i;
+	for (i = 0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++) {
+		if (nd->attached_processes[i].task == current)
+			return i;
+	}
+	return -1;
+}
+
+int npid_is_attached_task(struct neuron_device *nd)
+{
+	int slot;
+	slot = npid_find_process_slot_by_task(nd);
+	if (slot == -1)
+		return 0;
+
+	pr_info("npid_is_attached_task: neuron: nd%d found task with new pid %u old pid %u:\n", nd->device_index, task_tgid_nr(current), nd->attached_processes[slot].pid);
+	return nd->attached_processes[slot].open_count;
+}
+
 int npid_attached_process_count(struct neuron_device *nd)
 {
 	int i, count = 0;
@@ -74,6 +95,7 @@ bool npid_attach(struct neuron_device *nd)
 	for (i=0; i < NEURON_MAX_PROCESS_PER_DEVICE; i++) {
 		if (nd->attached_processes[i].pid == 0) {
 			nd->attached_processes[i].pid = task_tgid_nr(current);
+			nd->attached_processes[i].task = current;
 			nd->attached_processes[i].open_count = 1; //since the ioctl done after open set to 1
 			pr_info("neuron:npid_attach: pid=%u, slot=%u\n", task_tgid_nr(current), i);
 			return true;
@@ -99,6 +121,7 @@ int npid_detach(struct neuron_device *nd)
 	if (nd->attached_processes[slot].open_count == 0) {
 		pr_info("neuron:npid_detach: pid=%u, slot=%u\n", nd->attached_processes[slot].pid, slot);
 		nd->attached_processes[slot].pid = 0;
+		nd->attached_processes[slot].task = NULL;
 	}
 	return nd->attached_processes[slot].open_count;
 }

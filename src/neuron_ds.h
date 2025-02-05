@@ -105,4 +105,15 @@ void neuron_ds_acquire_lock(struct neuron_datastore *nds);
  */
 void neuron_ds_release_lock(struct neuron_datastore *nds);
 
+/**
+ * get_neuroncore_counter_value() - Gets the value of a neuroncore counter either from the original storage or the extended one
+ *
+ * @entry: neuron datastore entry from where to read
+ * @nc_index: index of neuroncore
+ * @counter_index: index of counter to read
+ *
+ * Returns: 0 if invalid counter was specified, value of counter otherwise (including 0)
+ */
+uint64_t get_neuroncore_counter_value(struct neuron_datastore_entry *entry, int nc_index, int counter_index);
+
 #endif

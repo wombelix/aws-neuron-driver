@@ -20,7 +20,8 @@ static u64 get_sdma_misc_base(int nc_id, int eng_id)
 		V3_APB_SE_2_SDMA_0_BASE,
 		V3_APB_SE_3_SDMA_0_BASE
 	};
-	return sdma_bases[seng_id] + eng_id * V3_APB_SDMA_DIST + V3_APB_SDMA_MISC_OFFSET;
+	int seng_eng_id = eng_id + ((nc_id % V3_NC_PER_SENG) * V3_DMA_ENG_PER_NC);
+	return sdma_bases[seng_id] + seng_eng_id * V3_APB_SDMA_DIST + V3_APB_SDMA_MISC_OFFSET;
 }
 
 

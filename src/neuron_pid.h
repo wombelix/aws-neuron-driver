@@ -19,6 +19,7 @@ struct neuron_attached_process {
 	pid_t pid; // pid which attached to this process
 	int open_count; // how many time this process opened this device.
 	size_t memory_used[MEM_LOC_COUNT]; // currently allocated memory size
+	void * task; // pointer to task
 };
 
 /**
@@ -29,7 +30,16 @@ struct neuron_attached_process {
 void npid_print_usage(struct neuron_device *nd);
 
 /**
- * npid_is_attached() - checks whether given pid is opened to the given device.
+ * npid_is_attached_task() - checks whether current task is opened to the given device.
+ *
+ * @nd: Neuron device
+ *
+ * @return 0 if process is not attached, open_count by the processs otherwise.
+ */
+int npid_is_attached_task(struct neuron_device *nd);
+
+/**
+ * npid_is_attached() - checks whether current pid is opened to the given device.
  *
  * @nd: Neuron device
  *

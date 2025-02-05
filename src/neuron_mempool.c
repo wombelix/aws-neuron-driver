@@ -47,7 +47,10 @@ static u32 mem_alloc_type_to_sysfs_counter[] = {
 	NON_NDS_NC_COUNTER_MEM_USAGE_NCDEV_DEVICE,    // NEURON_MEMALLOC_TYPE_NCDEV_DEVICE
 	NON_NDS_NC_COUNTER_MEM_USAGE_COLLECTIVES_DEVICE,    // NEURON_MEMALLOC_TYPE_COLLECTIVES_DEVICE
 	NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_NONSHARED_DEVICE,    // NEURON_MEMALLOC_TYPE_SCRATCHPAD_NONSHARED_DEVICE
-	NON_NDS_NC_COUNTER_MEM_USAGE_NOTIFICATION_DEVICE    // NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_NOTIFICATION_DEVICE,    // NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE
+
+	NON_NDS_ND_COUNTER_MEM_USAGE_DMA_RINGS_HOST,  // NEURON_MEMALLOC_TYPE_DMA_RINGS_HOST
+	NON_NDS_NC_COUNTER_MEM_USAGE_DMA_RINGS_DEVICE // NEURON_MEMALLOC_TYPE_DMA_RINGS_DEVICE
 };
 
 int mempool_min_alloc_size = PAGE_SIZE; // always allocate on mmap() boundary
@@ -97,7 +100,7 @@ static void mc_insert_node(struct rb_root *root, struct mem_chunk *mc)
  * @root: binary tree root
  * @mc: memory chunk that needs to be removed
  */
-void mc_remove_node(struct rb_root *root, struct mem_chunk *mc)
+static void mc_remove_node(struct rb_root *root, struct mem_chunk *mc)
 {
 	rb_erase(&mc->node, root);
 }
@@ -543,7 +546,9 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	if (location == MEM_LOC_HOST) {
 		if (align) {
 			pr_err("Allocating aligned host memory not supported");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto exit;
+
 		}
 		dma_addr_t addr;
 		mc->va = dma_alloc_coherent(mpset->pdev, size, &addr,
@@ -728,3 +733,28 @@ void mc_free(struct mem_chunk **mcp)
 
 	kfree(mc);
 }
+
+int mc_dump_all_chunks(struct neuron_device *nd, u32 channel, u32 num_entries_in, struct neuron_ioctl_mem_chunk_info *data, u32 *num_entries_out)
+{
+	struct mempool_set *mpset = &nd->mpset;
+	u32 cnt = 0;
+	struct rb_node *node;
+
+	read_lock(&mpset->rblock);
+	for (node = rb_first(&mpset->root); node; node = rb_next(node)) {
+		struct mem_chunk *mc = rb_entry(node, struct mem_chunk, node);
+		if (mc->mem_location == MEM_LOC_DEVICE && mc->dram_channel == channel) {
+			if (cnt < num_entries_in) {
+				struct neuron_ioctl_mem_chunk_info *i = &data[cnt];
+				i->pa = mc->pa;
+				i->size = mc->size;
+				i->mem_type = mc->alloc_type;
+			}
+			cnt++;
+		}
+	}
+	read_unlock(&mpset->rblock);
+	*num_entries_out = cnt;
+	return 0;
+}
+

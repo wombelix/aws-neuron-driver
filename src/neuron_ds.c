@@ -16,11 +16,13 @@ int neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent)
 	int idx;
 	int ret = 0;
 	nds->parent = parent;
-	memset(nds->entries, 0, NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE * sizeof(struct neuron_datastore_entry));
+	memset(nds->entries, 0,
+	       NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE * sizeof(struct neuron_datastore_entry));
 	mutex_init(&nds->lock);
 	for (idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
-		ret = mc_alloc_align(parent, MC_LIFESPAN_DEVICE, NEURON_DATASTORE_SIZE, 0, MEM_LOC_HOST,
-			       0, 0, 0, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &nds->entries[idx].mc);
+		ret = mc_alloc_align(parent, MC_LIFESPAN_DEVICE, NEURON_DATASTORE_SIZE, 0,
+				     MEM_LOC_HOST, 0, 0, 0, NEURON_MEMALLOC_TYPE_NCDEV_HOST,
+				     &nds->entries[idx].mc);
 		if (ret) {
 			pr_err("nds allocation failure for nd[%d]", parent->device_index);
 			return ret;
@@ -56,7 +58,7 @@ static struct neuron_datastore_entry *neuron_ds_find(struct neuron_datastore *nd
 {
 	int idx;
 	struct neuron_datastore_entry *entry = NULL;
-	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
+	for (idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
 		entry = &nds->entries[idx];
 		BUG_ON(neuron_ds_entry_used(entry) && entry->mc == NULL);
 		if (entry->pid == pid)
@@ -71,7 +73,7 @@ static int neuron_ds_find_empty_slot(struct neuron_datastore *nds)
 	int found_idx = -1;
 	u64 min_clear_tick = ~0ull;
 	struct neuron_datastore_entry *entry = NULL;
-	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
+	for (idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
 		entry = &nds->entries[idx];
 		if (neuron_ds_entry_used(&nds->entries[idx]))
 			continue;
@@ -85,7 +87,7 @@ static int neuron_ds_find_empty_slot(struct neuron_datastore *nds)
 	return found_idx;
 }
 
-int neuron_ds_add_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
+static int neuron_ds_add_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
 {
 	int new_index;
 	struct neuron_datastore_entry *entry = NULL;
@@ -102,7 +104,7 @@ int neuron_ds_add_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk 
 	return 0;
 }
 
-int neuron_ds_acquire_existing_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
+static int neuron_ds_acquire_existing_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
 {
 	struct neuron_datastore_entry *entry = neuron_ds_find(nds, pid);
 	if (entry == NULL)
@@ -111,7 +113,7 @@ int neuron_ds_acquire_existing_pid(struct neuron_datastore *nds, pid_t pid, stru
 	return 0;
 }
 
-int neuron_ds_create_and_acquire_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
+static int neuron_ds_create_and_acquire_pid(struct neuron_datastore *nds, pid_t pid, struct mem_chunk **mc)
 {
 	struct neuron_datastore_entry *entry;
 	entry = neuron_ds_find(nds, pid);
@@ -150,7 +152,8 @@ static void neuron_ds_clear_entry(struct neuron_datastore_entry *entry)
 	memset(entry->mc->va, 0, NEURON_DATASTORE_SIZE);
 }
 
-static void neuron_ds_release_entry(struct neuron_datastore *nds, struct neuron_datastore_entry *entry)
+static void neuron_ds_release_entry(struct neuron_datastore *nds,
+				    struct neuron_datastore_entry *entry)
 {
 	bool current_pid_is_owner = entry->pid == task_tgid_nr(current);
 	if (!current_pid_is_owner)
@@ -173,10 +176,11 @@ void neuron_ds_release_pid(struct neuron_datastore *nds, pid_t pid)
 }
 
 static void neuron_ds_for_each_entry(struct neuron_datastore *nds,
-				     void (*f)(struct neuron_datastore_entry*)) {
+				     void (*f)(struct neuron_datastore_entry *))
+{
 	int idx;
 	neuron_ds_acquire_lock(nds);
-	for(idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
+	for (idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
 		(*f)(&nds->entries[idx]);
 	}
 	neuron_ds_release_lock(nds);
@@ -190,4 +194,51 @@ void neuron_ds_destroy(struct neuron_datastore *nds)
 void neuron_ds_clear(struct neuron_datastore *nds)
 {
 	neuron_ds_for_each_entry(nds, neuron_ds_clear_entry);
+}
+
+// This gets the value of an NC counter in the following 3 cases:
+// case 1: NC and counter are in the original section (nc_index < 4 && counter_index < 31)
+// case 2: counter is in the 'extended' section for the original NDS_NC_COUNTER_COUNT NCs (nc_index < 4 && counter_index >= 31)
+// case 3: entire NC is stored in the new NC section (nc_index >= 4 && nc_index < 16)
+// | 31 counters | ... | 31 counters | (x 4)  <- original section
+// | 65 counters | ... | 65 counters | (x 4)  <- extension for the original NCs
+// | 96 counters | ... | 96 counters | (x 12) <- new section for NCs containing complete set of counters
+// if an invalid index is requested, it returns '0' so it will not be counted
+uint64_t get_neuroncore_counter_value(struct neuron_datastore_entry *entry, int nc_index,
+				      int counter_index)
+{
+	void *ds_base_ptr = entry->mc->va;
+
+	if (nc_index < NDS_MAX_NEURONCORE_COUNT) {
+		if (counter_index < NDS_NC_COUNTER_COUNT)
+			return NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_index)[counter_index];
+		else {
+			counter_index -= NDS_NC_COUNTER_COUNT;
+			if (counter_index >= NDS_EXT_NC_COUNTER_COUNT) {
+				goto invalid_counter;
+			}
+			return NDS_EXT_NEURONCORE_COUNTERS(ds_base_ptr, nc_index)[counter_index];
+		}
+	}
+
+	nc_index -= NDS_MAX_NEURONCORE_COUNT;
+
+	if (nc_index >= NDS_EXT_MAX_NEURONCORE_COUNT) {
+		goto invalid_nc_index;
+	}
+
+	if (counter_index >= NDS_TOTAL_NC_COUNTER_COUNT) {
+		goto invalid_counter;
+	}
+
+	return NDS_EXT_NEURONCORE_NC_DATA(ds_base_ptr, nc_index)[counter_index];
+
+invalid_counter:
+	WARN_ONCE(1, "nds: invalid NeuronCore counter requested: %d", counter_index);
+	return 0;
+
+invalid_nc_index:
+	WARN_ONCE(1, "nds: invalid NeuronCore index requested: %d",
+		  nc_index + NDS_MAX_NEURONCORE_COUNT);
+	return 0;
 }

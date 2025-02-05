@@ -235,6 +235,17 @@ void ncrwl_nc_range_unmark(volatile long unsigned int *free_map)
 	mutex_unlock(&ncrwl_range_lock);
 }
 
+int ncrwl_nc_range_pid_get( uint32_t nc_index, pid_t *pid)
+{
+	if (nc_index >= MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE) {
+		return -ENOENT;
+	}
+	mutex_lock(&ncrwl_range_lock);
+	*pid = ncrwl_range_pids[nc_index];
+	mutex_unlock(&ncrwl_range_lock);
+	return 0;
+}
+
 void ncrwl_release_current_process(struct neuron_device *nd)
 {
 	struct neuron_crwl *crwl;

@@ -141,6 +141,13 @@ void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map);
 int ndmar_eng_init(struct neuron_device *nd, int eng_id);
 
 /**
+ * ndmar_preinit() - Initialize all DMA engines for neuron device
+ *
+ * @param nd: Neuron device which contains the DMA engine
+ */
+void ndmar_preinit(struct neuron_device *nd);
+
+/**
  * ndmar_eng_set_state() - Change DMA engine's state
  *
  * @nd: Neuron device which contains the DMA engine

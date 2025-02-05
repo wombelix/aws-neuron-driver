@@ -120,9 +120,13 @@ static const nmetric_def_t nmetric_defs[] = {
 	NMETRIC_COUNTER_DEF(14, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_QUEUE_FULL, NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE),
 	NMETRIC_COUNTER_DEF(15, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_INVALID, NDS_NC_COUNTER_ERR_INVALID),
 	NMETRIC_COUNTER_DEF(16, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_UNSUPPORTED_VERSION, NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION),
+
 	// special counter metric case
 	NMETRIC_DEF(17, NMETRIC_TYPE_FW_IO_ERR, 1, POST_TIME_TICK_0, NMETRIC_CW_ID_FW_IO_ERROR_COUNT, 0xFF, 0),
+
+	// counter metrics continue
 	NMETRIC_COUNTER_DEF(18, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_OOB, NDS_NC_COUNTER_OOB),
+
 	// bitmap metrics
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_FEATURE_BITMAP, NDS_ND_COUNTER_FEATURE_BITMAP),
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_UNUSED, NDS_ND_COUNTER_DYNAMIC_SYSFS_METRIC_BITMAP),
@@ -253,7 +257,7 @@ static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct 
 		break;
 		case NMETRIC_TYPE_COUNTER:
 			for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
-				dest_buf[curr_metric->index] += NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[curr_metric->ds_id];
+				dest_buf[curr_metric->index] += get_neuroncore_counter_value(entry, nc_id, curr_metric->ds_id);
 			}
 		break;
 		case NMETRIC_TYPE_BITMAP:
@@ -310,7 +314,7 @@ void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore
  * @size: size of posting buffer
  *
  */
-void nmetric_mock_fw_io_post_metric(u8 *data, u32 size)
+static void nmetric_mock_fw_io_post_metric(u8 *data, u32 size)
 {
 	char temp_buf[NEURON_METRICS_VERSION_STRING_MAX_LEN + 1];
 	struct nmetric_cw_metric *curr_metric;

@@ -44,6 +44,15 @@ int ncrwl_nc_range_mark(u32 nc_count, u32 start_nc_index, u32 end_nc_index,
 void ncrwl_nc_range_unmark(volatile long unsigned int *bitmap);
 
 /**
+ * ncrwl_nc_range_pid_get( uint32_t nc_index, pid_t *pid)
+ *
+ * @param nc_index: core index which we want to return the owner pid
+ * @param *pid: return pid value. 0 = no owner.
+ *
+ */
+int ncrwl_nc_range_pid_get(uint32_t nc_index, pid_t *pid);
+
+/**
  * ncrwl_reader_enter() - Takes reader lock of given neuron core.
  *
  * @nd: Neuron device.

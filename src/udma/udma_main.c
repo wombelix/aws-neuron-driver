@@ -94,8 +94,8 @@ static int udma_set_defaults(struct udma *udma)
 	/* Set M2S max number of outstanding transactions */
 	reg_write32(&udma->udma_regs_m2s->axi_m2s.ostand_cfg, value);
 
-	/* set AXI timeout to 1M (~2.6 ms) */
-	reg_write32(&udma->gen_axi_regs->cfg_1, 1000000);
+	/* set AXI timeout to 100M (~118ms) */
+	reg_write32(&udma->gen_axi_regs->cfg_1, 100 * 1000 * 1000);
 
 	/* Ack time out */
 	reg_write32(&udma->udma_regs_m2s->m2s_comp.cfg_application_ack, 0);
@@ -276,9 +276,9 @@ static int udma_handle_init_aux(struct udma *udma, struct udma_params *udma_para
 	udma->udma_regs_s2m = (struct udma_s2m_regs_v4 __iomem *)&unit_regs->s2m;
 
 	if (udma_params->name == NULL)
-		strlcpy(udma->name, "NONE", UDMA_INSTANCE_NAME_LEN);
+		strscpy(udma->name, "NONE", UDMA_INSTANCE_NAME_LEN);
 	else
-		strlcpy(udma->name, udma_params->name, UDMA_INSTANCE_NAME_LEN);
+		strscpy(udma->name, udma_params->name, UDMA_INSTANCE_NAME_LEN);
 
 	for (i = 0; i < udma->num_of_queues_max; i++) {
 		udma->udma_q_m2s[i].q_regs =

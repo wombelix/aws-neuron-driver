@@ -23,6 +23,7 @@
 #include "neuron_ds.h"
 #include "neuron_metrics.h"
 #include "neuron_sysfs_metrics.h"
+#include "neuron_log.h"
 
 #ifndef static_assert
 #define static_assert(expr, ...)
@@ -101,6 +102,8 @@ struct neuron_device {
 	u64 nc_model_started_count[MAX_NC_PER_DEVICE]; // number of times the NCs has started model
 
 	struct nsysfsmetric_metrics sysfs_metrics;
+	
+	struct neuron_log_obj log_obj; // logging object
 };
 
 #endif

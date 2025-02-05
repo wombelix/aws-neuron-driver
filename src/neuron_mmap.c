@@ -31,7 +31,7 @@ int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 block_id,
 	return -EINVAL;
 }
 
-int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset, bool * readonly)
+static int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset, bool * readonly)
 {
 	struct neuron_dm_special_mmap_ent *ent = ndhal->ndhal_mmap.dm_mmap_special;
 

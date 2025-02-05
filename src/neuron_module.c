@@ -16,17 +16,15 @@
 #define CREATE_TRACE_POINTS
 #include "neuron_trace.h"
 #include "neuron_cdev.h"
+#include "neuron_pci.h"
 
-MODULE_DESCRIPTION("Neuron Driver, built from SHA: 95d339723b522b3599d1ad7df6c8c0172020a900");
+MODULE_DESCRIPTION("Neuron Driver, built from SHA: 5b7723d7c39c528e0790eefb689a2c7f822788c6");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.17.17.0");
+MODULE_VERSION("2.18.12.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.17.17.0";
-const char driver_revision[] = "95d339723b522b3599d1ad7df6c8c0172020a900";
-
-extern int neuron_pci_module_init(void);
-extern void neuron_pci_module_exit(void);
+const char driver_version[] = "2.18.12.0";
+const char driver_revision[] = "5b7723d7c39c528e0790eefb689a2c7f822788c6";
 
 #ifdef CONFIG_FAULT_INJECTION
 

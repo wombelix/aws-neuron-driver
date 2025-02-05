@@ -118,7 +118,7 @@ static void ndmabuf_detach(
 
 /* Invoked when an external driver wants to retrieve pages
  * (physical addresses) of a Neuron device buffer */
-struct sg_table *ndmabuf_map(
+static struct sg_table *ndmabuf_map(
 		struct dma_buf_attachment *attachment,
 		enum dma_data_direction dir) {
 	struct dma_buf *dmabuf;
@@ -215,7 +215,7 @@ err_unlock:
 }
 
 /* Invoked when an external driver is done with the pages */
-void ndmabuf_unmap(
+static void ndmabuf_unmap(
 		struct dma_buf_attachment *attachment,
 		struct sg_table *sgt,
 		enum dma_data_direction dir) {
@@ -263,7 +263,7 @@ void ndmabuf_unmap(
 }
 
 /* Invoked when the dmabuf object is being freed */
-void ndmabuf_release(struct dma_buf *dmabuf)
+static void ndmabuf_release(struct dma_buf *dmabuf)
 {
 	struct ndmabuf_private_data *private_data = dmabuf->priv;
 	if (private_data == NULL) {

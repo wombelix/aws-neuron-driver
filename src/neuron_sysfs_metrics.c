@@ -85,7 +85,7 @@ const static nsysfsmetric_counter_node_info_t status_counter_nodes_info_tbl[] = 
     COUNTER_NODE_INFO("execute_failed_to_queue",     NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE)),
     COUNTER_NODE_INFO("invalid_error",               NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_INVALID)),
     COUNTER_NODE_INFO("unsupported_neff_version",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION)),
-    COUNTER_NODE_INFO("oob_error",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_OOB))
+    COUNTER_NODE_INFO("oob_error",                   NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_OOB))
 };
 const static int status_counter_nodes_info_tbl_cnt = sizeof(status_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
 
@@ -99,6 +99,7 @@ const static nsysfsmetric_counter_node_info_t device_mem_category_counter_nodes_
     MEM_COUNTER_NODE_INFO("collectives",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_NC_COUNTER_MEM_USAGE_COLLECTIVES_DEVICE)),
     MEM_COUNTER_NODE_INFO("nonshared_scratchpad",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_NONSHARED_DEVICE)),
     MEM_COUNTER_NODE_INFO("notifications",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_NC_COUNTER_MEM_USAGE_NOTIFICATION_DEVICE)),
+    MEM_COUNTER_NODE_INFO("dma_rings",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_NC_COUNTER_MEM_USAGE_DMA_RINGS_DEVICE)),
     MEM_COUNTER_NODE_INFO("uncategorized",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_NC_COUNTER_MEM_USAGE_UNCATEGORIZED_DEVICE))
 };
 const static int device_mem_category_counter_nodes_info_tbl_cnt = sizeof(device_mem_category_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
@@ -110,6 +111,7 @@ const static nsysfsmetric_counter_node_info_t host_mem_category_counter_nodes_in
     MEM_COUNTER_NODE_INFO("application_memory",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_ND_COUNTER_MEM_USAGE_MISC_HOST)),
     MEM_COUNTER_NODE_INFO("driver_memory",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_ND_COUNTER_MEM_USAGE_NCDEV_HOST)),
     MEM_COUNTER_NODE_INFO("notifications",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_ND_COUNTER_MEM_USAGE_NOTIFICATION_HOST)),
+    MEM_COUNTER_NODE_INFO("dma_rings",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_ND_COUNTER_MEM_USAGE_DMA_RINGS_HOST)),
     MEM_COUNTER_NODE_INFO("uncategorized",       NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_ND_COUNTER_MEM_USAGE_UNCATEGORIZED_HOST))
 };
 const static int host_mem_category_counter_nodes_info_tbl_cnt = sizeof(host_mem_category_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
@@ -1075,13 +1077,13 @@ void nsysfsmetric_nds_aggregate(struct neuron_device *nd, struct neuron_datastor
         for (i = 0; i < status_counter_nodes_info_tbl_cnt; i++) {
             metric_id = status_counter_nodes_info_tbl[i].metric_id;
             ds_id = SYSFS_METRIC_ID_TO_NDS_NC_COUNTER_ID(metric_id);
-            delta = NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[ds_id];
+            delta = get_neuroncore_counter_value(entry, nc_id, ds_id);
             nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, ds_id, nc_id, delta, true);
         }
 
         // read the two custom sysfs metrics from nds: model load count and inference count
-        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_MODEL_LOAD_COUNT, nc_id, NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[NDS_NC_COUNTER_MODEL_LOAD_COUNT], true);
-        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_INFERENCE_COUNT, nc_id, NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[NDS_NC_COUNTER_INFERENCE_COUNT], true);
-        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_MAC_COUNT, nc_id, 2 * NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[NDS_NC_COUNTER_MAC_COUNT], true);  // one MAC has two floating point operations (multiply and add)
+        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_MODEL_LOAD_COUNT, nc_id, get_neuroncore_counter_value(entry, nc_id, NDS_NC_COUNTER_MODEL_LOAD_COUNT), true);
+        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_INFERENCE_COUNT, nc_id, get_neuroncore_counter_value(entry, nc_id, NDS_NC_COUNTER_INFERENCE_COUNT), true);
+        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_MAC_COUNT, nc_id, 2 * get_neuroncore_counter_value(entry, nc_id, NDS_NC_COUNTER_MAC_COUNT), true);  // one MAC has two floating point operations (multiply and add)
     }
 }

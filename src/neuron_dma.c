@@ -103,7 +103,7 @@ static inline dma_addr_t ndma_mc_to_pa( struct mem_chunk *mc)
  *    Prefetch user buffer.
  *
  */
-int ndma_prefetch_user_pages( unsigned long start, int nr_pages)
+static int ndma_prefetch_user_pages( unsigned long start, int nr_pages)
 {
 	int nr_pinned;
 	struct page **p = NULL;

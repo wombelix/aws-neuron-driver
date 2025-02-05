@@ -24,6 +24,7 @@
 #include "neuron_dhal.h"
 #include "neuron_nq.h"
 #include "neuron_pci.h"
+#include "neuron_log.h"
 #include "neuron_cdev.h"
 
 
@@ -181,6 +182,10 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		pci_info(dev, "Can't allocate memory for neuron_device\n");
 		goto fail_alloc_nd_mem;
 	}
+	
+	if (neuron_log_init(nd)) {
+		pci_warn(dev, "Warning: Can't allocate memory for neuron log\n");
+	}
 
 	nd->pdev = dev;
 	pci_set_drvdata(dev, nd);
@@ -301,6 +306,7 @@ fail_bar0_map:
 	pci_disable_device(dev);
 fail_dhal_init:
 fail_enable:
+	neuron_log_destroy( nd);
 	kfree(nd);
 fail_alloc_nd_mem:
 	pci_set_drvdata(dev, NULL);
@@ -338,6 +344,8 @@ static void neuron_pci_remove(struct pci_dev *dev)
 	if (nd->npdev.bar4) {
 		pci_iounmap(dev, nd->npdev.bar4);
 	}
+
+	neuron_log_destroy(nd);
 
 	kfree(nd);
 }

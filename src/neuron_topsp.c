@@ -37,6 +37,7 @@
 #include "neuron_device.h"
 #include "neuron_arch.h"
 #include "neuron_dhal.h"
+#include "neuron_topsp.h"
 
 int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type)
 {

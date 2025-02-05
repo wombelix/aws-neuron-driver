@@ -101,7 +101,7 @@ struct neuron_uuid {
 	__u8 value[32];
 };
 
-#define NEURON_MAX_PROCESS_PER_DEVICE 8 // 2 per core (arbitrary but needs to small number for fast lookup)
+#define NEURON_MAX_PROCESS_PER_DEVICE 16 // 2 per core (arbitrary but needs to small number for fast lookup)
 
 #define APP_INFO_PID_NC_LOCK_INFO	(1)
 #define APP_INFO_PID_MEM_USAGE		(1 << 1)
@@ -128,6 +128,12 @@ typedef union nmetric_version {
 	__u64 all;
 } nmetric_version_t;
 
+struct neuron_ioctl_mem_chunk_info {
+	__u64 pa;
+	__u64 size;
+	__u32 mem_type;
+};
+
 /*
  * Memory allocation categories for sysfs counters
 */
@@ -150,6 +156,9 @@ typedef enum {
 	NEURON_MEMALLOC_TYPE_COLLECTIVES_DEVICE,
 	NEURON_MEMALLOC_TYPE_SCRATCHPAD_NONSHARED_DEVICE,
 	NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE,
+
+	NEURON_MEMALLOC_TYPE_DMA_RINGS_HOST,
+	NEURON_MEMALLOC_TYPE_DMA_RINGS_DEVICE,
 
 	NEURON_MEMALLOC_TYPE_MAX
 } mem_alloc_category_t;
@@ -246,6 +255,22 @@ enum {
 	NDS_NC_COUNTER_COUNT = NDS_NC_COUNTER_OOB + NDS_NC_COUNTER_RESERVED + 1
 };
 
+#define NDS_MAX_NEURONCORE_COUNT     (4)
+#define NDS_EXT_MAX_NEURONCORE_COUNT (12)
+
+// Additional NC storage
+// | NDS_EXT_NC_COUNTER_COUNT | ... | NDS_EXT_NC_COUNTER_COUNT | (x NDS_MAX_NEURONCORE_COUNT) - this will only store the 'overflow' from the original counters
+// | NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT | ... (x NDS_EXT_MAX_NEURONCORE_COUNT)   - this will store complete data for additional NCs (up to a max of 16)
+#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 65
+
+// Index of NC counter extensions start at NDS_NC_COUNTER_COUNT not at 0
+enum {
+	// NDS_EXT_NC_COUNTER_UNUSED = NDS_NC_COUNTER_COUNT,
+	NDS_EXT_NC_COUNTER_COUNT = NDS_EXT_NC_COUNTER_ADDED_RESERVED
+};
+
+#define NDS_TOTAL_NC_COUNTER_COUNT (NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT) // 31 original + 65 extended = 96 counters
+
 typedef struct nds_header {
 	char signature[4];      // Fixed signature: 'n', 'd', 's', 0
 	int  version;           // Version of the datastore's format
@@ -263,11 +288,23 @@ typedef struct nds_header {
 #define NDS_ND_COUNTERS_SIZE (NDS_ND_COUNTER_COUNT * sizeof(uint64_t))
 #define NDS_ND_COUNTERS(base_addr) ((uint64_t *)(base_addr + NDS_ND_COUNTERS_START))
 
-#define MAX_NEURONCORE_COUNT (4)
-
+// original NC counter section
 #define NDS_NEURONCORE_COUNTERS_COUNT (NDS_NC_COUNTER_COUNT)
 #define NDS_NEURONCORE_COUNTERS_START (NDS_ND_COUNTERS_START + NDS_ND_COUNTERS_SIZE)
-#define NDS_NEURONCORE_COUNTERS_SIZE (NDS_NEURONCORE_COUNTERS_COUNT * MAX_NEURONCORE_COUNT * sizeof(uint64_t))
+#define NDS_NEURONCORE_COUNTERS_SIZE (NDS_NEURONCORE_COUNTERS_COUNT * NDS_MAX_NEURONCORE_COUNT * sizeof(uint64_t))
 #define NDS_NEURONCORE_COUNTERS(base_addr, nc_index) ((uint64_t *)(base_addr + NDS_NEURONCORE_COUNTERS_START) + (nc_index * NDS_NEURONCORE_COUNTERS_COUNT))
+
+// additional NC counter section at the end of all existing structures in the datastore (i.e. after NDS_PROCESS_EXT_INFO)
+// NDS_PROCESS_EXT_INFO_START + NDS_PROCESS_EXT_INFO_SIZE = 44588 (hardcoded because it's easier than to move all the structs here and sizeof them)
+#define NDS_EXT_NEURONCORE_COUNTERS_COUNT (NDS_EXT_NC_COUNTER_COUNT)
+#define NDS_EXT_NEURONCORE_COUNTERS_START (44588)
+#define NDS_EXT_NEURONCORE_COUNTERS_SIZE (NDS_EXT_NC_COUNTER_COUNT * NDS_MAX_NEURONCORE_COUNT * sizeof(uint64_t))
+#define NDS_EXT_NEURONCORE_COUNTERS(base_addr, nc_index) ((uint64_t *)(base_addr + NDS_EXT_NEURONCORE_COUNTERS_START) + (nc_index * NDS_EXT_NC_COUNTER_COUNT))
+
+// additional NC data for extra Neuron Cores (12 extra sets which include all the 96 counters)
+#define NDS_EXT_NEURONCORE_NC_DATA_COUNT (NDS_EXT_MAX_NEURONCORE_COUNT)
+#define NDS_EXT_NEURONCORE_NC_DATA_START (NDS_EXT_NEURONCORE_COUNTERS_START + NDS_EXT_NEURONCORE_COUNTERS_SIZE)
+#define NDS_EXT_NEURONCORE_NC_DATA_SIZE (NDS_EXT_MAX_NEURONCORE_COUNT * NDS_TOTAL_NC_COUNTER_COUNT * sizeof(uint64_t))
+#define NDS_EXT_NEURONCORE_NC_DATA(base_addr, nc_index) ((uint64_t *)(base_addr + NDS_EXT_NEURONCORE_NC_DATA_START) + (nc_index * NDS_TOTAL_NC_COUNTER_COUNT))
 
 #endif  // NEURON_DRIVER_SHARED_H

@@ -186,7 +186,7 @@ static void nr_get_tpb_reset_map(uint32_t nc_map, uint32_t *tpb_reset_map)
  * 
  * @param nd - Neuron device which will be reset by the thread.
  */
-int nr_initiate_reset_v3(struct neuron_device *nd)
+static int nr_initiate_reset_v3(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
@@ -203,18 +203,21 @@ int nr_initiate_reset_v3(struct neuron_device *nd)
 	return 0;
 }
 
-int nr_initiate_reset_v3_qemu(struct neuron_device *nd)
+static int nr_initiate_reset_v3_qemu(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
 
+    uint32_t nc_map = nd->nr.req_pending_head->nc_map;
+    uint32_t tpb_reset_map = 0;
+    nr_get_tpb_reset_map(nc_map, &tpb_reset_map);
 	volatile void *addr = nd->npdev.bar0 + V3_PCIE_BAR0_APB_IO_0_OFFSET + V3_APB_IO_0_USER_SE_0_RESERVED2_RELBASE + 0x10;
-	writel(1, (volatile uint32_t *)addr);  
+	writel(tpb_reset_map, (volatile uint32_t *)addr);
 
 	return 0; 
 }
 
-int nr_initiate_reset_v3_emu(struct neuron_device *nd)
+static int nr_initiate_reset_v3_emu(struct neuron_device *nd)
 {
 	return nr_initiate_reset_v3(nd);
 }
@@ -224,7 +227,7 @@ int nr_initiate_reset_v3_emu(struct neuron_device *nd)
  * 
  * @param nd - Neuron device which will be reset by the thread.
  */
-int nr_wait_for_reset_completion_v3(struct neuron_device *nd)
+static int nr_wait_for_reset_completion_v3(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
@@ -246,7 +249,7 @@ int nr_wait_for_reset_completion_v3(struct neuron_device *nd)
 	return -1;
 }
 
-int nr_wait_for_reset_completion_v3_qemu(struct neuron_device *nd)
+static int nr_wait_for_reset_completion_v3_qemu(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
@@ -268,7 +271,7 @@ int nr_wait_for_reset_completion_v3_qemu(struct neuron_device *nd)
 	return -1;   
 }
 
-int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
+static int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
 {
 	return nr_wait_for_reset_completion_v3(nd);
 }
@@ -283,7 +286,7 @@ int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
  * @nq_type: type of the notification queue
  * @return u8: notification queue index
  */
-u8 ts_nq_get_nqid_v3(struct neuron_device *nd, u8 index, u32 nq_type)
+static u8 ts_nq_get_nqid_v3(struct neuron_device *nd, u8 index, u32 nq_type)
 {
 	u8 nq_id = 0;
 	nq_id = (nq_type * V3_MAX_NQ_QUEUES) + index;
@@ -300,7 +303,7 @@ u8 ts_nq_get_nqid_v3(struct neuron_device *nd, u8 index, u32 nq_type)
  * @size: size of queue in bytes
  * @queue_pa: physical address of the notification queue
  */
-void ts_nq_set_hwaddr_v3(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_type, u32 size,
+static void ts_nq_set_hwaddr_v3(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_type, u32 size,
 			     u64 queue_pa)
 {
 	void *apb_base;
@@ -333,7 +336,7 @@ void ts_nq_set_hwaddr_v3(struct neuron_device *nd, u8 ts_id, u8 index, u32 nq_ty
  *
  * Return: 0 on if initialization succeeds, a negative error code otherwise.
  */
-int ts_nq_init_v3(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
+static int ts_nq_init_v3(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
 				u32 on_host_memory, u32 dram_channel, u32 dram_region,
 				bool force_alloc_mem, struct mem_chunk **nq_mc, u64 *mmap_offset)
 {
@@ -381,7 +384,7 @@ int ts_nq_init_v3(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type,
  * @ts_id: topsp id
  *
  */
-void ts_nq_destroy_one_v3(struct neuron_device *nd, u8 ts_id)
+static void ts_nq_destroy_one_v3(struct neuron_device *nd, u8 ts_id)
 {
 	u8 eng_index;
 	u8 nq_type;
@@ -401,7 +404,7 @@ void ts_nq_destroy_one_v3(struct neuron_device *nd, u8 ts_id)
  * @param nc_id - neuron core index
  * @return void* - semaphore base address
  */
-void *nc_get_semaphore_base_v3(struct neuron_device *nd, u8 nc_id)
+static void *nc_get_semaphore_base_v3(struct neuron_device *nd, u8 nc_id)
 {
 	return nd->npdev.bar0 + V3_PCIE_BAR0_TPB_0_OFFSET + (V3_PCIE_BAR0_TPB_DIST * nc_id);
 }
@@ -414,7 +417,7 @@ void *nc_get_semaphore_base_v3(struct neuron_device *nd, u8 nc_id)
  * @param event_index - event index
  * @return void* - event address
  */
-void *nc_get_event_addr_v3(struct neuron_device *nd, u8 nc_id, u16 event_index)
+static void *nc_get_event_addr_v3(struct neuron_device *nd, u8 nc_id, u16 event_index)
 {
 	void * base = nd->npdev.bar0 + V3_PCIE_BAR0_TPB_0_OFFSET + (V3_PCIE_BAR0_TPB_DIST * nc_id) + ndhal->ndhal_address_map.mmap_nc_event_offset;
 	return (base + (event_index * NC_EVENT_SIZE));
@@ -431,7 +434,7 @@ void *nc_get_event_addr_v3(struct neuron_device *nd, u8 nc_id, u16 event_index)
  * @param nq_type: type of the notification queue
  * @return u8: notification queue id
  */
-u8 nnq_get_nqid_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
+static u8 nnq_get_nqid_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
 {
 	return (nq_type * V3_MAX_NQ_QUEUES) + index;
 }
@@ -446,7 +449,7 @@ u8 nnq_get_nqid_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
  * @param size: size of queue in bytes
  * @param queue_pa: physical address of the queue
  */
-void nnq_set_hwaddr_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type, u32 size, u64 queue_pa)
+static void nnq_set_hwaddr_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type, u32 size, u64 queue_pa)
 {
 	void *apb_base;
 	if (nq_type == NQ_TYPE_TRACE_DMA) {
@@ -475,7 +478,7 @@ void nnq_set_hwaddr_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type
  * @param device_dram_addr: DRAM Channel 0 and 1's addresses
  * @param device_dram_size: DRAM Channel 0 and 1's sizes
  */
-void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
+static void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
 {
 	mpset->num_channels = V3_MAX_DRAM_CHANNELS;
 	mpset->mp_device_num_regions = 1;
@@ -511,7 +514,7 @@ void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *device_dra
  * @param region_sz: region size
  * @return int: 0 on success, o/w on failure
  */
-int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
+static int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct mempool_set *mpset, u64 *device_dram_addr, u64 *device_dram_size)
 {
 	int ret;
 	u64 region_sz;
@@ -562,7 +565,7 @@ int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct mempool_set
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA engine id
  */
-uint32_t ndmar_get_h2t_eng_id_v3(struct neuron_device *nd, uint32_t nc_id)
+static uint32_t ndmar_get_h2t_eng_id_v3(struct neuron_device *nd, uint32_t nc_id)
 {
 	const uint32_t h2d_dma_eng_id[V3_NUM_H2D_DMA_PER_DEVICE] = {
 		V3_D2H_0_IDX,
@@ -580,7 +583,7 @@ uint32_t ndmar_get_h2t_eng_id_v3(struct neuron_device *nd, uint32_t nc_id)
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA queue id
  */
-int ndmar_get_h2t_qid_v3(uint32_t nc_id)
+static int ndmar_get_h2t_qid_v3(uint32_t nc_id)
 {
  	// on V3 on h2t engines are shared between 2 cores so we give the even core queue 0 and the odd core queue 1
 	return nc_id % V3_NC_PER_SENG;
@@ -594,7 +597,7 @@ int ndmar_get_h2t_qid_v3(uint32_t nc_id)
  * @param q_id:  queue id
  * Return true if this is an h2t queue
  */
-bool ndmar_is_h2t_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
+static bool ndmar_is_h2t_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
 {
 	return (nd->ndma_engine[eng_id].used_for_h2t && ((q_id == 0) || (q_id == 1)));
 }
@@ -606,11 +609,22 @@ bool ndmar_is_h2t_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
  * @param nd_idx - index of the core that owns the h2t 
  * @param nc_map - map of all cores being reset
  */
-bool nr_init_h2t_eng_v3( int nc_idx, uint32_t nc_map)
+static bool nr_init_h2t_eng_v3( int nc_idx, uint32_t nc_map)
 {
-	if ((nc_idx % 2 == 0) &&((nc_map ==  NEURON_NC_MAP_DEVICE) || (nc_map & (1 << nc_idx))))
+	// h2t initialization should be owned by the first tpb per seng
+	if (nc_idx % V3_NC_PER_SENG != 0) {
+		return false;
+	}
+	// h2t initialization should always be done after device reset
+	if (nc_map == NEURON_NC_MAP_DEVICE) {
 		return true;
-	return false;
+	}
+
+	// when resetting a subset of the device, (re)initialize the h2t engines when all cores in an
+	// seng are reset
+	const uint32_t seng_id = nc_idx / V3_NC_PER_SENG;
+	const uint32_t seng_map = ((1 << V3_NC_PER_SENG) - 1) << (V3_NC_PER_SENG * seng_id);
+	return ((nc_map & seng_map) == seng_map);
 }
 
 /**
@@ -619,7 +633,7 @@ bool nr_init_h2t_eng_v3( int nc_idx, uint32_t nc_map)
  * @param eng_id: the DMA engine id
  * @param q_id: the DMA queue id
  */
-bool ndmar_is_nx_ring_v3(uint32_t eng_id, uint32_t q_id)
+static bool ndmar_is_nx_ring_v3(uint32_t eng_id, uint32_t q_id)
 {
 	// for v3 the last queue is reserved for collectives, and the second
 	// to last queue in engs 0-4 and 7-8 are reserved for NX cores
@@ -639,7 +653,7 @@ bool ndmar_is_nx_ring_v3(uint32_t eng_id, uint32_t q_id)
  *
  * Return: 0 if queue release succeeds, a negative error code otherwise.
  */
-int ndmar_quiesce_queues_v3(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask)
+static int ndmar_quiesce_queues_v3(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask)
 {
 	if (engine_count > DMA_QUIESCE_MAX_ENG)
 		return -EINVAL;
@@ -686,7 +700,7 @@ int ndmar_quiesce_queues_v3(struct neuron_device *nd, u32 nc_id, u32 engine_coun
  *
  * Return: None
  */
-void ndmar_set_model_started_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc)
+static void ndmar_set_model_started_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *mc)
 {
 	return;
 }
@@ -732,7 +746,7 @@ const int trn2_32xl_neigbor_ids[16][4] = {
  * @return int: 0 on success. -1 on failure
  *
  */
-int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
+static int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
 {
 	// V3 does not have Pacific support to detect east/west/south/north neighbors like V1,
 	// so its topology is hardcoded based on instance type.
@@ -765,7 +779,7 @@ int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 
  * 
  * @return int: 0 on success. -1 on failure
  */
-int fw_io_register_readless_read_region_v3(struct fw_io_ctx *ctx, void __iomem *bar0, u64 bar0_size, void __iomem *bar2, u64 bar2_size)
+static int fw_io_register_readless_read_region_v3(struct fw_io_ctx *ctx, void __iomem *bar0, u64 bar0_size, void __iomem *bar2, u64 bar2_size)
 {
 	// NOTE: V3 bar0->device physical mapping is non contiguous so restrict the RR window.
 	//
@@ -787,7 +801,7 @@ int fw_io_register_readless_read_region_v3(struct fw_io_ctx *ctx, void __iomem *
  * 
  * @return int: 0 on success, -1 on failure
  */
-int fw_io_read_csr_array_v3(void **ptrs, u32 *values, u32 num_csrs, bool operational)
+static int fw_io_read_csr_array_v3(void **ptrs, u32 *values, u32 num_csrs, bool operational)
 {
 	if (num_csrs > FW_IO_MAX_READLESS_READ_REGISTER_COUNT)
 		return -EINVAL;
@@ -841,7 +855,7 @@ inline int reg_read32_array_v3_qemu_emu(void **addr, u32 *value, u32 num_values)
  * @param offset: offset of BAR4
  * @return int: 0 on success; negative on failure
  */
-int mmap_get_bar4_offset_v3(u64 start_addr, u64 size, u64 *offset)
+static int mmap_get_bar4_offset_v3(u64 start_addr, u64 size, u64 *offset)
 {
 	u64 hbm_dist = narch_is_qemu() ? (ndhal->ndhal_pci.dram_bar_size / 4) : V3_HBM_SIZE;
 
@@ -878,7 +892,7 @@ static int root_info_node_attrs_info_tbl_cnt_v3 = sizeof(root_info_node_attrs_in
  * 
  * Note: ecc errors are only supported by sysfs for V2/3. TODO: V1 support will be added 
  */
-int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics, 
+static int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics, 
                                   struct nsysfsmetric_node *stats_node,
                                   int ecc_attrs_info_tbl_cnt,
                                   const nsysfsmetric_attr_info_t *ecc_attrs_info_tbl)
@@ -902,7 +916,7 @@ int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics,
  * 
  * for V3, this function is dummy
  */
-int neuron_pci_release_bar_v3(struct pci_dev *dev, int bar)
+static int neuron_pci_release_bar_v3(struct pci_dev *dev, int bar)
 {
 	if (bar != ndhal->ndhal_pci.apb_bar && bar != ndhal->ndhal_pci.axi_bar && bar != ndhal->ndhal_pci.dram_bar) {
 		pci_info(dev, "invalid BAR%d\n", bar);
@@ -924,13 +938,13 @@ int neuron_pci_release_bar_v3(struct pci_dev *dev, int bar)
  * @param res_name: Name to be associated with resource.
  * @return int: Returns 0 on success, otherwise failure
  */
-int neuron_pci_reserve_bar_v3(struct pci_dev *dev, int bar, const char *res_name)
+static int neuron_pci_reserve_bar_v3(struct pci_dev *dev, int bar, const char *res_name)
 {
 	int ret;
 
 	if (bar != ndhal->ndhal_pci.apb_bar && bar != ndhal->ndhal_pci.axi_bar && bar != ndhal->ndhal_pci.dram_bar) {
 		pci_info(dev, "invalid BAR%d\n", bar);
-		return -ENODEV;
+		goto err;
 	}
 	if (bar == BAR_UNUSED) {
 		return 0;
@@ -939,10 +953,15 @@ int neuron_pci_reserve_bar_v3(struct pci_dev *dev, int bar, const char *res_name
 	ret = pci_request_region(dev, bar, res_name);
 	if (ret) {
 		pci_info(dev, "BAR %d: can't reserve %s\n", bar, res_name);
-		return -ENODEV;
+		goto err;
 	}
 
 	return 0;
+
+err:
+	//return -ENODEV;  Until we can map BAR4 on cmdk
+	return (bar == 4)? 0:-ENODEV;
+
 }
 
  /**
@@ -956,7 +975,7 @@ int neuron_pci_reserve_bar_v3(struct pci_dev *dev, int bar, const char *res_name
  * @param bar_size: size of BAR
  * @return int: Returns 0 on success, otherwise failure
  */
-int neuron_pci_set_npdev_v3(struct pci_dev *dev,
+static int neuron_pci_set_npdev_v3(struct pci_dev *dev,
                             int bar,
                             const char *res_name,
                             phys_addr_t *bar_pa,
@@ -973,13 +992,13 @@ int neuron_pci_set_npdev_v3(struct pci_dev *dev,
 
 	if (pci_resource_len(dev, bar) == 0) {
 		pci_info(dev, "BAR%d len is 0\n", bar);
-		return -ENODEV;
+		goto err;
 	}
 	
 	*bar_pa = pci_resource_start(dev, bar);
 	if (!(*bar_pa)) {
 		pci_info(dev, "Can't get start address of BAR%d %s\n", bar, res_name);
-		return -ENODEV;
+		goto err;
 	}
 	*bar_size = pci_resource_len(dev, bar);
 	
@@ -991,7 +1010,14 @@ int neuron_pci_set_npdev_v3(struct pci_dev *dev,
 		*bar_ioaddr = pci_iomap_wc(dev, bar, pci_resource_len(dev, bar));
 	else
 		*bar_ioaddr = pci_iomap(dev, bar, pci_resource_len(dev, bar));
-	
+
+	return 0;
+
+err:
+	//return -ENODEV;  Until we can map BAR4 on cmdk
+	*bar_pa = 0;
+	*bar_size = 0;
+	*bar_ioaddr = NULL;
 	return 0;
 }
 
@@ -1061,7 +1087,7 @@ static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
  * 
  * for V1, this function is dummy
  */
-int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev *dev)
+static int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev *dev)
 {
 	int ret = 0;
 	int i;
@@ -1108,7 +1134,7 @@ int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev *dev)
  * @param did_to_rid_map: map of device ids to routing ids
  * @return int: Returns 0 on success, otherwise failure
  */
-int 
+static int 
 neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 {
 	int i;
@@ -1155,7 +1181,7 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
  * 
  * @param arg: min and max compatible versions to be filled in
  */
-void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *arg)
+static void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *arg)
 {
 	arg->min = V3_RT_MIN_COMPATIBLE_VERSION;
 	arg->max = V3_RT_MAX_COMPATIBLE_VERSION;
@@ -1180,7 +1206,7 @@ void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *arg)
  *      state would be cleared out.
  * 
  */
-void ncdev_quiesce_exec_on_proc_exit_v3(void)
+static void ncdev_quiesce_exec_on_proc_exit_v3(void)
 {
 	// for V3, the 1 second DMA queisce delay in flush was eliminated to improve nrt_init performance
 	return;
@@ -1202,7 +1228,7 @@ void ncdev_quiesce_exec_on_proc_exit_v3(void)
  * V2/3:
  *    Only BAR0 is used right now. TODO: change runtime ioctl
 */
-int ncdev_bar_write_data_v3(struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count)
+static int ncdev_bar_write_data_v3(struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count)
 {
 	if (bar == 0) {
 		int i;
@@ -1251,7 +1277,7 @@ int ncdev_bar_write_data_v3(struct neuron_device *nd, u8 bar, u64 *reg_addresses
  * 
  * for V1, this function is dummy
  */
-void udma_m2s_data_rd_cfg_boundaries_set_v3(struct udma *udma)
+static void udma_m2s_data_rd_cfg_boundaries_set_v3(struct udma *udma)
 {
 	reg_write32(&udma->udma_regs_m2s->axi_m2s.data_rd_cfg,
 	  UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY | 0x8);
@@ -1265,7 +1291,7 @@ void udma_m2s_data_rd_cfg_boundaries_set_v3(struct udma *udma)
  *
  * for V1, this function is dummy
  */
-void udma_q_config_v3(struct udma_q *udma_q)
+static void udma_q_config_v3(struct udma_q *udma_q)
 {
 	if (udma_q->type != UDMA_TX) {
 		return;
@@ -1291,7 +1317,7 @@ void udma_q_config_v3(struct udma_q *udma_q)
  * @param first_wait_time: the wait time for the first sleep
  * @param wait_time: the wait time for the following sleeps
  */
-void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
+static void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
 	u64 est_wait_time = 2 * (count -1);
 	*first_wait_time = async ? 1 : (est_wait_time - 1);  // FIXME - need to adjust for zerocopy  
@@ -1303,13 +1329,13 @@ void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *first_wait
 	*following_wait_time *= 100;
 }
 
-void ndma_get_wait_for_completion_time_v3_qemu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
+static void ndma_get_wait_for_completion_time_v3_qemu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
 	ndma_get_wait_for_completion_time_v3(count, async, first_wait_time, following_wait_time);
 	*following_wait_time *= 10 * 1000;
 }
 
-void ndma_get_wait_for_completion_time_v3_emu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
+static void ndma_get_wait_for_completion_time_v3_emu(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
 	ndma_get_wait_for_completion_time_v3(count, async, first_wait_time, following_wait_time);
 	*following_wait_time *= 100 * 1000;
@@ -1333,7 +1359,7 @@ void ndma_get_wait_for_completion_time_v3_emu(u32 count, bool async, u64 *first_
  * @param dst_mc: the mc that backs the dma queue
  * @return int: return 0 if the pa is valid; otherwise return negative
  */
-int ndma_validate_pa_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *dst_mc, u32 desc_type)
+static int ndma_validate_pa_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chunk *dst_mc, u32 desc_type)
 {
 	if ((pa & V3_PCIE_A0_BASE) == ndhal->ndhal_address_map.pci_host_base) {
 		if (!ndma_is_valid_host_mem(nd, pa)) {
@@ -1351,7 +1377,7 @@ int ndma_validate_pa_v3(struct neuron_device *nd, phys_addr_t pa, struct mem_chu
  * @param eng_id: DMA engine index to initialize
  * @return int: 0 on success, otherwise on failure
  */
-int ndma_init_v3(void __iomem *bar0, struct udma *udma, int eng_id)
+static int ndma_init_v3(void __iomem *bar0, struct udma *udma, int eng_id)
 {
 	char udma_name[UDMA_INSTANCE_NAME_LEN];
 	int ret = 0;
@@ -1414,7 +1440,7 @@ done:
  * @param offset: offset to be checked as blocked or not
  * @return int: return -1 if the access should be blocked, otherwise return 0.
  */
-int ndma_is_bar0_write_blocked_v3(u64 off)
+static int ndma_is_bar0_write_blocked_v3(u64 off)
 {
 	int eid;
 	// check seng 0
@@ -1501,7 +1527,7 @@ int ndma_is_bar0_write_blocked_v3(u64 off)
  * @param set_dmb 
  * @return int 
  */
-int ndma_get_m2m_barrier_type_v3(bool set_dmb)
+static int ndma_get_m2m_barrier_type_v3(bool set_dmb)
 {
 	if (set_dmb)
 		return UDMA_M2M_BARRIER_WRITE_BARRIER;
@@ -1607,6 +1633,7 @@ int ndhal_register_funcs_v3(void) {
 
 
 	if (narch_is_qemu()) {
+        ndhal->ndhal_reset.retry_count *= 1000; // wait longer on qemu
 		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v3_qemu;
 		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3_qemu;
 		ndhal->ndhal_address_map.dma_eng_per_nd = V3_NC_PER_DEVICE * V3_DMA_ENG_PER_NC;

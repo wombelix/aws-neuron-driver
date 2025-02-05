@@ -39,6 +39,7 @@
 #include "neuron_pci.h"
 #include "neuron_cdev.h"
 #include "neuron_fw_io.h"
+#include "neuron_log.h"
 
 static dev_t neuron_dev;
 static int major;
@@ -419,14 +420,14 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 
 static int ncdev_mem_alloc_libnrt(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	static_assert(sizeof(struct neuron_ioctl_mem_alloc_v2) != sizeof(struct neuron_ioctl_mem_alloc_v2_mem_type));
+	static_assert(NEURON_IOCTL_MEM_ALLOC_V2 != NEURON_IOCTL_MEM_ALLOC_V2MT);
 
 	enum mem_location location;
 	u64 mh;
 	struct mem_chunk *mc;
 	int ret;
 
-	if (_IOC_SIZE(cmd) == sizeof(struct neuron_ioctl_mem_alloc_v2)) {
+	if (cmd == NEURON_IOCTL_MEM_ALLOC_V2) {
 		struct neuron_ioctl_mem_alloc_v2 mem_alloc_arg;
 		ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2 *)param,
 			     sizeof(mem_alloc_arg));
@@ -454,7 +455,7 @@ static int ncdev_mem_alloc_libnrt(struct neuron_device *nd, unsigned int cmd, vo
 			return ret;
 		}
 		return 0;
-	} else if (_IOC_SIZE(cmd) == sizeof(struct neuron_ioctl_mem_alloc_v2_mem_type)) {
+	} else if (cmd == NEURON_IOCTL_MEM_ALLOC_V2MT) {
 		struct neuron_ioctl_mem_alloc_v2_mem_type mem_alloc_arg;
 		ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2_mem_type *)param,
 			     sizeof(mem_alloc_arg));
@@ -782,7 +783,7 @@ static int ncdev_verify_mem_region(u64 addr)
 	return -ENOMEM;
 }
 
-int ncdev_program_engine(struct neuron_device *nd, void *param)
+static int ncdev_program_engine(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_program_engine arg;
 	int ret;
@@ -817,7 +818,7 @@ error:
 	return ret;
 }
 
-int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
+static int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_program_engine_nc arg;
 	int ret;
@@ -851,7 +852,7 @@ error:
 	return ret;
 }
 
-int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
+static int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 {
 	struct neuron_ioctl_mem_buf_copy arg;
 	struct mem_chunk *mc;
@@ -1788,6 +1789,114 @@ static long ncdev_host_device_id_to_rid_map( unsigned int cmd, void * param)
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
+static long ncdev_dump_mem_chunks(struct neuron_device *nd, void *param)
+{
+	int ret;
+	struct neuron_ioctl_dump_mem_chunks arg;
+	struct neuron_ioctl_mem_chunk_info *data = NULL;
+	uint32_t num_entries_out = 0;
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dump_mem_chunks*)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	if (arg.num_entries_in > 0) {
+		data = kmalloc(arg.num_entries_in * sizeof(struct neuron_ioctl_mem_chunk_info), GFP_KERNEL);
+		if (data == NULL) {
+			ret = -ENOMEM;
+			goto done;
+		}
+	}	
+	ret = mc_dump_all_chunks(nd, arg.hbm_index, arg.num_entries_in, data, &num_entries_out);
+	if (ret)
+		goto done;
+
+	arg.num_entries_out = num_entries_out;		
+	ret = copy_to_user(param, &arg, sizeof(arg));
+	if (ret)
+		goto done;
+
+	if (arg.num_entries_in >= num_entries_out) {
+		// caller allocated enough room for all entries
+		ret = copy_to_user(arg.data, data, num_entries_out * sizeof(struct neuron_ioctl_mem_chunk_info));
+		if (ret) 
+			goto done;
+	} else {
+		// send back just the number or requires entries
+		ret = -EAGAIN;
+	}
+done:
+	if (data)
+		kfree(data);
+	return ret;
+}
+
+static int ncdev_dump_log(int nc_index, pid_t pid, uint32_t log_dump_limit)
+{
+	uint32_t device_index;
+	struct ncdev *dev;
+	struct neuron_device *nd;
+
+	device_index = nc_index / ndhal->ndhal_address_map.nc_per_device;
+
+	if (device_index >= NEURON_MAX_DEV_NODES) {
+		return -1;
+	}
+
+	dev = &devnodes[device_index];
+	nd = dev->ndev;
+
+	if (nd == NULL) {
+		return -1;
+	}
+
+	return neuron_log_dump(nd, pid, log_dump_limit);
+}
+	
+static int ncdev_nc_pid_state_dump(unsigned int cmd, void *param)
+{
+	int ret;
+	struct neuron_ioctl_nc_pid_state_dump arg;
+	pid_t pid;	
+	unsigned int __state;
+	int	exit_state;
+	int	exit_code;
+	int	exit_signal;
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_nc_pid_state_dump*)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	ret = ncrwl_nc_range_pid_get(arg.nc_id, &pid);
+
+	if ((ret == 0) && (pid != 0)) {
+		struct task_struct *task = NULL;
+		rcu_read_lock();
+		task = get_pid_task(find_vpid(pid), PIDTYPE_TGID);
+		if (task) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 14, 0)
+			__state     = task->__state;
+#else
+			__state     = task->state;
+#endif
+			exit_state  = task->exit_state;
+			exit_code   = task->exit_code;
+			exit_signal = task->exit_signal;
+			rcu_read_unlock();
+			pr_info("ncdev_nc_pid_state_dump: nc_id: %u  pid: %u  __state; 0x%08x exit_state: 0x%08x exit_code: exit_signal: 0x%08x exit_signal: 0x%08x\n", 
+					arg.nc_id, pid, __state, exit_state, exit_code, exit_signal);
+		} else {
+			rcu_read_unlock();
+			pr_info("ncdev_nc_pid_state_dump:  nc_id: %u pid: %u task struct not found\n", arg.nc_id, pid); 
+		}
+	
+		pid = arg.filter_log_owner ? pid : 0;
+		ret = ncdev_dump_log(arg.nc_id, pid, arg.log_dump_limit);
+	}	
+
+	return ret;
+}
+
 inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsigned long param) {
 	if ((cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK) || (cmd == NEURON_IOCTL_CRWL_NC_RANGE_MARK_EXT0)) {
 		return ncdev_crwl_nc_range_mark(filep, cmd, (void *)param);
@@ -1810,6 +1919,8 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 		return ncdev_printk((void*)param);
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_HOST_DEVICE_ID_TO_RID_MAP)) {
 		return ncdev_host_device_id_to_rid_map(cmd, (void*)param);
+	} else if (cmd == NEURON_IOCTL_NC_PID_STATE_DUMP) {
+		return ncdev_nc_pid_state_dump(cmd, (void *)param);
 	}
 
 	pr_err("invalid misc IOCTL %d (dir=%d, type=%d, nr=%d, size=%d)\n", cmd, _IOC_DIR(cmd),
@@ -1817,22 +1928,27 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 	return -EINVAL;
 }
 
-long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
+static long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 {
 	struct ncdev *ncd;
 	struct neuron_device *nd;
 
-	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
-		return ncdev_misc_ioctl(filep, cmd, param);
-
 	ncd = filep->private_data;
 	if (ncd == NULL) {
+		pr_err("private data pointer invalid\n");
 		return -EINVAL;
 	}
 	nd = ncd->ndev;
 	if (nd == NULL) {
+		pr_err("nd invalid\n");
 		return -EINVAL;
 	}
+
+	neuron_log_rec_add(nd, NEURON_LOG_TYPE_FILE_IOCTL, cmd);
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
+		return ncdev_misc_ioctl(filep, cmd, param);
+
 	// the following IOCTL allowed only for the process which did DEVICE_INIT
 	if (cmd == NEURON_IOCTL_DMA_ENG_INIT || cmd == NEURON_IOCTL_DMA_ENG_SET_STATE ||
 	    cmd == NEURON_IOCTL_DMA_QUEUE_INIT || cmd == NEURON_IOCTL_DMA_ACK_COMPLETED ||
@@ -1981,6 +2097,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_resource_mmap_info(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_HOST_DEVICE_ID ) {
 		return ncdev_get_host_device_id(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_DUMP_MEM_CHUNKS) {
+		return ncdev_dump_mem_chunks(nd, (void *)param);
 	}
 	// B/W compatibility
 	return ncdev_misc_ioctl(filep, cmd, param);
@@ -1993,6 +2111,8 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 
 	dev = &devnodes[iminor(inode)];
 	nd = dev->ndev;
+
+	neuron_log_rec_add(nd, NEURON_LOG_TYPE_FILE_OPEN, (uint64_t)filep);
 
 	if (IS_NEURON_DEVICE_FREE_ACCESS(filep)) {
 		filep->private_data = dev;
@@ -2050,17 +2170,21 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 {
 	struct ncdev *dev;
 	struct neuron_device *nd;
-
-	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
-		return ncdev_misc_flush(filep);
+	int attach_cnt;
 
 	dev = (struct ncdev *)filep->private_data;
 	nd = dev->ndev;
 
+	neuron_log_rec_add(nd, NEURON_LOG_TYPE_FILE_FLUSH, (uint64_t)filep);
+
+	if (IS_NEURON_DEVICE_FREE_ACCESS(filep))
+		return ncdev_misc_flush(filep);
+
 	mutex_lock(&dev->ncdev_lock);
 
 	// if the current process is going away then cleanup per process state
-	if (npid_is_attached(nd) == 1) {
+	attach_cnt = npid_is_attached(nd);
+	if (attach_cnt == 1) {
 		// If this proc exited in the middle of a reset, wait for the reset to be processed.
 		nr_wait(nd, task_tgid_nr(current), true);
 
@@ -2072,6 +2196,17 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 		neuron_ds_release_pid(&nd->datastore, task_tgid_nr(current));
 		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_CUR_PROCESS);
 		nmmap_delete_all_nodes(nd);
+	} else if (attach_cnt == 0) {
+		// if it turns out in testing that we find a matching task  returned from npid_is_attached_task(),
+		// then we've found a task with a pid that has changed and we will need to cleanup once the
+		// attach count reaches 1.  in this case, the code flow should be something like the following:
+		//
+		// if (npid_is_attached_task(nd) == 1) {
+		//    do the same cleanup as above
+		// }
+		// npid_detach_task(); - to decrement attach count based on task.
+		//
+		npid_is_attached_task(nd);
 	}
 	npid_detach(nd);
 
@@ -2115,6 +2250,8 @@ static int ncdev_mmap(struct file *filep, struct vm_area_struct *vma)
 	nd = ncd->ndev;
 	if (nd == NULL)
 		return -EINVAL;
+
+	neuron_log_rec_add(nd, NEURON_LOG_TYPE_FILE_MMAP, (uint64_t)filep);
 
 	return nmmap_mem(nd, vma);
 }
@@ -2327,7 +2464,7 @@ int ncdev_module_init(void)
 
 	major = MAJOR(neuron_dev);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+#if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 2)))
 	neuron_dev_class = class_create("neuron_device");
 #else
 	neuron_dev_class = class_create(THIS_MODULE, "neuron_device");

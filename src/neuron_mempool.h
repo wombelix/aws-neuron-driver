@@ -20,6 +20,7 @@
 #include <linux/rbtree.h>
 
 #include "share/neuron_driver_shared.h"
+#include "neuron_ioctl.h"
 
 struct neuron_device;
 
@@ -209,5 +210,8 @@ void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
  * @mc: Pointer to memory chunk
  */
 void mc_inc_refcount(struct mem_chunk *mc);
+
+//int mc_dump_all_chunks(struct neuron_device *nd, u32 channel);
+int mc_dump_all_chunks(struct neuron_device *nd, u32 channel, u32 num_entries_in, struct neuron_ioctl_mem_chunk_info *data, u32 *num_entries_out);
 
 #endif

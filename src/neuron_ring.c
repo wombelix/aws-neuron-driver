@@ -45,7 +45,7 @@ static struct ndma_ring *ndmar_get_ring(struct ndma_queue *queue)
 	return &queue->ring_info;
 }
 
-u32 ndmar_ring_get_desc_count(u32 v)
+static u32 ndmar_ring_get_desc_count(u32 v)
 {
 	if (v < 32) {
 		return 64;
@@ -246,7 +246,7 @@ int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid)
 	return 0;
 }
 
-int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
+static int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 {
 	int ret = 0;
 	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL, *h2t_completion_mc = NULL;

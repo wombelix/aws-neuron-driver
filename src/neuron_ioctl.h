@@ -439,6 +439,20 @@ struct neuron_ioctl_host_device_id {
 	__u32 host_device_id;    // [out] host device id for this device
 };
 
+struct neuron_ioctl_dump_mem_chunks {
+	__u32 hbm_index;
+	__u32 num_entries_in;
+	__u32 num_entries_out;
+	struct neuron_ioctl_mem_chunk_info *data;
+};
+
+struct neuron_ioctl_nc_pid_state_dump {
+	__u32 size;             // [in] size of the structure for versioning purposes
+	__u32 nc_id;            // [in] nc_id of the core you want to dump process state on.  may want this to be a range.
+	__u32 filter_log_owner; // [in] filter_log_owner 1=only dump log entries for the pid that owns the nc
+	__u32 log_dump_limit;   // [in] log_dump_limit max number of entries to dump.
+};
+
 // arbitrary large enough space for device to routing id map
 #define NEURON_IOCTL_MAX_DEVICES 64
 struct neuron_ioctl_host_device_id_to_rid_map {
@@ -613,7 +627,11 @@ struct neuron_ioctl_host_device_id_to_rid_map {
 /** return the host device id for the device */
 #define NEURON_IOCTL_HOST_DEVICE_ID_TO_RID_MAP _IOWR(NEURON_IOCTL_BASE, 115, struct neuron_ioctl_host_device_id_to_rid_map)
 
+#define NEURON_IOCTL_DUMP_MEM_CHUNKS _IOR(NEURON_IOCTL_BASE, 116, struct neuron_ioctl_dump_mem_chunks *)
+
+#define NEURON_IOCTL_NC_PID_STATE_DUMP _IOWR(NEURON_IOCTL_BASE, 117, struct neuron_ioctl_nc_pid_state_dump)
+
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
-#define NEURON_IOCTL_MAX 116
+#define NEURON_IOCTL_MAX 118
 
 #endif
