@@ -587,8 +587,13 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 					continue;
 				mp = &mpset->mp_hrm[i];
 				mc->va = gen_pool_dma_alloc(mp->gen_pool, size, &mc->pa);
-				if (mc->va)
+				if (mc->va) {
+					// failed dma_alloc_coherent() above will generate a dump in dmesg
+					// to make sure we don't chase the wrong leads in the future make clear
+					// that the allocation was completed from our internal pool
+					pr_err("Completed host allocation of %lluB from the internal pool\n", size);
 					break;
+				}
 			}
 		}
 		if (mc->va)

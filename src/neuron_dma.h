@@ -29,6 +29,25 @@ int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct me
 		   u32 src_offset, u32 dst_offset, u32 size);
 
 /**
+ * ndma_memcpy_mc_async() - Copy data from a memory to another memory chunk.
+ *
+ * @nd: neuron device which should be used for dma
+ * @src_mc: source memory chunk from which data should be copied
+ * @dst_mc: destination memory chunk to which data should be copied
+ * @src_offset: offset in the source from where copy should start
+ * @dst_offset: offset in the destination
+ * @size: copy size
+ * @prefetch_addr: address to prefetch for device to host copies
+ * @pdma_ctx_handle: context handle for the previous dma
+ * @dma_ctx_handle: context handle for this dma
+ *
+ * Return: 0 
+ */
+int ndma_memcpy_mc_async(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
+		   u32 src_offset, u32 dst_offset, u32 size, u64 prefetch_addr, int pdma_ctx_handle, int *dma_ctx_handle);
+
+
+/**
  * ndma_memcpy_buf_to_mc() - Copyin data from given buffer to a memory chunk.
  *
  * @nd: neuron device which should be used for dma
@@ -101,15 +120,16 @@ int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 
  */
 int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size);
 
+
 /**
- * ndma_memcpy_wait_for_completion() - Wait for already initiated DMA transfer to complete.
+ * ndma_memcpy_mc_wait() - wait for an asynchronous memcpy to complete
  *
- * @eng: dma engine
- * @ring: dma ring
- * @count: number of descriptors to wait for.
+ * @nd: neuron device which was used for this dma
+ * @src_mc: source mem check for dma we are waiting on
+ * @dst_mc: destination mem chunk for dma we are waiting on. 
+ * @dma_ctx_handle: handle to the dma context we want to wait on
  *
- * Return: 0 if wait succeeds, a negative error code otherwise.
  */
-int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count);
+int ndma_memcpy_mc_wait( struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc, int dma_ctx_handle);
 
 #endif

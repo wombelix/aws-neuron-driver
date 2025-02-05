@@ -23,6 +23,29 @@ struct neuron_device;
 struct neuron_dma_eng_state;
 struct neuron_dma_queue_state;
 
+/*
+ * dma context for both sync and async DMA operations
+ *    the context keeps transient and 
+ *
+ * this needs to be encapsulated in the DMA module
+ */
+struct ndma_h2t_dma_context {
+	bool              inuse;              //
+	struct ndma_eng  *eng;                //
+	struct ndma_ring *ring;               //
+	dma_addr_t        src;                // original src
+	dma_addr_t        dst;                // original dst
+	u32               size;               // original size 
+	bool              smove;              //
+	bool              dmove;              //
+	u64               start_time;         // start time for this transfer
+	u32               offset;             // initial offset for this transfer
+	u32               remaining;          // initial remaining for this transfer
+	u32               outstanding;        // outstanding data for this transfer - used to compute wait time. (vs pending)
+	int               pending_transfers;  // pending transfers for this context.  Used to update ring ptrs
+	void             *completion_ptr;     // completion buffer pointer (host memory buffer we poll on for completions)
+};
+
 struct ndma_ring {
 	u32 qid;
 	u32 size; //total size - num desc * desc size
@@ -35,6 +58,7 @@ struct ndma_ring {
 	struct mem_chunk *rx_mc;
 	struct mem_chunk *rxc_mc;
 	struct mem_chunk *h2t_completion_mc;
+	struct ndma_h2t_dma_context h2t_dma_ctx[NEURON_DMA_H2T_CTX_HANDLE_CNT];
 	u32 dram_channel;
 };
 

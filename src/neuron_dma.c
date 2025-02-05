@@ -8,6 +8,7 @@
 #include <linux/string.h>
 #include <linux/delay.h>
 #include <linux/fault-inject.h>
+#include <linux/mm.h>
 
 #include "udma/udma.h"
 #include "v1/address_map.h"
@@ -23,9 +24,12 @@
 DECLARE_FAULT_ATTR(neuron_fail_dma_wait);
 #endif
 
+
+//#define NUNUSED	__attribute__ ((unused))
+
 struct neuron_device;
 
-void ndma_ack_completed_desc(struct ndma_eng *eng, struct ndma_ring *ring, u32 count)
+static void ndma_ack_completed_desc(struct ndma_eng *eng, struct ndma_ring *ring, u32 count)
 {
 	struct udma_q *rxq, *txq;
 	udma_q_handle_get(&eng->udma, ring->qid, UDMA_TX, &txq);
@@ -35,50 +39,169 @@ void ndma_ack_completed_desc(struct ndma_eng *eng, struct ndma_ring *ring, u32 c
 	udma_cdesc_ack(txq, count);
 }
 
+static inline u32 ndma_mc_pair_to_nc( struct mem_chunk *src_mc, struct mem_chunk *dst_mc)
+{
+	if (src_mc->mem_location != MEM_LOC_HOST)
+		return src_mc->nc_id;
+	else
+		return dst_mc->nc_id;
+
+	// Note: In the case where this is a host-to-host transfer we end up using the dst_mc's nc_id
+}
+
+/**
+ * ndma_dma_ctx_get_next_handle()
+ *
+ *    Return the next dma context handle based on the prev handle.
+ *    The previous handle is the handle we will be waiting on when the next transfer is started.
+ *    
+ *    For an Async transfer the transition progression is NONE->ASYNC1->ASYNC2->ASYNC1.... until we finish the transfer.
+ *    Basically starting out with NONE then toggling between ASYNC1 and ASYNC2.
+ *
+ *    In the case of a synchronous transfer, the prev transfer handle is the SYNC transfer handle
+ *    since we will be waiting on the transfer we just started. So the progression is 
+ *    SYNC->SYNC->SYNC.... until we finish the transfer.
+ *
+ */
+static inline int ndma_dma_ctx_get_next_handle( int pdma_ctx_handle, int * dma_ctx_handle)
+{
+	if (pdma_ctx_handle < NEURON_DMA_H2T_CTX_HANDLE_NONE || pdma_ctx_handle > NEURON_DMA_H2T_CTX_HANDLE_ASYNC2) {
+		return -EINVAL;
+	}
+
+	switch (pdma_ctx_handle) {
+		case NEURON_DMA_H2T_CTX_HANDLE_NONE:
+		   *dma_ctx_handle = NEURON_DMA_H2T_CTX_HANDLE_ASYNC1;
+		   break;
+		case  NEURON_DMA_H2T_CTX_HANDLE_SYNC:
+		   *dma_ctx_handle = NEURON_DMA_H2T_CTX_HANDLE_SYNC;
+		   break;
+		case  NEURON_DMA_H2T_CTX_HANDLE_ASYNC1:
+		   *dma_ctx_handle = NEURON_DMA_H2T_CTX_HANDLE_ASYNC2;
+		   break;
+		case  NEURON_DMA_H2T_CTX_HANDLE_ASYNC2:
+		   *dma_ctx_handle = NEURON_DMA_H2T_CTX_HANDLE_ASYNC1;
+		   break;
+	}
+	return 0;
+}
+
+/**
+ * memchunk to dma phy addr
+ *
+ */
+static inline dma_addr_t ndma_mc_to_pa( struct mem_chunk *mc)
+{
+	if (mc->mem_location == MEM_LOC_HOST)
+		return virt_to_phys(mc->va) | PCI_HOST_BASE(nd);   // why isn't this already set???
+	else 
+		return mc->pa;
+}
+
+
+/**
+ * ndma_prefetch_user_pages()
+ *
+ *    Prefetch user buffer.
+ *
+ */
+int ndma_prefetch_user_pages( unsigned long start, int nr_pages)
+{
+	int nr_pinned;
+	struct page **p = NULL;
+	unsigned int gup_flags = FOLL_WRITE;
+
+	// we technically check access here.
+
+	p = kcalloc( nr_pages, sizeof(struct page *), GFP_KERNEL);
+
+	if (!p) {
+		pr_info("failed to allocate memory\n");
+		return -ENOMEM;
+	}
+
+	nr_pinned = get_user_pages_fast( start, nr_pages, gup_flags, p);
+	if (nr_pinned > 0) {
+		int i;
+		for (i = 0; i < nr_pinned; i++) {
+			put_page(p[i]); // need to decide if we put page here or do it later.  If we do it later, need to grab context
+		}
+	} else {
+		pr_info("prefetch failed\n");
+	}
+
+	kfree(p);
+
+	return 0;
+}
+
+
+static inline int _ndma_prefetch_user_pages( unsigned long start, int len)
+{
+	const unsigned long offset = start & (PAGE_SIZE-1);
+	int nr_pages = DIV_ROUND_UP(offset + len, PAGE_SIZE);
+
+	return ndma_prefetch_user_pages( start & PAGE_MASK, nr_pages);
+}
+
+
 #define DMA_COMPLETION_MARKER_SIZE sizeof(u32)
 #define DMA_COMPLETION_MARKER 0xabcdef01
 
-/**
- * Wait for completion by start transfer of a DMA between two host memory locations and polling
- * on the host memory for the data to be written.
+/*
+ * return descriptor for this dma_ctx_handle
+ *
+ *
  */
-int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count)
+static inline void * ndma_memcpy_get_completion_buf( struct ndma_eng *eng, struct ndma_ring *ring, int dma_ctx_handle)
 {
-	struct udma_ring_ptr completion;
+	if (eng->used_for_h2t)
+		return ring->h2t_completion.ptr + dma_ctx_handle * 2 * DMA_COMPLETION_MARKER_SIZE;
+	else
+		return kmalloc(DMA_COMPLETION_MARKER_SIZE * 2, GFP_KERNEL);
+}
+
+static inline struct ndma_h2t_dma_context * ndma_get_dma_ctx( struct ndma_eng *eng, struct ndma_ring *ring, int dma_ctx_handle)
+{
+	if (dma_ctx_handle == -1) return NULL;
+
+	if (eng->used_for_h2t)
+    	return &ring->h2t_dma_ctx[dma_ctx_handle];
+	else  {
+		pr_info("allocating descriptor for non-h2t\n");   // FIXME remove at some point
+    	return kmalloc( sizeof(struct ndma_h2t_dma_context), GFP_KERNEL);
+	}
+}
+
+static inline void ndma_release_dma_ctx( struct ndma_eng *eng, struct ndma_ring *ring, struct ndma_h2t_dma_context * dma_ctx)
+{
+	if (dma_ctx == NULL)
+		return;
+	if (eng->used_for_h2t) {
+		dma_ctx->inuse = false;
+	} else {
+		if (dma_ctx->completion_ptr != NULL)
+			kfree( dma_ctx->completion_ptr);
+		kfree( dma_ctx);
+	}
+}
+
+
+/*
+ * ndma_memcpy_add_completion_desc()
+ *
+ *    add a completion entry to the ring 
+ *
+ */
+static int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *ring, void * completion_buffer)
+{
 	int ret = 0;
+	struct udma_ring_ptr completion;
 	volatile u32 *dst;
 	volatile u32 *src;
-	u64 i;
 
-	// One descriptor takes ~4 usec to transfer (64K at 16G/sec) -  wait 100x longer
-	u64 est_wait_time = 4 * count;
-	u64 first_wait_time = (8 * est_wait_time) / 10; // first wait will be for 80% of est wait time. This will reduce the number of times we need to poll for completion
-	u64 wait = (est_wait_time * 100) - first_wait_time;
+	completion.ptr = completion_buffer;
 
-	if (narch_get_arch() == NEURON_ARCH_V2) {
-		// for some reason getting a timeout when staging some of
-		// BERT training graphs.  Need to investigate: https://t.corp.amazon.com/P55240908
-		// In the meantime make the timeout 100x the original
-		wait *= 100;
-	}
-	if (narch_is_qemu())
-		wait *= 10 * 1000;
-	else if (narch_is_emu())
-		wait *= 100 * 1000;
-
-	unsigned long one_loop_sleep = 1; // poll every 1 usecs
-	u64 loop = wait / one_loop_sleep + 1;
-
-	// For h2t ring the memory for completion is allocated at init and so use that
-	if (eng->used_for_h2t)
-		completion.ptr = ring->h2t_completion.ptr;
-	else
-		completion.ptr = kmalloc(DMA_COMPLETION_MARKER_SIZE * 2, GFP_KERNEL);
-
-	if (!completion.ptr) {
-		pr_err("can't allocate memory for completion\n");
-		return -1;
-	}
 	dst = (volatile u32 *)(completion.ptr + DMA_COMPLETION_MARKER_SIZE);
 	src = (volatile u32 *)completion.ptr;
 
@@ -96,13 +219,46 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 		goto error;
 	}
 
-	count++; // for host to host(completion) descriptor.
+error:
+	return ret;
+}
 
-	ret = udma_m2m_copy_start(&eng->udma, ring->qid, 1, 1);
-	if (ret) {
-		pr_err("failed to start DMA copy for %s q%d\n", eng->udma.name, ring->qid);
-		goto error;
+
+/**
+ * Wait for completion by start transfer of a DMA between two host memory locations and polling
+ * on the host memory for the data to be written.
+ */
+static int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async)
+{
+	int ret = 0;
+	volatile u32 *dst;
+	volatile u32 *src;
+	u64 i;
+
+	// One full descriptor takes ~4 usec to transfer (64K at 16G/sec) on V2  and ~16 usec to transfer on V1
+	// the last descriptor may be partial, so wait 1/4 64K transfer time for that descriptor.  Also, count includes 
+	// the completion descriptor so don't include that in the count
+	u64 est_wait_time = (narch_get_arch() == NEURON_ARCH_V1) ? 16 * (count-1) : 4 * (count -1);
+	u64 first_wait_time = async ? 1 : ((narch_get_arch() == NEURON_ARCH_V1) ? est_wait_time - 12 : est_wait_time - 3);
+	u64 wait = (est_wait_time * 100) - first_wait_time;
+
+	if (narch_get_arch() == NEURON_ARCH_V2) {
+		// for some reason getting a timeout when staging some of
+		// BERT training graphs.  Need to investigate: https://t.corp.amazon.com/P55240908
+		// In the meantime make the timeout 100x the original
+		wait *= 100;
 	}
+	if (narch_is_qemu())
+		wait *= 10 * 1000;
+	else if (narch_is_emu())
+		wait *= 100 * 1000;
+
+	unsigned long one_loop_sleep = 1; // poll every 1 usecs
+	u64 loop = wait / one_loop_sleep + 1;
+
+	dst = (volatile u32 *)(ptr + DMA_COMPLETION_MARKER_SIZE);
+	src = (volatile u32 *)ptr;
+
 
 #ifdef CONFIG_FAULT_INJECTION
 	if (should_fail(&neuron_fail_dma_wait, 1)) {
@@ -110,14 +266,15 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 		goto error;
 	}
 #endif
+
 	udelay(first_wait_time);
 	for (i = 0; i <= loop; i++) {
 		u32 dst_val = READ_ONCE(*dst);
 		// this descriptor is executed, meaning all other have completed
 		if (dst_val == DMA_COMPLETION_MARKER) {
 			// reset in case we are going to use this ring again
-			WRITE_ONCE(*dst, 0);
-			WRITE_ONCE(*src, DMA_COMPLETION_MARKER);
+			WRITE_ONCE(*dst, 0);                                                        // this isn't strictly necessary but it will detect improper reuse issues
+			WRITE_ONCE(*src, DMA_COMPLETION_MARKER);                                    // this isn't strictly necessary but it will detect improper reuse issues
 			// while we don't have completion ring, udma uses completion counter
 			// for keeping track of which descriptors are free and can be allocated
 			// Call ack in order to advance the counter, otherwise we eventually
@@ -134,9 +291,6 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	}
 
 error:
-	if (completion.ptr && (completion.ptr != ring->h2t_completion.ptr))
-		kfree(completion.ptr);
-
 	return ret;
 }
 
@@ -153,92 +307,245 @@ static int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr
 		pr_err("failed to prepare DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
 		return ret;
 	}
-	// Start the DMA
-	ret = udma_m2m_copy_start(&eng->udma, ring->qid, 1, 1);
-	if (ret) {
-		pr_err("failed to start DMA copy for %s q%d\n", eng->udma.name, ring->qid);
-		return ret;
-	}
 
 	return ret;
 }
 
-/*
+/**
+ * ndma_memcpy_chunks()
+ *
+ *
+ *   caveats/notes:
+ *     need to figure out inuse & cleanup
+ *
+ */
+static int ndma_memcpy_chunks( struct ndma_eng *eng, struct ndma_ring *ring, struct ndma_h2t_dma_context * dma_ctx)
+{
+	int        ret;
+	dma_addr_t src;
+   	dma_addr_t dst;
+	u32        chunk_size;
+	u32        remaining;
+	u32        offset;
+	int        pending_transfers;
+	bool       done;
+	const u32  sync_threshold = DMA_H2T_DESC_COUNT/2 - UDMA_MAX_NUM_CDESC_PER_CACHE_LINE - 1;
+
+	src               = dma_ctx->src;
+	dst               = dma_ctx->dst;         
+	remaining         = dma_ctx->remaining;
+	offset            = dma_ctx->offset;
+	done              = false;
+   	pending_transfers = 0; 
+	chunk_size        = MAX_DMA_DESC_SIZE; 
+
+	while (!done) {
+		dma_addr_t src_offset;
+		dma_addr_t dst_offset;
+
+		if (remaining <= MAX_DMA_DESC_SIZE) {
+			chunk_size = remaining;
+		} 
+
+		if ((chunk_size == remaining) || (pending_transfers == sync_threshold)) {
+			done    = true;
+		}
+
+		src_offset = dma_ctx->smove ? src + offset : src;
+		dst_offset = dma_ctx->dmove ? dst + offset : dst;
+
+		ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, done);
+		if (ret) { 
+			return ret;
+		}
+
+		offset    += chunk_size; 
+		remaining -= chunk_size;
+		pending_transfers++;
+		
+		//FIXME trace_dma_memcpy(nd, nc_id, src_offset, dst_offset, chunk_size, pending_transfers);
+	}
+
+	// write completion descriptor, kick off DMAs, record pending xfers and data outstanding and prefetch if requested
+	//
+	ret = ndma_memcpy_add_completion_desc( eng, ring, dma_ctx->completion_ptr);
+	if (ret) {
+		return ret; 
+	}
+
+	pending_transfers++;
+	dma_ctx->pending_transfers = pending_transfers;
+	dma_ctx->outstanding       = dma_ctx->remaining - remaining;
+			
+	ret = udma_m2m_copy_start(&eng->udma, ring->qid, pending_transfers, pending_transfers);
+	if (ret) {
+		pr_err("failed to start DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
+		return ret;
+	}
+
+	return 0;
+}
+
+static int _ndma_memcpy_wait_for_completion( struct neuron_device *nd, u32 nc_id, int qid, struct ndma_eng *eng, struct ndma_ring *ring, 
+									  struct ndma_h2t_dma_context * dma_ctx, struct ndma_h2t_dma_context * ndma_ctx)
+{
+	int ret;
+	bool async = (dma_ctx != ndma_ctx);
+
+	while(true) {
+
+	    ret = ndma_memcpy_wait_for_completion(eng, ring, dma_ctx->pending_transfers, dma_ctx->completion_ptr, async);
+
+	    if (ret == 0) 
+			return ret;
+
+		// if the memcpy starts within a NeuronCore reset window, 
+		// the timeout is possible due to DMA hanging caused by hardware issue.
+		// if so, restart DMA and retry the memcpy
+		if (narch_get_arch() != NEURON_ARCH_V2) {
+			break;
+		}
+
+		if (!nr_op_in_reset_wnd(dma_ctx->start_time, nd)) {
+			break;
+		}
+		
+		pr_info("Failed to copy memory during a NeuronCore reset: nd %d, src %#llx, dst %#llx, size %u. Retrying the copy.\n", 
+				nd->device_index, dma_ctx->src, dma_ctx->dst, dma_ctx->size);
+
+		dma_ctx->start_time = get_jiffies_64();
+
+		ret = ndmar_h2t_ring_init(eng, qid);
+
+		if (ret) {
+			pr_err("H2T ring init failed on nd %d: ret %d\n", nd->device_index, ret);
+			break;
+		}
+	
+		// restart dmas
+		// 
+		ret = ndma_memcpy_chunks( eng, ring, dma_ctx);
+		if (ret)
+			break;
+		
+		if (dma_ctx != ndma_ctx) {
+			ret = ndma_memcpy_chunks( eng, ring, ndma_ctx);
+			if (ret)
+				break;
+		}
+
+		async = false;
+	}	
+	return ret;
+}
+
+/** 
+ *   
  * Common function for dma content from src to dst
  * if smove is set then the source offset will keep changing after every max desc size is copied
  * if dmove is set then the dest offset will keep changing after every max desc size is copied
+ *
  */
-static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size, bool smove, bool dmove)
+static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size, bool smove, bool dmove, 
+		                           u64 prefetch_addr, int pwait_handle, int wait_handle)
 {
-	u32 chunk_size, remaining, prev_remaining;
-	int pending_transfers = 0;
-	// max number of usable descriptors - we never allocate the last 16 (max_num_... ) and need to
-	// keep one free for checking completion
-	const u32 sync_threshold = DMA_H2T_DESC_COUNT - UDMA_MAX_NUM_CDESC_PER_CACHE_LINE - 1;
-	u32 offset, prev_offset;
 	int ret = 0;
 
 	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
 	// for v2 the last one is reserved for collectives
 	const int qid = ndmar_get_h2t_qid();
 
-	struct ndma_eng *eng = &nd->ndma_engine[eng_id];
+	struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
 	struct ndma_queue *queue = &eng->queues[qid];
-	struct ndma_ring *ring = &queue->ring_info;
+	struct ndma_ring  *ring  = &queue->ring_info;
 
-	chunk_size = size < MAX_DMA_DESC_SIZE ? size : MAX_DMA_DESC_SIZE;
-	remaining = size;
-	prev_remaining = remaining;
-	mutex_lock(&eng->h2t_ring_lock); // TODO: why is this lock needed given the eng lock?
-	uint64_t memcpy_start_time = get_jiffies_64();
+	struct ndma_h2t_dma_context * dma_ctx  = ndma_get_dma_ctx( eng, ring, wait_handle);
+	struct ndma_h2t_dma_context * pdma_ctx = (eng->used_for_h2t) ? ndma_get_dma_ctx( eng, ring, pwait_handle) : dma_ctx;
 
-	for (offset = 0, prev_offset = 0; remaining; offset += chunk_size, remaining -= chunk_size) {
-		if (remaining < MAX_DMA_DESC_SIZE)
-			chunk_size = remaining;
 
-		dma_addr_t src_offset, dst_offset;
-		src_offset = smove ? src + offset : src;
-		dst_offset = dmove ? dst + offset : dst;
-		if (++pending_transfers == sync_threshold || chunk_size == remaining) {
-			// no more room, transfer what's been queued so far OR last chunk
-			ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, true);
-			if (ret)
-				goto fail;
-			ret = ndma_memcpy_wait_for_completion(eng, ring, pending_transfers);
-			if (ret) {
-				// if the memcpy possibly starts within a NeuronCore reset window, 
-				// the timeout is possible due to DMA hanging caused by hardware issue.
-				// if so, restart DMA and retry the memcpy
-				if (narch_get_arch() != NEURON_ARCH_V2) {
-					goto fail;
-				}
-				if (!nr_op_in_reset_wnd(memcpy_start_time, nd)) {
-					goto fail;
-				}
-				pr_info("Failed to copy memory during a NeuronCore reset: nd %d, src %#llx, dst %#llx, size %u. Retrying the copy.\n", nd->device_index, src, dst, size);
-				memcpy_start_time = get_jiffies_64();
-				ret = ndmar_h2t_ring_init(eng, qid);
-				if (ret) {
-					pr_err("H2T ring init failed on nd %d: ret %d\n", nd->device_index, ret);
-					goto fail;
-				}
-				offset = prev_offset - chunk_size;
-				remaining = prev_remaining + chunk_size;
-			} else {
-				prev_offset = offset;
-				prev_remaining = remaining;
-				memcpy_start_time = get_jiffies_64();
-			}
-			pending_transfers = 0;
-		} else {
-			ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, false);
-			if (ret)
-				goto fail;
+	// The h2t_ring_lock two things
+	//   1. access to the ring itself
+	//   2. usage of the SYNC dma context (basically even though we specify we are using the SYNC ctxt handle outside this routine
+	//      the SYNC dma context itself is only used within this routine.
+	//
+	mutex_lock(&eng->h2t_ring_lock);
+
+    // initialize the DMA context
+	dma_ctx->inuse             = true;
+	dma_ctx->eng               = eng;
+	dma_ctx->ring              = ring;
+	dma_ctx->src               = src;
+	dma_ctx->dst               = dst;
+	dma_ctx->offset            = 0;
+	dma_ctx->remaining         = size;
+	dma_ctx->pending_transfers = 0;
+	dma_ctx->size              = size;
+	dma_ctx->smove             = smove;
+	dma_ctx->dmove             = dmove;
+    dma_ctx->completion_ptr    = ndma_memcpy_get_completion_buf( eng, ring, wait_handle);
+
+	// Sanity check 
+	if ((pdma_ctx != NULL) && (!pdma_ctx->inuse)) {
+		pr_err("Async dma previous request on nd %d nc %d has invalid state. src %#llx, dst %#llx, size %u.\n", 
+				nd->device_index, nc_id, pdma_ctx->src, pdma_ctx->dst, pdma_ctx->size);
+		ret = -EINVAL;
+		goto fail;
+	}
+
+	dma_ctx->start_time = get_jiffies_64();
+
+	while (true) {
+
+		ret = ndma_memcpy_chunks( eng, ring, dma_ctx);
+
+		if (ret) {
+			goto fail;
 		}
-		trace_dma_memcpy(nd, nc_id, src_offset, dst_offset, chunk_size, pending_transfers);
+
+		if (prefetch_addr  && dma_ctx->offset == 0) { 
+			_ndma_prefetch_user_pages( prefetch_addr, dma_ctx->size); 
+		}
+
+		if (pdma_ctx != NULL) {
+
+			ret = _ndma_memcpy_wait_for_completion( nd, nc_id, qid, eng, ring, pdma_ctx, dma_ctx);
+
+			if (ret) {
+				goto fail;
+			} else {
+
+				if (dma_ctx->outstanding == dma_ctx->remaining)  {
+					break;
+				}
+
+				if (dma_ctx != pdma_ctx) {
+					pr_err("Async dma request on nd %d nc %d is too large. src %#llx, dst %#llx, size %u.\n", 
+							nd->device_index, nc_id, dma_ctx->src, dma_ctx->dst, dma_ctx->size);
+					ret = -EINVAL;
+					goto fail;
+				}	
+
+				dma_ctx->start_time         = get_jiffies_64();
+				dma_ctx->remaining         -= dma_ctx->outstanding;
+				dma_ctx->offset            += dma_ctx->outstanding;
+			}
+			
+		} else {
+			if (dma_ctx->outstanding == dma_ctx->remaining)
+				break;
+			pr_err("Async dma request on nd %d nc %d is too large\n", nd->device_index, nc_id);
+			ret = -EINVAL;
+			break;
+		}
 	}
 
 fail:
+	// release the dma_ctx in the event of a failure
+	if (ret  && (dma_ctx != pdma_ctx))
+		ndma_release_dma_ctx( eng, ring, dma_ctx);
+
+	ndma_release_dma_ctx( eng, ring, pdma_ctx);
+	
 	mutex_unlock(&eng->h2t_ring_lock);
 	return ret;
 }
@@ -264,7 +571,8 @@ int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 
 	remaining_size = size - transfer_size;
 	if (remaining_size) {
 		// copy rest of memroy with zers from the src
-		ret = ndma_memcpy_offset_move(nd, mc->nc_id, mc->pa + offset, mc->pa + offset + transfer_size, remaining_size, false, true);
+		ret = ndma_memcpy_offset_move(nd, mc->nc_id, mc->pa + offset, mc->pa + offset + transfer_size, remaining_size, false, true, 0, 
+										NEURON_DMA_H2T_CTX_HANDLE_SYNC, NEURON_DMA_H2T_CTX_HANDLE_SYNC);
 		if (ret) {
 			pr_err("memset device to device failed for size:%d\n", remaining_size);
 			goto error;
@@ -278,7 +586,27 @@ error:
 
 int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size)
 {
-	return ndma_memcpy_offset_move(nd, nc_id, src, dst, size, true, true);
+	return ndma_memcpy_offset_move(nd, nc_id, src, dst, size, true, true, 0, NEURON_DMA_H2T_CTX_HANDLE_SYNC, NEURON_DMA_H2T_CTX_HANDLE_SYNC);
+}
+
+int ndma_memcpy_mc_async(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
+		   u32 src_offset, u32 dst_offset, u32 size, u64 prefetch_addr, int pdma_ctx_handle, int *dma_ctx_handle)
+{
+	dma_addr_t src_pa, dst_pa;
+	u32 nc_id = 0;
+	int ret;
+
+	ret = ndma_dma_ctx_get_next_handle( pdma_ctx_handle, dma_ctx_handle);
+
+	if (ret) {
+		return ret;
+	}
+
+	nc_id  = ndma_mc_pair_to_nc( src_mc, dst_mc);
+	src_pa = ndma_mc_to_pa( src_mc) + src_offset;
+	dst_pa = ndma_mc_to_pa( dst_mc) + dst_offset;
+
+	return ndma_memcpy_offset_move(nd, nc_id, src_pa, dst_pa, size, true, true, prefetch_addr, pdma_ctx_handle, *dma_ctx_handle);
 }
 
 int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
@@ -310,6 +638,49 @@ int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct me
 
 	return ndma_memcpy(nd, nc_id, src_pa, dst_pa, size);
 }
+
+/**
+ * ndma_memcpy_mc_wait()
+ *
+ *    This is ugly, but gets the job done.  We have to get nc_id from the MCs, then from there we get engine id, queue id, ring id 
+ *    in a bunch of separate calls.  Once we have the ring, we can extract the dma context to wait on...
+ *
+ *
+ */
+int ndma_memcpy_mc_wait( struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc, int dma_ctx_handle)
+{
+	int ret;
+	const u32  nc_id         = ndma_mc_pair_to_nc( src_mc, dst_mc);
+	const int eng_id         = ndmar_get_h2t_eng_id(nd, nc_id);
+	const int qid            = ndmar_get_h2t_qid();
+	struct ndma_eng *eng     = &nd->ndma_engine[eng_id];
+	struct ndma_queue *queue = &eng->queues[qid];
+	struct ndma_ring *ring   = &queue->ring_info;
+	struct ndma_h2t_dma_context * dma_ctx;
+
+	// non-h2t we do sync under the covers
+	if (!eng->used_for_h2t) {
+		return 0;
+	}
+
+	dma_ctx  = ndma_get_dma_ctx( eng, ring, dma_ctx_handle);
+
+	if (dma_ctx == NULL) {
+		return -EINVAL;
+	}
+
+	if (!dma_ctx->inuse) {
+		pr_err("trying to wait on async DMA context that is not in use on nd %d nc %d handle %d\n", nd->device_index, nc_id, dma_ctx_handle);
+		return -EINVAL;
+	}
+
+    ret = _ndma_memcpy_wait_for_completion( nd, nc_id, qid, eng, ring, dma_ctx, dma_ctx);
+
+	ndma_release_dma_ctx( eng, ring, dma_ctx);
+
+	return ret;	
+}
+
 
 int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset,
 			  struct mem_chunk *dst_mc, u32 dst_offset, u32 size)

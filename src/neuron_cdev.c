@@ -585,6 +585,76 @@ static int ncdev_mem_copy(struct neuron_device *nd, void *param)
 	return 0;
 }
 
+static int ncdev_mem_copy_async(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_mem_copy_async arg;
+	struct mem_chunk *src_mc;
+	struct mem_chunk *dst_mc;
+	int    ret;
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy_async *)param, sizeof(arg));
+	if (ret)
+		return ret;
+	src_mc = ncdev_mem_handle_to_mem_chunk(arg.src_mem_handle);
+	dst_mc = ncdev_mem_handle_to_mem_chunk(arg.dst_mem_handle);
+	if (!src_mc || !dst_mc)
+		return -EINVAL;
+
+	// check access is within the range.
+	if (arg.src_offset + arg.size > src_mc->size) {
+		pr_err("src offset+size is too large for mem handle\n");
+		return -EINVAL;
+	}
+	// check access is within the range.
+	if (arg.dst_offset + arg.size > dst_mc->size) {
+		pr_err("dst offset+size is too large for mem handle\n");
+		return -EINVAL;
+	}
+
+	ret = ndma_memcpy_mc_async(nd, src_mc, dst_mc, arg.src_offset, arg.dst_offset, arg.size, arg.host_prefetch_addr, arg.pwait_handle, &arg.wait_handle);
+	if (ret) {
+		pr_err("dma memcpy failed: %d\n", ret);
+		return ret;
+	}
+
+	// return the new wait handle
+	ret = copy_to_user((struct neuron_ioctl_mem_copy_async *)param, &arg, sizeof(arg));
+
+	trace_ioctl_mem_copy(nd, src_mc, dst_mc);
+	return ret;
+}
+
+static int ncdev_mem_copy_async_wait(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_mem_copy_async_wait arg;
+	struct mem_chunk *src_mc;
+	struct mem_chunk *dst_mc;
+	int    ret;
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy_async_wait *)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	src_mc = ncdev_mem_handle_to_mem_chunk(arg.src_mem_handle);
+	dst_mc = ncdev_mem_handle_to_mem_chunk(arg.dst_mem_handle);
+	if (!src_mc || !dst_mc) {
+		pr_err("dma memcpy wait failed. invalid mem chunk handle\n");
+		return -EINVAL;
+	}
+
+	if ((arg.pwait_handle < NEURON_DMA_H2T_CTX_HANDLE_ASYNC1) || (arg.pwait_handle > NEURON_DMA_H2T_CTX_HANDLE_ASYNC2))  {
+		pr_err("dma memcpy wait failed. invalid wait handle: %d\n", arg.pwait_handle);
+	   return -EINVAL;	
+	}
+
+	ret = ndma_memcpy_mc_wait( nd, src_mc, dst_mc, arg.pwait_handle);
+	if (ret) {
+		pr_err("dma memcpy wait failed: %d\n", ret);
+		return ret;
+	}
+	return ret;
+}
+
 static int ncdev_verify_mem_region(struct neuron_device *nd, u64 addr)
 {
 	struct mem_region {
@@ -1208,6 +1278,42 @@ static long ncdev_device_info(struct neuron_device *nd, void *param)
 	return ret;
 }
 
+// as we change versions...
+//Static_assert( sizeof(struct neuron_ioctl_device_driver_info0) < sizeof(struct neuron_ioctl_device_driver_info), "driver info struct versions must be different in size");
+
+/**
+ * ncdev_driver_info()
+ *
+ *    get/set driver info.  currently only support get. Interface uses
+ *    same ioctl and overloads size/direction, allowing the API to work for multiple versions.
+ *
+ */
+static long ncdev_driver_info(unsigned int cmd, void *param)
+{
+	struct neuron_ioctl_device_driver_info driver_info;
+	unsigned int dir  = _IOC_DIR(cmd);
+	unsigned int size = _IOC_SIZE(cmd);
+
+	if (dir == _IOC_WRITE) {
+		return -ENOTSUPP;
+	} else if (dir == _IOC_READ) {
+		// for forward/backward compatibility, there's two options (a) copy lesser of passed in size or struct size.
+		// (b) or any size > most recent version just gets version size.
+		if (size >= _IOC_SIZE(NEURON_IOCTL_DRIVER_INFO_GET)) {
+			driver_info.architecture = narch_get_arch();
+			driver_info.revision = narch_get_revision();
+			driver_info.version = NEURON_DEVICE_DRIVER_INFO_VERSION0;
+			driver_info.size = sizeof(driver_info);
+			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA;
+			
+			return copy_to_user(param, &driver_info, sizeof(driver_info));
+		}
+	}
+
+
+	return -EINVAL;
+}
+
 static long ncdev_device_app_pid_deprecated(struct neuron_device *nd, void *param)
 {
 	return copy_to_user(param, &nd->attached_processes[0].pid, sizeof(int));
@@ -1310,8 +1416,7 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       false, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_channel;  
-		ret = ts_nq_init(nd, nc_id, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 false, &mc, &arg.mmap_offset);
 	} else {
@@ -1339,8 +1444,7 @@ static long ncdev_nc_nq_init_with_realloc_v2(struct neuron_device *nd, void *par
 			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
 			       arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
-		u32 nc_id = (narch_get_arch() == NEURON_ARCH_V1) ? 0 :arg.dram_channel;
-		ret = ts_nq_init(nd, nc_id, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
 				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
 				 arg.force_alloc_mem, &mc, &arg.mmap_offset);
 	} else {
@@ -1554,7 +1658,10 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 		 * over all devices in the user space
 		 */
 		return ncdev_get_dmabuf_fd((void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_DRIVER_INFO_GET)) {
+		return ncdev_driver_info(cmd, (void*)param);
 	}
+
 	pr_err("invalid misc IOCTL %d\n", cmd);
 	return -EINVAL;
 }
@@ -1581,9 +1688,10 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	    cmd == NEURON_IOCTL_DMA_QUEUE_RELEASE || cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS ||
 	    cmd == NEURON_IOCTL_MEM_ALLOC || cmd == NEURON_IOCTL_MEM_FREE ||
 	    cmd == NEURON_IOCTL_MEM_COPY || cmd == NEURON_IOCTL_MEM_GET_PA ||
+	    cmd == NEURON_IOCTL_MEM_COPY_ASYNC || cmd == NEURON_IOCTL_MEM_COPY_ASYNC_WAIT ||
 	    cmd == NEURON_IOCTL_MEM_GET_INFO || cmd == NEURON_IOCTL_BAR_WRITE ||
 	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V1 ||
-	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2 ||
+	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2 || cmd == NEURON_IOCTL_DRIVER_INFO_SET ||
 	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_WITH_REALLOC_V2) {
 		if (!npid_is_attached(nd)) {
 			pr_err("Process not allowed to request cmd=%u, pid not attached\n", cmd);
@@ -1660,6 +1768,10 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_mem_free(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_COPY) {
 		return ncdev_mem_copy(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_MEM_COPY_ASYNC) {
+		return ncdev_mem_copy_async(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_MEM_COPY_ASYNC_WAIT) {
+		return ncdev_mem_copy_async_wait(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_BUF_COPY) {
 		return ncdev_mem_buf_copy(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE) {

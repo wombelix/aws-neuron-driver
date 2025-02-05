@@ -101,7 +101,8 @@ const static nsysfsmetric_counter_node_info_t custom_counter_nodes_info_tbl[] = 
     COUNTER_NODE_INFO("model_load_count",    NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_MODEL_LOAD_COUNT)),
     COUNTER_NODE_INFO("reset_req_count",     NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_RESET_REQ_COUNT)),
     COUNTER_NODE_INFO("reset_fail_count",    NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_RESET_FAIL_COUNT)),
-    COUNTER_NODE_INFO("inference_count",     NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_INFERENCE_COUNT))
+    COUNTER_NODE_INFO("inference_count",     NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_INFERENCE_COUNT)),
+    COUNTER_NODE_INFO("flop_count",          NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_NC_COUNTER_MAC_COUNT)),
 };
 const static int custom_counter_nodes_info_tbl_cnt = sizeof(custom_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
 
@@ -1067,6 +1068,7 @@ void nsysfsmetric_nds_aggregate(struct neuron_device *nd, struct neuron_datastor
         // read the two custom sysfs metrics from nds: model load count and inference count
         nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_MODEL_LOAD_COUNT, nc_id, NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[NDS_NC_COUNTER_MODEL_LOAD_COUNT]);
         nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_INFERENCE_COUNT, nc_id, NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[NDS_NC_COUNTER_INFERENCE_COUNT]);
+        nsysfsmetric_inc_counter(nd, NDS_NC_METRIC, NDS_NC_COUNTER_MAC_COUNT, nc_id, 2 * NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[NDS_NC_COUNTER_MAC_COUNT]);  // one MAC has two floating point operations (multiply and add)
     }
 
     // read the host_mem category data from nds

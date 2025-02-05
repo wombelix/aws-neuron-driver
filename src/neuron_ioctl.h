@@ -90,6 +90,25 @@ struct neuron_ioctl_mem_copy {
 	__u32 dst_offset; // [in] Offset in the destination memory handle.
 };
 
+
+struct neuron_ioctl_mem_copy_async {
+	__u64 src_mem_handle;     // [in]  Source memory handle from where data is copied.
+	__u64 dst_mem_handle;     // [in]  Destination memory handle to data is to be copied.
+	__u32 size;               // [in]  Size of the transfer.
+	__u32 src_offset;         // [in]  Offset in the source memory handle where transfer should start.
+	__u32 dst_offset;         // [in]  Offset in the destination memory handle where transfer should start.
+	__u64 host_prefetch_addr; // [in]  host prefetch address (used for device to host transfers to allocate physical pages to a host buffer that RT will copy data to from the dst buffer)
+	__u32 pwait_handle;       // [in]  wait handle for a previous transfer that the caller wants to wait on after starting this transfer. -1 == no prev transfer to wait on.
+	__u32 wait_handle;        // [out] wait handle returned for this transfer.
+};
+
+struct neuron_ioctl_mem_copy_async_wait {
+	__u64 src_mem_handle;     // [in]  Source memory handle from where data is copied.
+	__u64 dst_mem_handle;     // [in]  Destination memory handle to data is to be copied.
+	__u32 pwait_handle;       // [in]  wait handle for a previous transfer that the caller wants to wait on after starting this transfer. -1 == no prev transfer to wait on.
+};
+
+
 struct neuron_ioctl_memset {
 	__u64 mem_handle; // [in] Destination memory handle to data is to be copied.
 	__u64 offset; // [in] Offset in the memory handle.
@@ -358,6 +377,18 @@ struct neuron_ioctl_dmabuf_fd {
 	__s32 *fd;
 };
 
+#define NEURON_DEVICE_DRIVER_INFO_VERSION0  0
+
+struct neuron_ioctl_device_driver_info{
+	DEVICE_BASIC_INFO
+	__u32 version;         // [out] version of this structure
+	__u32 size;            // [out] size of this structure
+	__u64 feature_flags1;  // [out] supported features
+						   // This structure can be extended by adding to the end.
+						   // It can be extended to provide feature get/set by making flags in/out (using _IOR)
+};
+
+
 #define NEURON_IOCTL_BASE 'N'
 
 /* Deprecated reset related IOCTLs. Now it would always return success. */
@@ -494,6 +525,17 @@ struct neuron_ioctl_dmabuf_fd {
 /** Get the dma-buf file-descriptor */
 #define NEURON_IOCTL_DMABUF_FD _IOR(NEURON_IOCTL_BASE, 107, struct neuron_ioctl_dmabuf_fd *)
 
-#define NEURON_IOCTL_MAX 108
+/** Copy data between two memory handles asynchronously. (using DMA) */
+#define NEURON_IOCTL_MEM_COPY_ASYNC _IOWR(NEURON_IOCTL_BASE, 108, struct neuron_ioctl_mem_copy_async)
+
+/** wait on asynchronous data copy between two memory handles. */
+#define NEURON_IOCTL_MEM_COPY_ASYNC_WAIT _IOW(NEURON_IOCTL_BASE, 109, struct neuron_ioctl_mem_copy_async_wait)
+
+/** driver info get/set (superset of NEURON_IOCTL_DEVICE_BASIC_INFO */
+#define NEURON_IOCTL_DRIVER_INFO_GET _IOR(NEURON_IOCTL_BASE, 110, struct neuron_ioctl_device_driver_info)
+#define NEURON_IOCTL_DRIVER_INFO_SET _IOW(NEURON_IOCTL_BASE, 110, struct neuron_ioctl_device_driver_info)
+
+
+#define NEURON_IOCTL_MAX 111
 
 #endif

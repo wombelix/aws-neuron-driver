@@ -7,6 +7,12 @@
 
 #include <linux/types.h>
 
+enum neuron_driver_feature_flag {
+	NEURON_DRIVER_FEATURE_DMABUF = 1ull <<  0, 
+	NEURON_DRIVER_FEATURE_ASYNC_DMA = 1ull <<  1, 
+	NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT = 1ull <<  2, 
+};
+
 #define NEURON_NC_MAP_DEVICE (0xffffffff)
 
 enum neuron_dma_queue_type {
@@ -40,6 +46,15 @@ struct neuron_dma_queue_state {
 	__u64 completion_base_addr; // completion queue base address
 	__u32 completion_head; // completion head
 };
+
+enum neuron_dma_h2t_ctx_handle_type {
+	NEURON_DMA_H2T_CTX_HANDLE_NONE   = -1,  // no handle - used as prev handle to start an async dma
+	NEURON_DMA_H2T_CTX_HANDLE_SYNC   =  0,  // handle for doing synchronous DMA
+	NEURON_DMA_H2T_CTX_HANDLE_ASYNC1 =  1,  // first of two async handles
+	NEURON_DMA_H2T_CTX_HANDLE_ASYNC2 =  2,  // second of two async handles
+	NEURON_DMA_H2T_CTX_HANDLE_CNT    =  3   // number of dma 
+};
+
 
 /*
  * NOTE: In runtime version 5, this enum was passed in as a bool instead -

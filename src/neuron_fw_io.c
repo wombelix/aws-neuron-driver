@@ -192,8 +192,8 @@ static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 
 
 		ret = -1;
 		if (resp_seq != ctx->next_seq_num) {
-			pr_err("seq: %u, cmd: %u timed out\n", ctx->next_seq_num, command_id);
-			//goto done;
+			if (command_id != FW_IO_CMD_POST_TO_CW)
+				pr_err("seq: %u, cmd: %u timed out\n", ctx->next_seq_num, command_id);
 			continue;
 		}
 		if (ctx->response->error_code == FW_IO_SUCCESS) {
