@@ -13,9 +13,12 @@ or endorsed by, Amazon Web Services.**
 
 -----
 
-This repository contains all available versions of the `GPL-2.0-only`
-source code of the AWS Neuron Driver. A Linux kernel device driver
+This repository contains all available versions of the AWS Neuron Driver
+source code (`GPL-2.0-only` license). A Linux kernel device driver
 supporting the AWS Neuron SDK.
+
+There is **no** independent development of features or bug fixes done in this repository.
+It is basically a mirror of the source code as it is released by AWS.
 
 [![REUSE status](https://api.reuse.software/badge/git.sr.ht/~wombelix/aws-neuron-driver)](https://api.reuse.software/info/git.sr.ht/~wombelix/aws-neuron-driver)
 
@@ -31,9 +34,10 @@ supporting the AWS Neuron SDK.
 ## Why
 
 The [official repository](https://github.com/aws-neuron/aws-neuron-driver)
-doesn't contain recent versions of the driver source code. It is still under
-`GPL-2.0-only` but only distributed as rpm package with a DKMS wrapper.
-Releases since [October 2020](https://github.com/aws-neuron/aws-neuron-driver/commits/master/)
+doesn't contain recent versions of the driver source code. The driver is still
+open source (`GPL-2.0-only` license), but only distributed as rpm package
+with a DKMS wrapper. Releases since
+[October 2020](https://github.com/aws-neuron/aws-neuron-driver/commits/master/)
 are not available as archive or in a public git repository.
 
 ## How
@@ -41,13 +45,80 @@ are not available as archive or in a public git repository.
 The tool [aws-neuron-driver-publish-source](https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source)
 is used to add releases and code updates to this unofficial repository.
 Checksum and GPG verifications are performed and metadata added.
-This creates an audit trail and allows to validate that the code is coming
-from the official repository
+This creates an audit trail and allows independent validation
+that the code is coming from the official repository
 [yum.repos.neuron.amazonaws.com](https://yum.repos.neuron.amazonaws.com/)
 and wasn't altered.
 
-There is no independent development done in this repository.
-It is basically a mirror of the source code as it is released by AWS.
+### Folder structure
+
+```
+src/            =   AWS Neuron Driver source code
+archive/        =   Public GPG Key and repo xml files
+        rpm/    =   RPM files with SHA256 checksums
+```
+
+The `archive/` folder contains copies of various files processed while
+adding a new Neuron Driver source code version to the repository.
+They can be used to verify and validate the authenticity of the code in `src/`.
+
+### Example commit message
+
+Every commit of a new Driver version contains additional Metadata. If available,
+[Release Notes](https://awsdocs-neuron.readthedocs-hosted.com/en/latest/release-notes/runtime/aws-neuronx-dkms/index.html)
+are added as well. These commits are also tagged with the version number.
+An example commit during
+[aws-neuron-driver-publish-source](https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source)
+development:
+
+```
+commit 053a860d1eb7fbeb68aa1e887eb4368ddece27f6 (tag: 1.1)
+Author: Dominik Wombacher <dominik@wombacher.cc>
+Date:   Wed Feb 5 08:48:09 PM UTC 2025 +0000
+
+    feat: Neuron Driver 1.1
+
+    Source code extracted from file: aws-neuron-dkms-1.1-2.0.noarch.rpm
+    Downloaded from repository: https://yum.repos.neuron.amazonaws.com
+
+
+    Metadata
+    --------
+    Package: aws-neuron-dkms
+    Version: 1.1
+    License: Unknown
+    Summary: aws-neuron 1.1 dkms package
+    Description: Kernel modules for aws-neuron 1.1 in a DKMS wrapper.
+    Filename: aws-neuron-dkms-1.1-2.0.noarch.rpm
+    Checksum: d994cd63745e7306bf9583c74468a40f46e199d698e2fd28610209483c311d6a
+    Buildhost: 0cbde921ec7e
+    Buildtime: 2020-10-19 18:45:40 +0000 UTC
+    GPG key primary uid: Amazon AWS Neuron <neuron-maintainers@amazon.com>
+    GPG key creation time: 2019-11-11 17:29:27 +0000 UTC
+    GPG key fingerprint: 00FA2C1079260870A76D2C285749CAD8646D9185
+    GPG check: OK
+    SHA256 check: OK
+    --------
+
+
+    Files
+    -----
+    - M: src/README.md
+    - M: src/postinstall
+    - ?: archive/rpm/aws-neuron-dkms-1.1-2.0.noarch.rpm
+    - ?: archive/rpm/aws-neuron-dkms-1.1-2.0.noarch.rpm.sha256
+    - M: src/aws-neuron-dkms-mkrpm.spec
+    - M: src/postremove
+    - M: src/aws-neuron-dkms-mkdeb/debian/rules
+    - M: src/dkms.conf
+    - M: src/neuron_dma.c
+    - M: src/neuron_module.c
+    - M: src/aws-neuron-dkms-mkdeb/debian/postinst
+    - M: src/aws-neuron-dkms-mkdeb/debian/prerm
+    - D: src/LICENSE
+    - M: src/preinstall
+    -----
+```
 
 ## Usage
 
@@ -67,8 +138,9 @@ and
 
 ## Contribute
 
-I don't intend to alter the `aws-neuron-driver` source in any way in this repository.
-So, contributions are limited to content outside the `src/` and `archive/` sub-folders.
+I don't intend to make changes to the `aws-neuron-driver` source
+in any way in this repository. So, contributions are limited to
+content outside the `src/` and `archive/` sub-folders.
 
 With this limitation in mind, please don't hesitate to provide Feedback,
 open an Issue or create a Pull / Merge Request.
@@ -85,8 +157,10 @@ are also always welcome.
 Unless otherwise stated:
 
 * `aws-neuron-driver` code in the `src/` and `archive/rpm/` sub-folder: `GPL-2.0-only`
-* Computer generated files in sub-folder `archive`: `MIT-0`
-* Files in the repository root folder: `CC0-1.0`
+* Computer generated files in sub-folder `archive/`: `MIT-0`
+* [Neuron Driver Release Notes](archive/release-notes-runtime-aws-neuronx-dkms.rst)
+  in `archive/`: `CC-BY-SA-4.0`
+* Files in the repository `root folder`: `CC0-1.0`
 
 All files contain license information either as
 `header comment`, `corresponding .license` file or have annotation
