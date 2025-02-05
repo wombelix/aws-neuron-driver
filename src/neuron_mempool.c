@@ -172,7 +172,7 @@ int mpset_device_init(struct mempool_set *mpset, int num_channels, int num_regio
 		      const phys_addr_t device_dram_addr[], const u64 device_dram_size[])
 {
 	int ret;
-	u32 channel, region;
+	int channel = 0, region = 0;
 	u64 region_sz;
 
 	if (num_regions <= 0 || num_regions > 4)
@@ -208,6 +208,8 @@ fail:
 static void mpset_free_host_memory(struct mempool_set *mpset)
 {
 	struct list_head *this, *next;
+	if (mpset->host_allocated_head.next == NULL)
+		return;
 	list_for_each_safe (this, next, &mpset->host_allocated_head) {
 		struct mem_chunk *mc = list_entry(this, struct mem_chunk, host_allocated_list);
 		if (mc->va) {
@@ -227,23 +229,14 @@ static void mpset_free_host_memory(struct mempool_set *mpset)
 	mpset->host_mem_size = 0;
 }
 
-void mpset_free_all(struct mempool_set *mpset)
-{
-	u32 channel, region;
-
-	mutex_lock(&mpset->lock);
-	for (channel = 0; channel < V1_MAX_DRAM_CHANNELS; channel++) {
-		for (region = 0; region < mpset->num_regions; region++) {
-			mp_free_device_mem(&mpset->mp_device[channel][region]);
-		}
-	}
-	mpset_free_host_memory(mpset);
-	mutex_unlock(&mpset->lock);
-}
-
 void mpset_destroy(struct mempool_set *mpset)
 {
 	u32 channel, region;
+	int already_freed;
+
+	already_freed = atomic_xchg(&mpset->freed, 1);
+	if (already_freed)
+		return;
 
 	mutex_lock(&mpset->lock);
 	for (channel = 0; channel < V1_MAX_DRAM_CHANNELS; channel++) {
@@ -253,7 +246,6 @@ void mpset_destroy(struct mempool_set *mpset)
 	}
 	mpset_free_host_memory(mpset);
 	mutex_unlock(&mpset->lock);
-	memset(mpset, 0, sizeof(struct mempool_set));
 }
 
 struct mem_chunk *mpset_search_mc(struct mempool_set *mp, phys_addr_t pa)

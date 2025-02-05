@@ -776,8 +776,7 @@ static long ncdev_device_release(struct ncdev *dev, struct neuron_device *nd)
 	if (dev->open_count == 0) {
 		nc_nq_destroy_all(nd);
 		ndmar_close(nd);
-		mpset_free_all(&nd->mpset);
-		nd->mpset.num_regions = 0;
+		mpset_destroy(&nd->mpset);
 	}
 
 	mutex_unlock(&ncdev_device_lock);

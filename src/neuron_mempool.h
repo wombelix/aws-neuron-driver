@@ -52,6 +52,7 @@ struct mempool {
 #define MAX_DDR_REGIONS 4
 
 struct mempool_set {
+	atomic_t freed; // if 1, the structure is already freed.
 	struct mutex lock;
 	u32 num_regions; // number of regions in the device pool
 	struct mempool mp_device[V1_MAX_DRAM_CHANNELS][MAX_DDR_REGIONS]; // device memory pools
@@ -115,12 +116,6 @@ int mpset_host_init(struct mempool_set *mpset);
  */
 int mpset_device_init(struct mempool_set *mpset, int num_channels, int num_regions,
 		      const phys_addr_t device_dram_addr[], const u64 device_dram_size[]);
-
-/** Free up all host and device memory in the mpset.
- *
- * @param mpset - Pointer to mpset
- */
-void mpset_free_all(struct mempool_set *mp);
 
 /**
  * mpset_destroy() - Free up all memory pool in the mpset and destroys the mpset.
