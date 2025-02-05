@@ -60,13 +60,11 @@ struct fw_io_ctx {
 	u64 response_addr;
 	u32 request_response_size; // for simplicity always use the same buffer size for request and response
 	u64 fw_io_err_count;
-
 	struct mutex lock;
 };
 
 #define UINT64_LOW(x) ((u32)(((u64)(x)) & 0xffffffffULL))
 #define UINT64_HIGH(x) ((u32)((x) >> 32))
-
 
 /**
  * fw_io_read_csr_array() - Read CSR(s) and return the value(s).
@@ -74,11 +72,11 @@ struct fw_io_ctx {
  * @ptrs: Array of register address to read
  * @values: Read values stored here
  * @num_csrs: Number of CSRs to read
- * @busy_wait: true if task is performance critical false otherwise.
+ * @operational: true if the read expects the device to be in operational state
  *
  * Return: 0 if CSR read is successful, a negative error code otherwise.
  */
-int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool busy_wait);
+int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool operational);
 
 /** Read the list of addresses given in the address list and returns it's values in the value list
  *
@@ -86,17 +84,15 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool busy_wait)
  * @param addr_in[in]	- List of registers to read
  * @param values[out]	- Buffer to store results.
  * @param num_req[in]	- Total number of registers in the addr_in
- * @busy_wait - true if task is performance critical false otherwise.
  *
  * @return 0 on success 1 on error
  */
-int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req, bool busy_wait);
+int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req);
 
 
 /**
  * fw_io_setup() - Setup new FWIO for given device.
  *
- * @device_index: Device index for which fwio context needs to be created
  * @bar0: BAR0 virtual address
  * @bar0_size: Size of BAR0
  * @bar2: BAR2 virtual address
@@ -104,7 +100,7 @@ int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req,
  *
  * Return: fwio context on success, NULL on failure.
  */
-struct fw_io_ctx *fw_io_setup(int device_index, void __iomem *bar0, u64 bar0_size,
+struct fw_io_ctx *fw_io_setup(void __iomem *bar0, u64 bar0_size,
 				  void __iomem *bar2, u64 bar2_size);
 
 /**
@@ -144,16 +140,6 @@ void fw_io_initiate_reset(void __iomem *bar0, bool device_reset, u32 tpb_reset_m
  * Return: true if reset is initiated, false if reset is not yet started.
  */
 bool fw_io_is_reset_initiated(void __iomem *bar0);
-
-/**
- * fw_io_is_device_ready() - Checks if the device is ready.
- *
- * @bar0 - Device's BAR0 base address
- *
- * Return: true if device is ready, false if device is still coming out of reset.
- */
-bool fw_io_is_device_ready(void __iomem *bar0);
-
 
 /**
  * fw_io_read_counters() - Reads hardware counters

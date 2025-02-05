@@ -320,7 +320,9 @@ static int nmetric_post_version_with_max_usage(struct nmetric_versions *versions
 	int idx;
 	int found_idx;
 	int version_len = 0; // length of the version string
-	int total_len = 0; // total length used in the metrics buffer
+	int metric_len = 0; // total length used in the metrics buffer by the current metric
+	int written_len = 0; // total length used in the metrics buffer
+	int fw_type = 0;
 	int max_usage = 0;
 
 	nmetric_version_t version_info;
@@ -336,38 +338,48 @@ static int nmetric_post_version_with_max_usage(struct nmetric_versions *versions
 
 	version_info.all = versions->version_metrics[found_idx];
 	BUG_ON(version_info.all == 0);
-	if (version_info.reserved == 0)
+	fw_type = (int)version_info.reserved % 10;
+	if (fw_type == 0)
 		add_fw_type = false;
+	version_info.reserved = 0; // zero out .reserved to simplify the next comparison
 
-	// check if there is enough space in buffer
-	version_len = snprintf(NULL, 0, "%d.%d.%d", (int)version_info.major_ver,
-			       (int)version_info.minor_ver, (int)version_info.build_num);
+	// Step 1: post version if not 0
+	// In frameworkless mode the only non-zero value will be version_info.reserved (framework_type)
+	// with a value of '1', and major_ver, minor_ver and build_num will all be 0, so don't post version,
+	// only post framework_type - also make sure 0.0.0 is not posted in general when framework_type is not 0
+	if (version_info.all != 0) {
+		// check if there is enough space in buffer
+		version_len = snprintf(NULL, 0, "%d.%d.%d", (int)version_info.major_ver,
+				       (int)version_info.minor_ver, (int)version_info.build_num);
 
-	total_len = sizeof(struct nmetric_cw_metric) + version_len;
-	if(add_fw_type)
-		// a single digit for the fw type stored in version_info.reserved
-		total_len += sizeof(struct nmetric_cw_metric) + 1;
+		metric_len = sizeof(struct nmetric_cw_metric) + version_len;
 
-	if (available_size < total_len)
-		return 0;
+		if (metric_len <= available_size) {
+			// save metrics to buffer
+			metric->id = cw_id;
+			metric->len = version_len; // null char will be replaced by next metric and should not be considered in the length
+			snprintf(metric->data, version_len + 1, "%d.%d.%d", (int)version_info.major_ver, (int)version_info.minor_ver,
+				 (int)version_info.build_num);
 
-	// save metrics to buffer
-	metric->id = cw_id;
-	metric->len = version_len; // null char will be replaced by next metric and should not be considered in the length
-	snprintf(metric->data, version_len + 1, "%d.%d.%d", (int)version_info.major_ver,
-		 (int)version_info.minor_ver, (int)version_info.build_num);
+			written_len = metric_len;
+		}
+	}
 
+	// Step 2: if required and not 0, also post the fw type
 	if(add_fw_type) {
+		metric_len = sizeof(struct nmetric_cw_metric) + 1;
 		//save framework type to the next id
-		version_len += sizeof(struct nmetric_cw_metric);
-		metric = (struct nmetric_cw_metric *)((void *)metric + version_len);
-		metric->id = cw_id + 1;
-		metric->len = 1;
-		snprintf(metric->data, 2, "%d", (int)version_info.reserved % 10);
+		if (written_len + metric_len <= available_size) {
+			metric = (struct nmetric_cw_metric *)((void *)metric + written_len);
+			metric->id = cw_id + 1;
+			metric->len = 1;
+			snprintf(metric->data, 2, "%d", fw_type);
+			written_len += metric_len;
+		}
 	}
 
 	versions->version_usage_count[found_idx] = 0;
-	return total_len;
+	return written_len;
 }
 
 /* Functions for posting metric types (writing the metrics to the output buffer)
@@ -627,7 +639,6 @@ static int nmetric_thread_fn(void *arg)
 
 		nmetric_post_metrics(nd, curr, prev, freed, component_versions, curr_bitmap, freed_bitmap, tick);
 		nmetric_start_new_session(curr, prev, freed, &curr_bitmap, &freed_bitmap, tick); // reset all current metrics for this tick
-
 		tick = (tick + 1) % POST_TICK_COUNT;
 	}
 	return 0;

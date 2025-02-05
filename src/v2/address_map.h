@@ -8,6 +8,10 @@
 // Host memory access
 #define V2_PCIE_A0_BASE                        0x00100000000000ull
 
+// All PCIe routes mask
+#define V2_PCIE_ALL_RT_MASK                    0x01f00000000000ull
+
+
 // relative to nc
 #define V2_MMAP_P_OFFSET 0x00000000000000ull
 #define V2_MMAP_NC_EVENT_OFFSET 0x00000002700000ull

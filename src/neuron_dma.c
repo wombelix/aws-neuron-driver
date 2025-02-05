@@ -402,12 +402,20 @@ int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32
 		else
 			return -1;
 
+		// TONGA:
 		// west side: PCIEX4_1_BASE: 0x00c00000000000 host: PCIEX8_0_BASE: 0x00400000000000
 		// If west side is set then even host bit is set. When mc_alloc is called we set only the host bit
 		// and insert into tree.. If some one sets the west side on that PA, then there is no way to check that,
 		// since there could be a tdram address that could have the west side set
 		// (that will look as though host is also set)
-		if (((pa & PCIEX8_0_BASE) == PCI_HOST_BASE(nd)) &&
+		// SUNDA:
+		// similar idea.  Just check for valid address allocated in host memory
+		if (narch_get_arch() == NEURON_ARCH_TRN) { 
+			if ((pa & V2_PCIE_ALL_RT_MASK) == PCI_HOST_BASE(nd)) {
+				if (!ndma_is_valid_host_mem(nd, pa))
+					return -EINVAL;
+			}
+		} else if (((pa & PCIEX8_0_BASE) == PCI_HOST_BASE(nd)) &&
 		    ((pa & PCIEX4_1_BASE) != PCIEX4_1_BASE)) {
 			if (!ndma_is_valid_host_mem(nd, pa))
 				return -EINVAL;

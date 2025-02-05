@@ -29,10 +29,21 @@ module_param(no_reset, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(no_reset, "Dont reset device");
 
 #define NR_RESET_INIT_PRE_WAIT_TIME_MS 7000
-#define NR_RESET_INIT_RETRY_COUNT 5
-#define NR_RESET_INIT_RETRY_SLEEP_MS 100
+#define NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS 3000
+#define NR_RESET_INIT_PRE_WAIT_TIME_INC_MS 2000
+#define NR_RESET_INIT_RETRY_COUNT 5 
 #define NR_RESET_RETRY_COUNT 5
 #define NR_RESET_RETRY_SLEEP_MS 100
+
+static int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec) 
+{
+	unsigned long timeout = msecs_to_jiffies(msec);
+
+	while (timeout && !nd->nr.stop)
+		timeout = schedule_timeout_interruptible(timeout);
+
+	return jiffies_to_msecs(timeout);
+}
 
 static int nr_initiate_reset(struct neuron_device *nd)
 {
@@ -62,11 +73,19 @@ static int nr_initiate_reset(struct neuron_device *nd)
 				}
 			}
 		}
+
+        /* Wait times are different for device reset vs nc reset (aka tpb reset) */
+		uint32_t reset_init_retry_wait_time =
+				nc_map == NEURON_NC_MAP_DEVICE ?
+						NR_RESET_INIT_PRE_WAIT_TIME_MS :
+						NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS;
+
 		for (i = 0; i < NR_RESET_INIT_RETRY_COUNT; i++) {
 			fw_io_initiate_reset(nd->npdev.bar0, nc_map == NEURON_NC_MAP_DEVICE, tpb_reset_map);
 			// once reset is initiated, FWIO wont respond until the device
 			// comes out of reset, so sleep here for sometime
-			msleep(NR_RESET_INIT_PRE_WAIT_TIME_MS * (i + 1));
+			if (nr_msleep_stoppable(nd, reset_init_retry_wait_time))
+				return -1;
 			// Emulator doesn't have readless read support, just return
 			if (narch_is_emu()) {
 				return 0;
@@ -74,8 +93,10 @@ static int nr_initiate_reset(struct neuron_device *nd)
 			for (j = 0; j < NR_RESET_RETRY_COUNT; j++) {
 				if (fw_io_is_reset_initiated(nd->npdev.bar0))
 					return 0;
-				msleep(NR_RESET_INIT_RETRY_SLEEP_MS * j);
+				if (nd->nr.stop)
+					return -1;
 			}
+			reset_init_retry_wait_time += NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
 		}
 		if (i == NR_RESET_INIT_RETRY_COUNT)
 			return -1;
@@ -90,9 +111,10 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
 		int i;
 		for (i = 0; i < NR_RESET_RETRY_COUNT; i++) {
-			if (fw_io_is_device_ready(nd->npdev.bar0))
+			if (fw_io_is_device_ready_v1(nd->npdev.bar0))
 				break;
-			msleep(NR_RESET_RETRY_SLEEP_MS * i);
+			if (nd->nr.stop)
+				return -1;
 		}
 		if (i == NR_RESET_RETRY_COUNT)
 			return -1;
@@ -100,7 +122,7 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 	} else if (narch_get_arch() == NEURON_ARCH_TRN) {
 		int i;
 		uint32_t retry_count = NR_RESET_RETRY_COUNT;
-		volatile void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET;
+		void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET;
 		if (narch_is_qemu()) {
 			addr += V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
 		} else {
@@ -111,18 +133,20 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 		}
 
 		for (i = 0; i < retry_count; i++) {
-			bool reset_in_progress;
+			bool reset_in_progress = true;
+			u32 status;
 
 			if (narch_is_qemu()) {
 				reset_in_progress = readl((volatile uint32_t *)addr);
 				msleep(2 * 1000);
 			} else {
-				reset_in_progress = readl((volatile uint32_t *)addr) &
-						    V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK;
+				if (fw_io_read_csr_array(&addr, &status, 1, false) == 0)
+					reset_in_progress = status & V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK;
 			}
 			if (!reset_in_progress)
 				return 0;
-			msleep(NR_RESET_RETRY_SLEEP_MS * i);
+			if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i)) 
+				return -1;
 		}
 		return -1;
 	} else {
@@ -146,13 +170,11 @@ static int nr_reset_thread_fn(void *arg)
 		pr_info("nd%d: initiating reset request %u\n", nd->device_index, req->request_id);
 		ret = nr_initiate_reset(nd);
 		if (ret) {
-			// TODO (tcanepa): fix error return logic
 			state = NEURON_RESET_STATE_FAILED;
 		} else {
 			ret = nr_wait_for_reset_completion(nd);
 			if (ret) {
 				pr_info("nd%d: device didnt come out reset\n", nd->device_index);
-				// TODO (tcanepa): fix error return logic
 				state = NEURON_RESET_STATE_FAILED;
 			} else {
 				if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {

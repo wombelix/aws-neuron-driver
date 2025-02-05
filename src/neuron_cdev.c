@@ -1712,11 +1712,10 @@ static struct file_operations ncdev_fops = {
 	.mmap = ncdev_mmap,
 };
 
-static int reset_ret = -1;
-
 static ssize_t device_reset_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-    return sprintf(buf, "%d\n", reset_ret);
+	int minor = MINOR(dev->devt);
+	return sprintf(buf, "%d\n", devnodes[minor].ndev->device_state);
 }
 
 static ssize_t driver_reset_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)

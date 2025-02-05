@@ -157,11 +157,6 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 		dma_set_coherent_mask(&nd->pdev->dev, DMA_BIT_MASK(64));
 	}
 
-	nd->fw_io_ctx = fw_io_setup(nd->device_index, nd->npdev.bar0, nd->npdev.bar0_size,
-				    nd->npdev.bar2, nd->npdev.bar2_size);
-	if (nd->fw_io_ctx == NULL)
-		return -1;
-
 	ret = nr_create_thread(nd);
 	if (ret)
 		return ret;
@@ -349,18 +344,32 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 #else
 	nd->device_index = atomic_add_return(1, &device_count) - 1;
 #endif 
+	nd->fw_io_ctx = fw_io_setup(nd->npdev.bar0, nd->npdev.bar0_size,
+				    nd->npdev.bar2, nd->npdev.bar2_size);
+	if (nd->fw_io_ctx == NULL) {
+		pr_err("readless read initialization failed");
+		ret = -ENODEV;
+		goto fail_bar2_resource;
+	}
+
 	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
 		u32 routing_id = (u32)-1;
 		// Poll the device id until the device is ready
 		int i;
-		for (i = 0; i < 300; i++) {
+		for (i = 0; i < 20; i++) {
 			ret = fw_io_device_id_read(nd->npdev.bar0, &routing_id);
-			BUG_ON(ret != 0);
-			if (routing_id != 0xdeadbeef) {
+			if (!ret && routing_id != 0xdeadbeef) {
 				break;
 			}
 			msleep(1000);
 		}
+
+		if (ret) {
+			pr_err("Could not retrieve device index (read timeout)");
+			ret = -ENODEV;
+			goto fail_bar2_resource;
+		}
+
 		if (routing_id < 0 || routing_id >= MAX_NEURON_DEVICE_COUNT) {
 			pr_err("Invalid device index %u", routing_id);
 			ret = -ENODEV;

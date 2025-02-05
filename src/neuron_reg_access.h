@@ -14,6 +14,7 @@
 #include <asm/delay.h>
 #include <asm/io.h>
 
+#include "neuron_arch.h"
 #include "neuron_fw_io.h"
 
 extern bool v2_chip;
@@ -28,7 +29,7 @@ extern bool v2_chip;
  */
 static inline int reg_read32_array(void **addr, u32 *value, u32 num_values)
 {
-	if (v2_chip) {
+	if (v2_chip && narch_is_qemu()) {
 		int i;
 		for (i = 0; i < num_values; i++) {
 			value[i] = readl(addr[i]);
@@ -36,9 +37,9 @@ static inline int reg_read32_array(void **addr, u32 *value, u32 num_values)
 		return 0;
 	} else {
 		int ret;
-		ret = fw_io_read_csr_array(addr, value, num_values, false);
+		ret = fw_io_read_csr_array(addr, value, num_values, true);
 		if (ret != 0) {
-			pr_err("register read failure while reading %p\n", addr);
+			pr_err("register read failure while reading %p\n", addr[0]);
 			dump_stack();
 		}
 		return ret;
