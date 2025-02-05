@@ -28,6 +28,27 @@
  */
 #define GENPOOL_DEVMEM_BASE (0x1ull << 63)
 
+// Update this map when changing order in mem_alloc_category_t
+static u32 mem_alloc_type_to_sysfs_counter[] = {
+	NON_NDS_ND_COUNTER_MEM_USAGE_UNCATEGORIZED_HOST,    // NEURON_MEMALLOC_TYPE_UNKNOWN_HOST
+	NON_NDS_ND_COUNTER_MEM_USAGE_CODE_HOST,    // NEURON_MEMALLOC_TYPE_CODE_HOST
+	NON_NDS_ND_COUNTER_MEM_USAGE_TENSORS_HOST,    // NEURON_MEMALLOC_TYPE_TENSORS_HOST
+	NON_NDS_ND_COUNTER_MEM_USAGE_CONSTANTS_HOST,    // NEURON_MEMALLOC_TYPE_CONSTANTS_HOST
+	NON_NDS_ND_COUNTER_MEM_USAGE_MISC_HOST,    // NEURON_MEMALLOC_TYPE_MISC_HOST
+	NON_NDS_ND_COUNTER_MEM_USAGE_NCDEV_HOST,    // NEURON_MEMALLOC_TYPE_NCDEV_HOST
+	NON_NDS_ND_COUNTER_MEM_USAGE_NOTIFICATION_HOST,	// NEURON_MEMALLOC_TYPE_NOTIFICATION_HOST
+
+	NON_NDS_NC_COUNTER_MEM_USAGE_UNCATEGORIZED_DEVICE, // NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_CODE_DEVICE,    // NEURON_MEMALLOC_TYPE_CODE_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_TENSORS_DEVICE,    // NEURON_MEMALLOC_TYPE_TENSORS_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_CONSTANTS_DEVICE,    // NEURON_MEMALLOC_TYPE_CONSTANTS_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_DEVICE,    // NEURON_MEMALLOC_TYPE_SCRATCHPAD_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_MISC_DEVICE,    // NEURON_MEMALLOC_TYPE_MISC_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_NCDEV_DEVICE,    // NEURON_MEMALLOC_TYPE_NCDEV_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_COLLECTIVES_DEVICE,    // NEURON_MEMALLOC_TYPE_COLLECTIVES_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_NONSHARED_DEVICE,    // NEURON_MEMALLOC_TYPE_SCRATCHPAD_NONSHARED_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_NOTIFICATION_DEVICE    // NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE
+};
 
 int mempool_min_alloc_size = PAGE_SIZE; // always allocate on mmap() boundary
 int mempool_host_memory_size = 32 * 1024 * 1024;
@@ -489,7 +510,7 @@ void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
 
 
 static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
-	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
+	     enum mem_location location, u32 channel, u32 region, u32 nc_id, mem_alloc_category_t mem_type,
 	     struct mem_chunk **result)
 {
 	struct mem_chunk *mc;
@@ -607,6 +628,7 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 	mc->ref_count = 1;
 	mc->lifespan = lifespan;
 	mc->caller_pc = __builtin_return_address(0);
+	mc->alloc_type = mem_type;
 	mc_add_to_lifespan_list(mc);
 
 	write_lock(&mpset->rblock);
@@ -615,11 +637,18 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 
 	if (location == MEM_LOC_HOST) {
 		mpset->host_mem_size += size;
-		nsysfsmetric_inc_counter(nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, nc_id, size);
+		nsysfsmetric_inc_counter(nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, nc_id, size, false);
 	} else {
 		mpset->device_mem_size += size;
-		nsysfsmetric_inc_counter(nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, nc_id, size);
+		nsysfsmetric_inc_counter(nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, nc_id, size, false);
 	}
+	if (!(mem_type >= 0 && mem_type < NEURON_MEMALLOC_TYPE_MAX)) {
+		pr_warn_once("Memory allocation of unexpected type %d\n", mem_type);
+		mem_type = (location == MEM_LOC_HOST) ? NEURON_MEMALLOC_TYPE_UNKNOWN_HOST : NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE;
+	}
+	int nc = (location == MEM_LOC_HOST) ? (-1) : (nc_id);
+	int counter = mem_alloc_type_to_sysfs_counter[mem_type];
+	nsysfsmetric_inc_counter(nd, NON_NDS_METRIC, counter, nc, size, false);
 
 	npid_add_allocated_memory(nd, location, size);
 exit:
@@ -631,16 +660,10 @@ exit:
 	return ret;
 }
 
-int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size,
-	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
-	     struct mem_chunk **result) {
-	return mc_alloc_internal(nd, lifespan, size, 0, location, channel, region, nc_id, result);
-}
-
 int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
-		   enum mem_location location, u32 channel, u32 region, u32 nc_id,
+		   enum mem_location location, u32 channel, u32 region, u32 nc_id, mem_alloc_category_t mem_type,
 		   struct mem_chunk **result) {
-	return mc_alloc_internal(nd, lifespan, size, align, location, channel, region, nc_id, result);
+	return mc_alloc_internal(nd, lifespan, size, align, location, channel, region, nc_id, mem_type, result);
 };
 
 void mc_inc_refcount(struct mem_chunk *mc)
@@ -670,6 +693,13 @@ void mc_free(struct mem_chunk **mcp)
 	write_lock(&mpset->rblock);
 	mc_remove_node(&mpset->root, mc);
 	write_unlock(&mpset->rblock);
+	mem_alloc_category_t mem_type = mc->alloc_type;
+	if (!(mem_type >= 0 && mem_type < NEURON_MEMALLOC_TYPE_MAX)) {
+		mem_type = (mc->mem_location == MEM_LOC_HOST) ? NEURON_MEMALLOC_TYPE_UNKNOWN_HOST : NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE;
+	}
+	int nc = (mc->mem_location == MEM_LOC_HOST) ? (-1) : (mc->nc_id);
+	int counter = mem_alloc_type_to_sysfs_counter[mem_type];
+	nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, counter, nc, mc->size, false);
 	if (mc->mem_location == MEM_LOC_HOST) {
 		if (mc->mp) {
 			gen_pool_free(mc->mp->gen_pool, (u64)mc->va, mc->size);
@@ -678,14 +708,14 @@ void mc_free(struct mem_chunk **mcp)
 			dma_free_coherent(mpset->pdev, mc->size, mc->va, mc->pa & ~ndhal->ndhal_address_map.pci_host_base);
 		}
 		mpset->host_mem_size -= mc->size;
-		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, mc->nc_id, mc->size);
+		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_HOST_MEM, mc->nc_id, mc->size, false);
 	} else if (mc->mem_location == MEM_LOC_DEVICE) {
 		struct mempool *mp;
 		mp = &mpset->mp_device[mc->dram_channel][mc->dram_region];
 		gen_pool_free(mp->gen_pool, (u64)mc->va, mc->size);
 		mp->allocated_size -= mc->size;
 		mpset->device_mem_size -= mc->size;
-		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, mc->nc_id, mc->size);
+		nsysfsmetric_dec_counter(mpset->nd, NON_NDS_METRIC, NON_NDS_COUNTER_DEVICE_MEM, mc->nc_id, mc->size, false);
 	} else {
 		BUG();
 	}

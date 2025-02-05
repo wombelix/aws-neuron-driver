@@ -60,6 +60,28 @@ struct neuron_dm_special_mmap_ent dm_mmap_special_v3[] = {
 	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 17, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
 	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 18, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
 	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 19, NEURON_DM_RESOURCE_SEMAPHORE, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_MMAP_NC_SEMA_SIZE),
+
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 6, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 7, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 8, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 9, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP1_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 10, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 11, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 12, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 13, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 14, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 15, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 16, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 17, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 18, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 19, NEURON_DM_RESOURCE_ALL, V3_TOP_SP_GRP2_BASE, V3_PCIE_BAR0_TOP_SP_0_OFFSET, V3_TOP_SP_SIZE, 0, V3_TOP_SP_SIZE),
 	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
 };
 
@@ -334,7 +356,7 @@ int ts_nq_init_v3(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type,
 		u32 nc_id = ts_id / V3_TS_PER_NC;
 
 		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
-				   dram_channel, dram_region, nc_id, &_mc);
+				   dram_channel, dram_region, nc_id, on_host_memory ? NEURON_MEMALLOC_TYPE_NOTIFICATION_HOST : NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE, &_mc);
 		if (ret)
 			return ret;
 		ts_nq_set_hwaddr_v3(nd, ts_id, eng_index, nq_type, size, _mc->pa);
@@ -513,7 +535,7 @@ int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct mempool_set
 			const dma_addr_t start_addr = device_dram_addr[channel] + (region * region_sz);
 			struct mem_chunk *mc = NULL;
 			u32 nc_id = channel;
-			ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, MEM_LOC_DEVICE, channel, region, nc_id, &mc);
+			ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, 0, MEM_LOC_DEVICE, channel, region, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_DEVICE, &mc);
 			if (ret) {
 				pr_err("failed to allocate hbm carevout region: ret=%d\n", ret);
 				return -ENOMEM;
@@ -671,23 +693,31 @@ void ndmar_set_model_started_v3(struct neuron_device *nd, phys_addr_t pa, struct
 
 
 /* FWIO Functions */
+
+/**
+ * neighbor id mapping
+ *    column is indexed by seng
+ *    row is indexed by device id
+ *    neighbor is reported from table by device id.
+ *    e.g. device 0, seng 0 neighbor is device 12
+ */
 const int trn2_32xl_neigbor_ids[16][4] = {
-	{12, 3, 4, 1},   // neuron device 0
-	{13, 0, 5, 2},   // neuron device 1
-	{14, 1, 6, 3},   // neuron device 2
-	{15, 2, 7, 0},   // neuron device 3
-	{0, 7, 8, 5},    // neuron device 4
-	{1, 4, 9, 6},    // neuron device 5
-	{2, 5, 10, 7},   // neuron device 6
-	{3, 6, 11, 4},   // neuron device 7
-	{4, 11, 12, 9},  // neuron device 8
-	{5, 8, 13, 10},  // neuron device 9
-	{6, 9, 14, 11},  // neuron device 10
-	{7, 10, 15, 8},  // neuron device 11
-	{8, 15, 0, 13},  // neuron device 12
-	{9, 12, 1, 14},  // neuron device 13
-	{10, 13, 2, 15}, // neuron device 14
-	{11, 14, 3, 12}  // neuron device 15
+	{12, 1, 3, 4},   // neuron device 0
+	{0, 13, 5, 2},   // neuron device 1
+	{14, 3, 1, 6},   // neuron device 2
+	{2, 15, 7, 0},   // neuron device 3
+	{8, 5, 7, 0},    // neuron device 4
+	{4, 9, 1, 6},    // neuron device 5
+	{10, 7, 5, 2},   // neuron device 6
+	{6, 11, 3, 4},   // neuron device 7
+	{4, 9, 11, 12},  // neuron device 8
+	{8, 5, 13, 10},  // neuron device 9
+	{6, 11, 9, 14},  // neuron device 10
+	{10, 7, 15, 8},  // neuron device 11
+	{0, 13, 15, 8},  // neuron device 12
+	{12, 1, 9, 14},  // neuron device 13
+	{2, 15, 13, 10}, // neuron device 14
+	{14, 3, 11, 12}  // neuron device 15
 };
 
 /**
@@ -1009,10 +1039,10 @@ static int neuron_pci_handle_dup_routing_id(void)
 // see internal documentation: TRN2-Discovery
 // map routing id to user id:
 static const u32 v3_routing_id_to_user_id[] = {
-	0,   4,  1,  5,
-	3,   7,  2,  6,
-	12,  8, 13,  9,
-	15, 11, 14, 10 };
+	0,	3,	4,	7,
+	12,	15,	8,	11,
+	1,	2,	5,	6,
+	13,	14,	9,	10 };
 
 #define V3_ROUTING_ID_TBL_SZ  (sizeof(v3_routing_id_to_user_id) / sizeof(v3_routing_id_to_user_id[0]))
 
@@ -1084,7 +1114,7 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 	int i;
 
 	for (i = 0; i < total_neuron_devices; i++) {
-		if (ndhal->pci_device_id == TRN1_DEVICE_ID0) {
+		if (ndhal->pci_device_id == TRN2_DEVICE_ID0) {
 			did_to_rid_map[neuron_pci_routing_id_to_user_id(i)] = i;
 		} else {
 			did_to_rid_map[i] = i;

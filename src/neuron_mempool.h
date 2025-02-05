@@ -126,6 +126,7 @@ struct mem_chunk {
 	u32 dram_channel; // DRAM channel
 	u32 dram_region; // TDRAM region
 	u32 nc_id; //neuron core index
+	mem_alloc_category_t alloc_type; // memory allocation category
 
 	enum mem_location mem_location; // location of memory - Host or Device
 
@@ -169,23 +170,6 @@ void mpset_destructor(struct mempool_set *mpset);
 struct mem_chunk *mpset_search_mc(struct mempool_set *mp, phys_addr_t pa);
 
 /**
- * mc_alloc() - Allocate a memory chunk of size from given mpset.
- *
- * @nd: neuron_device to which the mc should be associated
- * @lifespan: When the MC needs to be automatically freed(if not freed already).
- * @size: Allocation size
- * @location: Backing DRAM location(host/device)
- * @channel: Backing DRAM channel
- * @region: Region in the backing DRAM
- * @result: Buffer to store the allocated memory chunk pointer
- *
- * Return: 0 if allocation succeeds, a negative error code otherwise.
- */
-int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size,
-	     enum mem_location location, u32 channel, u32 region, u32 nc_id,
-	     struct mem_chunk **result);
-
-/**
  * mc_alloc_align() - Allocate a memory chunk of size from given mpset, with alignment
  *
  * @nd: neuron_device to which the mc should be associated
@@ -195,13 +179,15 @@ int mc_alloc(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size,
  * @location: Backing DRAM location(host/device)
  * @channel: Backing DRAM channel
  * @region: Region in the backing DRAM
+ * @mem_type: category of memory allocation (used for sysfs memory counters)
  * @result: Buffer to store the allocated memory chunk pointer
  *
  * Return: 0 if allocation succeeds, a negative error code otherwise.
  */
 int mc_alloc_align(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
-		   enum mem_location location, u32 channel, u32 region, u32 nc_id,
+		   enum mem_location location, u32 channel, u32 region, u32 nc_id, mem_alloc_category_t mem_type,
 		   struct mem_chunk **result);
+
 /**
  * mc_free() - Free memory chunk and associated backing memory.
  *

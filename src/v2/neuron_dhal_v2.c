@@ -33,6 +33,12 @@ struct neuron_dm_special_mmap_ent dm_mmap_special_v2[] = {
 	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
 	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
 	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_SEMAPHORE, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_MMAP_NC_SEMA_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 0, NEURON_DM_RESOURCE_ALL, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_TOP_SP_0_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 1, NEURON_DM_RESOURCE_ALL, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_TOP_SP_0_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 2, NEURON_DM_RESOURCE_ALL, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_TOP_SP_0_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 3, NEURON_DM_RESOURCE_ALL, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_TOP_SP_0_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 4, NEURON_DM_RESOURCE_ALL, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_TOP_SP_0_SIZE),
+	DM_SPECIAL_MM_ENT( NEURON_DM_BLOCK_TOPSP, 5, NEURON_DM_RESOURCE_ALL, V2_TOP_SP_0_BASE,   V2_PCIE_BAR0_TOPSP_0_OFFSET, V2_TOP_SP_0_SIZE, 0, V2_TOP_SP_0_SIZE),
 	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
 };
 
@@ -280,7 +286,7 @@ int ts_nq_init_v2(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type,
 		struct mem_chunk *_mc = NULL;
 		u32 nc_id = ts_id / (V2_TS_PER_DEVICE / V2_NC_PER_DEVICE);
 		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
-				   dram_channel, dram_region, nc_id, &_mc);
+				   dram_channel, dram_region, nc_id, on_host_memory ? NEURON_MEMALLOC_TYPE_NOTIFICATION_HOST : NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE, &_mc);
 		if (ret)
 			return ret;
 		ts_nq_set_hwaddr_v2(nd, ts_id, eng_index, nq_type, size, _mc->pa);
@@ -448,7 +454,7 @@ int mpset_block_carveout_regions_v2(struct neuron_device *nd, struct mempool_set
 			const dma_addr_t start_addr = device_dram_addr[channel] + (region * region_sz);
 			struct mem_chunk *mc = NULL;
 			u32 nc_id = channel;
-			ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, MEM_LOC_DEVICE, channel, region, nc_id, &mc);
+			ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, 0, MEM_LOC_DEVICE, channel, region, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_DEVICE, &mc);
 			if (ret) {
 				pr_err("failed to allocate hbm carevout region: ret=%d\n", ret);
 				return -ENOMEM;
@@ -958,7 +964,6 @@ static int neuron_pci_handle_dup_routing_id(void)
 // for V2 rename Neuron devices for better customer experience.
 // see internal documentation: TRN1-Discovery
 // map routing id to user id:
-// const u32 v2_routing_id_to_user_id[MAX_NEURON_DEVICE_COUNT] = { FIXME NEED NEW MAPPING
 static const u32 v2_routing_id_to_user_id[] = {
 	0,   4,  1,  5,
 	3,   7,  2,  6,

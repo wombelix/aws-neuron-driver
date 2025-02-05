@@ -19,8 +19,8 @@ int neuron_ds_init(struct neuron_datastore *nds, struct neuron_device *parent)
 	memset(nds->entries, 0, NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE * sizeof(struct neuron_datastore_entry));
 	mutex_init(&nds->lock);
 	for (idx = 0; idx < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; idx++) {
-		ret = mc_alloc(parent, MC_LIFESPAN_DEVICE, NEURON_DATASTORE_SIZE, MEM_LOC_HOST,
-			       0, 0, 0, &nds->entries[idx].mc);
+		ret = mc_alloc_align(parent, MC_LIFESPAN_DEVICE, NEURON_DATASTORE_SIZE, 0, MEM_LOC_HOST,
+			       0, 0, 0, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &nds->entries[idx].mc);
 		if (ret) {
 			pr_err("nds allocation failure for nd[%d]", parent->device_index);
 			return ret;

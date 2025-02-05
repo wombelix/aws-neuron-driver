@@ -87,7 +87,7 @@ int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 
 	if (mc == NULL || force_alloc_mem) {
 		struct mem_chunk *_mc = NULL;
 		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
-			       dram_channel, dram_region, nc_id, &_mc);
+			       dram_channel, dram_region, nc_id, on_host_memory ? NEURON_MEMALLOC_TYPE_NOTIFICATION_HOST : NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE, &_mc);
 		if (ret)
 			return ret;
 		ndhal->ndhal_nq.nnq_set_hwaddr(nd, nc_id, eng_index, nq_type, size, _mc->pa);

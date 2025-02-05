@@ -259,13 +259,13 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	if (ret)
 		goto fail_nds_resource;
 
-	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, NDMA_QUEUE_DUMMY_RING_SIZE, MEM_LOC_HOST, 0, 0, 0,
+	ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, NDMA_QUEUE_DUMMY_RING_SIZE, 0, MEM_LOC_HOST, 0, 0, 0, NEURON_MEMALLOC_TYPE_NCDEV_HOST,
 		       &nd->ndma_q_dummy_mc);
 	if (ret)
 		goto fail_nds_resource;
 
 	// allocate memset mc (if datastore succeeded)
-	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMSET_HOST_BUF_SIZE, MEM_LOC_HOST, 0, 0, 0,
+	ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, MEMSET_HOST_BUF_SIZE, 0, MEM_LOC_HOST, 0, 0, 0, NEURON_MEMALLOC_TYPE_NCDEV_HOST,
 		       &nd->memset_mc);
 	if (ret)
 		goto fail_memset_mc;

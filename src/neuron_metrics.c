@@ -82,6 +82,10 @@ enum nmetric_cw_id {
 	                                          // for reference look at "INFER_SUBTYPE_NONE" in
 	                                          // Runtime repo "tdrv/infer_error_subtype_int.c"
 	NMETRIC_CW_ID_NERR_OOB = 220,
+	NMETRIC_CW_ID_NERR_HW_ERR_COLLECTIVES = 221,
+	NMETRIC_CW_ID_NERR_HW_ERR_HBM_UE = 222,
+	NMETRIC_CW_ID_NERR_HW_ERR_NC_UE = 223,
+	NMETRIC_CW_ID_NERR_HW_ERR_DMA_ABORT = 224,
 	NMETRIC_CW_ID_FEATURE_BITMAP = 250,
 	NMETRIC_CW_ID_SYSFS_METRIC_BITMAP = 251,
 

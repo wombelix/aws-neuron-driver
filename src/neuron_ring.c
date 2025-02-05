@@ -269,13 +269,13 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 	ring->size = ring_size;
 	ring->has_compl = false;
 
-	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, ring_size, MEM_LOC_HOST, 0, 0, nc_id, &rx_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, ring_size, 0, MEM_LOC_HOST, 0, 0, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &rx_mc);
 	if (ret) {
 		pr_err("can't allocate rx queue for H2T - size %d\n", ring_size);
 		goto error;
 	}
 
-	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, ring_size, MEM_LOC_HOST, 0, 0, nc_id, &tx_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, ring_size, 0, MEM_LOC_HOST, 0, 0, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &tx_mc);
 	if (ret) {
 		pr_err("can't allocate tx queue for H2T - size %d\n", ring_size);
 		goto error;
@@ -284,7 +284,7 @@ int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 	ndmar_ring_set_mem_chunk(eng, qid, tx_mc, 0, NEURON_DMA_QUEUE_TYPE_TX);
 	ndmar_ring_set_mem_chunk(eng, qid, rx_mc, 0, NEURON_DMA_QUEUE_TYPE_RX);
 
-	ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, sizeof(u32) * 2 * NEURON_DMA_H2T_CTX_HANDLE_CNT, MEM_LOC_HOST, 0, 0, nc_id, &h2t_completion_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, sizeof(u32) * 2 * NEURON_DMA_H2T_CTX_HANDLE_CNT, 0, MEM_LOC_HOST, 0, 0, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &h2t_completion_mc);
 	if (ret) {
 		pr_err("can't allocate h2t_completion_mc memory for H2T\n");
 		goto error;

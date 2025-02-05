@@ -7,6 +7,7 @@
  *  see neuron_ioctl.h for all the operations that can be done this node.
  */
 
+#include "share/neuron_driver_shared.h"
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
 
 #include <linux/kernel.h>
@@ -18,6 +19,7 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/dma-buf.h>
+#include <linux/signal.h>
 
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
@@ -209,7 +211,7 @@ static int ncdev_dma_copy_descriptors(struct neuron_device *nd, void *param)
 	}
 
 	remaining = arg.num_descs * sizeof(union udma_desc);
-	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0, mc->nc_id, &src_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, 0, MEM_LOC_HOST, 0, 0, mc->nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
 	if (ret) {
 		ret = -ENOMEM;
 		goto out;
@@ -390,12 +392,17 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 			     sizeof(mem_alloc_arg));
 	if (ret)
 		return -EACCES;
-	if (mem_alloc_arg.host_memory)
+	mem_alloc_category_t mem_alloc_type;
+	if (mem_alloc_arg.host_memory) {
 		location = MEM_LOC_HOST;
-	else
+		mem_alloc_type = NEURON_MEMALLOC_TYPE_UNKNOWN_HOST;
+	}
+	else {
 		location = MEM_LOC_DEVICE;
-	ret = mc_alloc(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, location, mem_alloc_arg.dram_channel,
-		       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, &mc);
+		mem_alloc_type = NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE;
+	}
+	ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, 0, location, mem_alloc_arg.dram_channel,
+		       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, mem_alloc_type, &mc);
 	if (ret)
 		return ret;
 
@@ -410,36 +417,70 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 	return 0;
 }
 
-static int ncdev_mem_alloc_libnrt(struct neuron_device *nd, void *param)
+static int ncdev_mem_alloc_libnrt(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_mem_alloc_v2 mem_alloc_arg;
+	static_assert(sizeof(struct neuron_ioctl_mem_alloc_v2) != sizeof(struct neuron_ioctl_mem_alloc_v2_mem_type));
+
 	enum mem_location location;
 	u64 mh;
 	struct mem_chunk *mc;
 	int ret;
 
-	ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2 *)param,
+	if (_IOC_SIZE(cmd) == sizeof(struct neuron_ioctl_mem_alloc_v2)) {
+		struct neuron_ioctl_mem_alloc_v2 mem_alloc_arg;
+		ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2 *)param,
 			     sizeof(mem_alloc_arg));
-	if (ret)
-		return ret	;
-	if (mem_alloc_arg.host_memory)
-		location = MEM_LOC_HOST;
-	else
-		location = MEM_LOC_DEVICE;
-	ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, mem_alloc_arg.align, location, mem_alloc_arg.dram_channel,
-		       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, &mc);
-	if (ret)
-		return ret;
+		if (ret)
+			return ret;
+		mem_alloc_category_t mem_alloc_type;
+		if (mem_alloc_arg.host_memory) {
+			location = MEM_LOC_HOST;
+			mem_alloc_type = NEURON_MEMALLOC_TYPE_UNKNOWN_HOST;
+		} else {
+			location = MEM_LOC_DEVICE;
+			mem_alloc_type = NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE;
+		}
+		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, mem_alloc_arg.align, location, mem_alloc_arg.dram_channel,
+			       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, mem_alloc_type, &mc);
+		if (ret)
+			return ret;
 
-	trace_ioctl_mem_alloc(nd, mc);
+		trace_ioctl_mem_alloc(nd, mc);
 
-	mh = ncdev_mem_chunk_to_mem_handle(mc);
-	ret = copy_to_user(mem_alloc_arg.mem_handle, &mh, sizeof(mc));
-	if (ret) {
-		mc_free(&mc);
-		return ret;
+		mh = ncdev_mem_chunk_to_mem_handle(mc);
+		ret = copy_to_user(mem_alloc_arg.mem_handle, &mh, sizeof(mc));
+		if (ret) {
+			mc_free(&mc);
+			return ret;
+		}
+		return 0;
+	} else if (_IOC_SIZE(cmd) == sizeof(struct neuron_ioctl_mem_alloc_v2_mem_type)) {
+		struct neuron_ioctl_mem_alloc_v2_mem_type mem_alloc_arg;
+		ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2_mem_type *)param,
+			     sizeof(mem_alloc_arg));
+		if (ret)
+			return ret;
+		if (mem_alloc_arg.host_memory)
+			location = MEM_LOC_HOST;
+		else
+			location = MEM_LOC_DEVICE;
+		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, mem_alloc_arg.align, location, mem_alloc_arg.dram_channel,
+			       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, mem_alloc_arg.mem_type, &mc);
+		if (ret)
+			return ret;
+
+		trace_ioctl_mem_alloc(nd, mc);
+
+		mh = ncdev_mem_chunk_to_mem_handle(mc);
+		ret = copy_to_user(mem_alloc_arg.mem_handle, &mh, sizeof(mc));
+		if (ret) {
+			mc_free(&mc);
+			return ret;
+		}
+		return 0;
+	} else {
+		return -EINVAL;
 	}
-	return 0;
 }
 
 static int ncdev_mem_get_pa_deprecated(struct neuron_device *nd, void *param)
@@ -754,7 +795,7 @@ int ncdev_program_engine(struct neuron_device *nd, void *param)
 	if (ncdev_verify_mem_region(arg.dst))
 		return -ENOMEM;
 
-	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, arg.size, MEM_LOC_HOST, 0, 0, 0, &src_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, arg.size, 0, MEM_LOC_HOST, 0, 0, 0, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
 	if (ret) {
 		ret = -ENOMEM;
 		return ret;
@@ -789,9 +830,9 @@ int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
 	if (ncdev_verify_mem_region(arg.dst))
 		return -ENOMEM;
 
-	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, arg.size, MEM_LOC_HOST, 0, 0, arg.nc_id, &src_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, arg.size, 0, MEM_LOC_HOST, 0, 0, arg.nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
 	if (ret) {
-		pr_err("engine programming dma mc_alloc failed. nc_id: %d addr: %llu size: %u err: %d\n",arg.nc_id,  arg.dst + arg.offset, arg.size, ret);
+		pr_err("engine programming dma mc_alloc_align failed. nc_id: %d addr: %llu size: %u err: %d\n",arg.nc_id,  arg.dst + arg.offset, arg.size, ret);
 		ret = -ENOMEM;
 		return ret;
 	}
@@ -846,8 +887,8 @@ int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 		u32 offset = 0;
 		int remaining = arg.size;
 		u32 copy_size = 0;
-		ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, MEM_LOC_HOST, 0, 0,
-			       mc->nc_id, &src_mc);
+		ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, 0, MEM_LOC_HOST, 0, 0,
+			       mc->nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
 		if (ret) {
 			ret = -ENOMEM;
 			return ret;
@@ -1287,7 +1328,8 @@ static long ncdev_driver_info(unsigned int cmd, void *param)
 			driver_info.version = NEURON_DEVICE_DRIVER_INFO_VERSION0;
 			driver_info.size = sizeof(driver_info);
 			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA |
-										 NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT | NEURON_DRIVER_FEATURE_BIG_CORE_MAPS;
+										 NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT | NEURON_DRIVER_FEATURE_BIG_CORE_MAPS |
+										 NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE;
 
 			return copy_to_user(param, &driver_info, sizeof(driver_info));
 		}
@@ -1334,7 +1376,8 @@ static long ncdev_device_get_all_apps_info(struct neuron_device *nd, void *param
 
 		nc_lock_map = 0;
 		if (arg->apps_info_flags & APP_INFO_PID_NC_LOCK_INFO)
-			for (nc_index = 0; nc_index < MAX_NC_PER_DEVICE; nc_index++) {
+			// Note: this api uses APP_INFO_MAX_MODELS_PER_DEVICE as the max nc index (uuid_data[] array size limit)
+			for (nc_index = 0; nc_index < APP_INFO_MAX_MODELS_PER_DEVICE; nc_index++) {
 				mutex_lock(&nd->crwl[nc_index].lock);
 				if(nd->crwl[nc_index].writer_pid == proc_entry->pid && (
 				   nd->crwl[nc_index].writer_acquired ||
@@ -1864,8 +1907,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_dma_quiesce_queues(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC) {
 		return ncdev_mem_alloc(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_MEM_ALLOC_V2) {
-		return ncdev_mem_alloc_libnrt(nd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_ALLOC_V2MT)) {
+		return ncdev_mem_alloc_libnrt(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_EXTENDED_INFO) {
 		return ncdev_mem_get_extended_info((void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_GET_INFO) {
@@ -1964,6 +2007,13 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	// TODO: implement some better wait system than schedule()
 	while (nd->device_state == NEURON_DEVICE_STATE_RESET) {
 		schedule();
+		if (sigismember(&current->pending.signal, SIGTERM) || sigismember(&current->pending.signal, SIGKILL)) {
+			mutex_lock(&dev->ncdev_lock);
+			dev->open_count--;
+			mutex_unlock(&dev->ncdev_lock);
+			pr_info("Received termination signal during device open of nd%d while waiting for reset to complete", nd->device_index);
+			return -EINTR;
+		}
 	}
 	if (nd->device_state == NEURON_DEVICE_STATE_INVALID) {
 		mutex_lock(&dev->ncdev_lock);

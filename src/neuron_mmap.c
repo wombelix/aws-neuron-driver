@@ -31,7 +31,7 @@ int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 block_id,
 	return -EINVAL;
 }
 
-int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset)
+int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset, bool * readonly)
 {
 	struct neuron_dm_special_mmap_ent *ent = ndhal->ndhal_mmap.dm_mmap_special;
 
@@ -39,6 +39,8 @@ int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset)
 		if ((ent->offset == offset) && (ent->size == size)) { 
 			if (bar0_offset != NULL)
 				*bar0_offset = ent->bar0_offset;
+			if (readonly != NULL)
+				*readonly = (ent->resource ==  NEURON_DM_RESOURCE_ALL);
 			return 0;
 		}
 		ent++;
@@ -246,7 +248,7 @@ static struct mem_chunk *nmmap_get_mc(struct neuron_device *nd, struct vm_area_s
 	read_unlock(&nd->mpset.rblock);
 	if (mc == NULL) {
 		// if we couldn't find mc and it's not a special resource, kick out an error
-		if (nmap_dm_special_resource_addr_valid( offset, size, NULL))
+		if (nmap_dm_special_resource_addr_valid( offset, size, NULL, NULL))
 			pr_err("nd%d: mc not found for mmap()\n", nd->device_index);
 		return NULL;
 	}
@@ -343,14 +345,20 @@ static int nmap_dm_special(struct neuron_device *nd, struct vm_area_struct *vma)
 {
 	u64 start, size, offset;
 	int ret;
+	bool readonly;
 
 	start = vma->vm_pgoff << PAGE_SHIFT;
 	size = vma->vm_end - vma->vm_start;
 
 	// if its not in the special resource table, try mapping as root
 	//
-	if (nmap_dm_special_resource_addr_valid( start, size, &offset)) 
+	if (nmap_dm_special_resource_addr_valid( start, size, &offset, &readonly))
 		return nmmap_dm_root(nd, vma);
+	
+	if (readonly) {
+		vm_flags_clear(vma, VM_WRITE);
+		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
+	}
 
 	ret = io_remap_pfn_range(vma, vma->vm_start, (offset + nd->npdev.bar0_pa) >> PAGE_SHIFT,
 				  size, vma->vm_page_prot);  

@@ -212,7 +212,7 @@ static int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ri
 					completion.addr + DMA_COMPLETION_MARKER_SIZE,
 					DMA_COMPLETION_MARKER_SIZE, UDMA_M2M_BARRIER_NONE, false);
 	if (ret) {
-		pr_err("failed to prepare DMA descriptor for %s q%d\n", eng->udma.name, ring->qid);
+		pr_err("failed to prepare DMA descriptor on nd%02d for %s q%d\n", eng->nd->device_index, eng->udma.name, ring->qid);
 		ret = -1;
 		goto error;
 	}
@@ -268,7 +268,7 @@ static int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_rin
 		udelay(one_loop_sleep);
 	}
 	if (i > loop) {
-		pr_err("DMA completion timeout for %s q%d desc count %u\n", eng->udma.name, ring->qid, count);
+		pr_err("DMA completion timeout on nd%02d for %s q%d desc count %u\n", eng->nd->device_index, eng->udma.name, ring->qid, count);
 		ret = -1;
 		goto error;
 	}

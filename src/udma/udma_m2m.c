@@ -418,7 +418,7 @@ int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count
 	return ret;
 }
 
-// for more info, reference the ticket system NRT-315
+// for more info, reference the ticket system NRT-315 and NRT-2619
 void udma_m2m_set_axi_error_abort(struct udma *udma)
 {
 	unsigned int i, q;
@@ -429,6 +429,9 @@ void udma_m2m_set_axi_error_abort(struct udma *udma)
 		reg_write32(&gen_regs->axi_error_detection_table[i].addr1, 0xf);
 		reg_write32(&gen_regs->axi_error_detection_table[i].addr2, 0xf);
 		reg_write32(&gen_regs->axi_error_detection_table[i].addr3, 0xf);
+		reg_write32(&gen_regs->axi_error_detection_table[i].addr9, 0xf);
+		reg_write32(&gen_regs->axi_error_detection_table[i].addr10, 0xf);
+		reg_write32(&gen_regs->axi_error_detection_table[i].addr11, 0xf);
 	}
 
 	// step 2: program axi error control
@@ -447,5 +450,8 @@ void udma_m2m_set_axi_error_abort(struct udma *udma)
 	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_s2m_desc_rd, 0xffffffff);
 	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_s2m_data_wr, 0xffffffff);
 	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_s2m_cmpl_wr, 0xffffffff);
+
+	// step 4: update dma timeout config
+	reg_write32(&udma->gen_axi_regs->cfg_1, 0xffffffff);
 }
 

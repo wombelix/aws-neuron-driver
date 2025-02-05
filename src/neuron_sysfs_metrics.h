@@ -37,6 +37,26 @@ enum nsysfsmetric_metric_id_category {
 enum nsysfsmetric_non_nds_ids {  // The metrics needed by sysfs metrics but not stored in datastore
     NON_NDS_COUNTER_HOST_MEM,
     NON_NDS_COUNTER_DEVICE_MEM,
+
+    NON_NDS_ND_COUNTER_MEM_USAGE_UNCATEGORIZED_HOST, // for old runtimes only
+    NON_NDS_ND_COUNTER_MEM_USAGE_CODE_HOST,
+    NON_NDS_ND_COUNTER_MEM_USAGE_TENSORS_HOST,
+    NON_NDS_ND_COUNTER_MEM_USAGE_CONSTANTS_HOST,
+    NON_NDS_ND_COUNTER_MEM_USAGE_MISC_HOST,
+    NON_NDS_ND_COUNTER_MEM_USAGE_NCDEV_HOST,
+    NON_NDS_ND_COUNTER_MEM_USAGE_NOTIFICATION_HOST,
+
+    NON_NDS_NC_COUNTER_MEM_USAGE_UNCATEGORIZED_DEVICE, // for old runtimes only
+    NON_NDS_NC_COUNTER_MEM_USAGE_CODE_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_TENSORS_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_CONSTANTS_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_MISC_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_NCDEV_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_COLLECTIVES_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_NONSHARED_DEVICE,
+    NON_NDS_NC_COUNTER_MEM_USAGE_NOTIFICATION_DEVICE,
+
     NON_NDS_COUNTER_RESET_REQ_COUNT,
     NON_NDS_COUNTER_RESET_FAIL_COUNT,
     NON_NDS_COUNTER_MODEL_LOAD_COUNT,
@@ -77,10 +97,11 @@ struct nsysfsmetric_node { // represent a subdirectory in sysfs
 struct nsysfsmetric_metrics { // per neuron_device
     struct nsysfsmetric_node root; // represent the neuron device
     struct nsysfsmetric_node *dynamic_metrics_dirs[MAX_NC_PER_DEVICE];
-    struct nsysfsmetric_counter nrt_metrics[MAX_METRIC_ID][MAX_NC_PER_DEVICE]; // runtime metrics, indiced by metric_id and nc_id
+    struct nsysfsmetric_counter nrt_metrics[MAX_METRIC_ID][MAX_NC_PER_DEVICE]; // runtime metrics per NC, indiced by metric_id and nc_id
+    struct nsysfsmetric_counter nrt_nd_metrics[MAX_METRIC_ID]; // runtime metrics for whole ND, indiced by metric_id
+    // nc_id should be -1 to use nrt_nd_metrics, and should be a valid neuron core ID to use nrt_metrics
     struct nsysfsmetric_counter dev_metrics[MAX_METRIC_ID]; // TODO: the device metrics
     uint64_t bitmap; // store the dynamic metrics to be added
-    struct sysfs_mem_thread mem_thread; // keep fetching memory breakdown from datastore
 };
 
 typedef struct nsysfsmetric_attr_info {
@@ -146,28 +167,46 @@ void nsysfsmetric_nds_aggregate(struct neuron_device *nd, struct neuron_datastor
  * @param nd: The pointer to the neuron_device
  * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
  * @param id: the index that represents the counter. It can be a ds id or non ds id
- * @param nc_id: the neuron core id
+ * @param nc_id: the neuron core id (or -1 if it is a counter for whole ND)
  * @param delta: the amount to be incremented
+ * @param acquire_lock: whether to acquire lock while incrementing counter. It must be true except as an
+ * optimization when all calls to nsysfsmetric_[inc/dec/set]_counter for a counter are already protected by a lock.
  */
-void nsysfsmetric_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
+void nsysfsmetric_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta, bool acquire_lock);
 
 /**
  * nsysfsmetric_dec_counter() - Decrement the counter with metric_id for neuron_device nd and neuron core nc_id by delta
  * 
  * @param nd: The pointer to the neuron_device
  * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
- * @param id: the index that represents the counter. It can be a ds id or non ds id * @param nc_id: the neuron core id
+ * @param id: the index that represents the counter. It can be a ds id or non ds id
+ * @param nc_id: the neuron core id (or -1 if it is a counter for whole ND)
  * @param delta: the amount to be decremented
+ * @param acquire_lock: whether to acquire lock while decrementing counter. It must be true except as an
+ * optimization when all calls to nsysfsmetric_[inc/dec/set]_counter for a counter are already protected by a lock.
  */
-void nsysfsmetric_dec_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
+void nsysfsmetric_dec_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta, bool acquire_lock);
 
 /**
  * nsysfsmetric_inc_reset_req_count() - Increment the RESET_COUNT metrics
  * 
  * @param nd: The pointer to the neuron_device 
- * @param nc_id: the neuron core id
+ * @param nc_id: the neuron core id (or -1 if it is a counter for whole ND)
  */
 void nsysfsmetric_inc_reset_req_count(struct neuron_device *nd, int nc_id);
+
+/**
+ * nsysfsmetric_set_counter() - Set the counter with metric_id for neuron_device nd and neuron core nc_id to val
+ *
+ * @param nd: The pointer to the neuron_device
+ * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
+ * @param id: the index that represents the counter. It can be a ds id or non ds id
+ * @param nc_id: the neuron core id (or -1 if it is a counter for whole ND)
+ * @param val: the value the counter should be set to
+ * @param acquire_lock: whether to acquire lock while setting counter. It must be true except as an
+ * optimization when all calls to nsysfsmetric_[inc/dec/set]_counter for a counter are already protected by a lock.
+ */
+void nsysfsmetric_set_counter(struct neuron_device *nd, int metric_id_category, int metric_id, int nc_id, u64 val, bool acquire_lock);
 
 /**
  * nsysfsmetric_inc_reset_fail_count() - Increment the NON_NDS_COUNTER_RESET_FAIL_COUNT metrics
@@ -175,5 +214,6 @@ void nsysfsmetric_inc_reset_req_count(struct neuron_device *nd, int nc_id);
  * @param nd: The pointer to the neuron_device
  */
 void nsysfsmetric_inc_reset_fail_count(struct neuron_device *nd);
+
 
 #endif

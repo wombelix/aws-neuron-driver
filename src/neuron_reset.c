@@ -13,6 +13,7 @@
 #include <linux/device.h>
 #include <linux/kthread.h>
 #include <linux/mutex.h>
+#include <linux/signal.h>
 
 #include "neuron_ioctl.h"
 #include "neuron_device.h"
@@ -27,7 +28,9 @@ MODULE_PARM_DESC(no_reset, "Dont reset device");
 #define NR_RESET_INIT_PRE_WAIT_TIME_MS 7000
 #define NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS 3000
 #define NR_RESET_INIT_PRE_WAIT_TIME_INC_MS 2000
-#define NR_RESET_INIT_RETRY_COUNT 5 
+
+#define NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS (NR_RESET_INIT_PRE_WAIT_TIME_INC_MS * 5)
+#define NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 120)
 
 int nr_msleep_stoppable(struct neuron_device *nd, uint32_t msec) 
 {
@@ -57,10 +60,13 @@ static int nr_reset_thread_fn(void *arg)
 		if (ret) {
 			state = NEURON_RESET_STATE_FAILED;
 			nsysfsmetric_inc_reset_fail_count(nd);
+			pr_info("nd%d: reset request %u failed\n", nd->device_index, req->request_id);
 		} else {
+			// If the reset was successfully initiated the 
+			// response we get back is a pass/fail and we don't need to retry.
 			ret = ndhal->ndhal_reset.nr_wait_for_reset_completion(nd);
 			if (ret) {
-				pr_info("nd%d: device didnt come out reset\n", nd->device_index);
+				pr_info("nd%d: reset request %u was initiated, but failed to complete\n", nd->device_index, req->request_id);
 				state = NEURON_RESET_STATE_FAILED;
 				nsysfsmetric_inc_reset_fail_count(nd);
 			} else {
@@ -248,6 +254,11 @@ int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check)
 	// improve this to a per-request semaphore or a wait_queue
 	while (req->ret == NEURON_RESET_STATE_STARTED) {
 		schedule(); // yield to other processes
+
+		if (sigismember(&current->pending.signal, SIGTERM) || sigismember(&current->pending.signal, SIGKILL)) {
+			pr_info("Received termination signal while waiting for reset request id %u", request_id);
+			return -EINTR;
+		}
 	}
 	mutex_lock(&nd->nr.nr_lock);
 	// Remove from list
@@ -284,29 +295,33 @@ bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd)
 	return false;
 }
 
-int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map) {
-    int i, j;
+int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map)
+{
+	int i;
+	ktime_t start_time;
 
-    /* Wait times are different for device reset vs nc reset (aka tpb reset) */
-    uint32_t reset_init_retry_wait_time = (nc_map == NEURON_NC_MAP_DEVICE ? NR_RESET_INIT_PRE_WAIT_TIME_MS : NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS);
+	/* Wait times are different for device reset vs nc reset (aka tpb reset) */
+	uint32_t reset_init_retry_wait_time = (nc_map == NEURON_NC_MAP_DEVICE ? NR_RESET_INIT_PRE_WAIT_TIME_MS : NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS);
+	uint32_t reset_inc = 0;
 
-    for (i = 0; i < NR_RESET_INIT_RETRY_COUNT; i++) {
-        fw_io_initiate_reset(nd->npdev.bar0, nc_map == NEURON_NC_MAP_DEVICE, tpb_reset_map);
-        // once reset is initiated, FWIO wont respond until the device
-        // comes out of reset, so sleep here for sometime
-        if (nr_msleep_stoppable(nd, reset_init_retry_wait_time))
-            return -1;
-        for (j = 0; j < ndhal->ndhal_reset.retry_count; j++) {
-            if (fw_io_is_reset_initiated(nd->npdev.bar0))
-                return 0;
-            if (nd->nr.stop)
-                return -1;
-        }
-        reset_init_retry_wait_time += NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
-    }
-    if (i == NR_RESET_INIT_RETRY_COUNT) {
-        return -1;
-    }
+	start_time = ktime_get();
 
-    return 0;
+	do {
+		fw_io_initiate_reset(nd->npdev.bar0, nc_map == NEURON_NC_MAP_DEVICE, tpb_reset_map);
+		// once reset is initiated, FWIO wont respond until the device
+		// comes out of reset, so sleep here for sometime
+		if (nr_msleep_stoppable(nd, reset_init_retry_wait_time + reset_inc))
+			return -1;
+		for (i = 0; i < ndhal->ndhal_reset.retry_count; i++) {
+			if (fw_io_is_reset_initiated(nd->npdev.bar0))
+				return 0;
+			if (nd->nr.stop)
+				return -1;
+		}
+
+		reset_inc = (reset_inc >= NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS) ? NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS : reset_inc + NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
+
+	} while (ktime_to_ms(ktime_sub(ktime_get(), start_time)) < NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS);
+
+	return -1;
 }
