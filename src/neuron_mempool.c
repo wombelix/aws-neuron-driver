@@ -613,9 +613,11 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 			mc->va = (void *)gen_pool_alloc_algo(mp->gen_pool, size,
 							     gen_pool_first_fit_align, &align_data);
 			mc->pa = gen_pool_virt_to_phys(mp->gen_pool, (unsigned long) mc->va);
-			if (((align-1) & mc->pa) != 0){
-				pr_err("internal error, aligned memory allocation failed!\n");
-				gen_pool_free(mp->gen_pool, (unsigned long)mc->va, size);
+			if ((((align-1) & mc->pa) != 0) || mc->va == NULL){
+				pr_err("Aligned memory allocation failed! size: 0x%llx, alignmnet: 0x%llx\n", size, align);
+				if (mc->va != NULL) {
+					gen_pool_free(mp->gen_pool, (unsigned long)mc->va, size);
+				}
 				ret = -ENOMEM;
 				goto exit;
 			}

@@ -16,10 +16,10 @@
 
 MODULE_DESCRIPTION("Neuron Driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.3.3.0");
+MODULE_VERSION("2.3.11.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.3.3.0-e321eb4eab13e172eda334c7d8feda20ded7517a";
+const char driver_version[] = "2.3.11.0-305e38a169896b63951ed35d1cd67214d64de3ae";
 
 extern int ncdev_module_init(void);
 extern void ncdev_module_exit(void);

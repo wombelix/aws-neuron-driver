@@ -1225,7 +1225,9 @@ static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
 // TODO the driver might need to return different sets on different
 // architectures.
 #define RT_MIN_COMPATIBLE_VERSION 2
-#define RT_MAX_COMPATIBLE_VERSION 3 // version 3 of runtime requires 1) aligned memory allocation support  2) SPROT
+// version 3 of runtime requires 1) aligned memory allocation support  2) SPROT
+// version 4 of the runtime requires support for DMA queue init w/o already allocated rings. (2.7)
+#define RT_MAX_COMPATIBLE_VERSION 4
 
 static long ncdev_compatible_version(void *param)
 {
