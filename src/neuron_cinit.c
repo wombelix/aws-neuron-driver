@@ -63,17 +63,22 @@ void nci_set_state(struct neuron_device *nd, u32 nc_id, u32 state, u32 *new_stat
 	return;
 }
 
-void nci_reset_state(struct neuron_device *nd)
+void nci_reset_state_nc(struct neuron_device *nd, u32 nc_id)
 {
-	int i;
 	struct neuron_cinit *nci;
 	u32 current_state;
 
+	nci = &nd->nci[nc_id];
+	mutex_lock(&nci->nci_lock);
+	current_state = nci->state;
+	nci->state = NEURON_CINIT_STATE_INVALID;
+	mutex_unlock(&nci->nci_lock);
+}
+
+void nci_reset_state(struct neuron_device *nd)
+{
+	int i;
 	for (i = 0; i < MAX_NC_PER_DEVICE; i++) {
-		nci = &nd->nci[i];
-		mutex_lock(&nci->nci_lock);
-		current_state = nci->state;
-		nci->state = NEURON_CINIT_STATE_INVALID;
-		mutex_unlock(&nci->nci_lock);
+		nci_reset_state_nc(nd, i);
 	}
 }

@@ -2,13 +2,13 @@
 %{?!version: %{error: You did not specify a module version (%%version)}}
 %{?!kernel_versions: %{error: You did not specify kernel versions (%%kernel_version)}}
 %{?!packager: %define packager DKMS <dkms-devel@lists.us.dell.com>}
-%{?!license: %define license Unknown}
+%{?!license: %define license GPL-2.0}
 %{?!_dkmsdir: %define _dkmsdir /var/lib/dkms}
 %{?!_srcdir: %define _srcdir %_prefix/src}
 %{?!_datarootdir: %define _datarootdir %{_datadir}}
 
 Summary:	%{module_name} %{version} dkms package
-Name:		aws-neuron-dkms
+Name:		aws-neuronx-dkms
 Version:	%{version}
 License:	%license
 Release:	dkms
@@ -17,6 +17,7 @@ Group:		System/Kernel
 Requires: 	dkms >= 1.95
 BuildRequires: 	dkms
 BuildRoot: 	%{_tmppath}/%{name}-%{version}-%{release}-root/
+Conflicts:  aws-neuron-dkms
 
 %description
 Kernel modules for %{module_name} %{version} in a DKMS wrapper.

@@ -402,3 +402,11 @@ void udma_iofic_s2m_error_ints_unmask(struct udma *udma)
 
 	udma_iofic_unmask_adv(udma, UDMA_IOFIC_LEVEL_PRIMARY, INT_GROUP_D, primary_grp_mask);
 }
+
+void udma_iofic_error_ints_unmask_one(struct iofic_grp_ctrl *iofic_ctrl, uint32_t mask)
+{
+	iofic_config(iofic_ctrl, 0, INT_CONTROL_GRP_SET_ON_POSEDGE | INT_CONTROL_GRP_MASK_MSI_X);
+	iofic_abort_mask_clear(iofic_ctrl, 0, mask);
+	iofic_unmask(iofic_ctrl, 0, mask);
+}
+

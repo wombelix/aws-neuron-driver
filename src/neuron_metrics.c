@@ -18,7 +18,7 @@
 #include "neuron_metrics.h"
 #include "neuron_device.h"
 
-unsigned int nmetric_metric_post_delay = 300000; // milliseconds
+unsigned int nmetric_metric_post_delay = 150000; // milliseconds
 unsigned int nmetric_log_posts = 0;
 
 module_param(nmetric_metric_post_delay, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -28,19 +28,12 @@ module_param(nmetric_log_posts, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nmetric_log_posts, "If true, metrics will be logged instead of sent to fw");
 
 static int nmetric_counters_buf_size = sizeof(u64) * NMETRIC_COUNTER_COUNT;
-static int nmetric_versions_buf_size = sizeof(struct nmetric_versions);
+static int nmetric_versions_buf_size = sizeof(struct nmetric_versions) * NMETRIC_VERSION_COUNT;
 static int nmetric_constants_buf_size = sizeof(char) * NMETRIC_CONSTANTS_COUNT * (NEURON_METRICS_VERSION_STRING_MAX_LEN + 1);
 
 static char nmetric_constant_metrics[NMETRIC_CONSTANTS_COUNT][NEURON_METRICS_VERSION_STRING_MAX_LEN + 1];
 static const char nmetric_instance_id_path[] = "/sys/devices/virtual/dmi/id/board_asset_tag";
 extern const char driver_version[];
-
-
-enum nmetric_metric_type {
-	COUNTER = 0, // counter type metrics
-	VERSION = 1, // version type metrics
-	CONSTANT = 2 // constant type metrics (relative to device)
-};
 
 enum nmetric_cw_id {
 	NMETRIC_CW_ID_UNUSED = 0,
@@ -53,9 +46,19 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_RT_VERSION_BASE = 180, // base id for rt version
 	NMETRIC_CW_ID_RT_VERSION_0 = NMETRIC_CW_ID_RT_VERSION_BASE,
 	NMETRIC_CW_ID_RT_VERSION_1,
-	NMETRIC_CW_ID_RT_VERSION_2,
-	NMETRIC_CW_ID_RT_VERSION_3,
-	NMETRIC_CW_ID_RT_VERSION_LAST = NMETRIC_CW_ID_RT_VERSION_3, // inclusive of last version
+	NMETRIC_CW_ID_RT_VERSION_LAST = NMETRIC_CW_ID_RT_VERSION_1, // inclusive of last version
+
+	NMETRIC_CW_ID_FW_VERSION_BASE = 190,
+	NMETRIC_CW_ID_FW_VERSION_0 = NMETRIC_CW_ID_FW_VERSION_BASE,
+	NMETRIC_CW_ID_FW_TYPE_0,
+	NMETRIC_CW_ID_FW_VERSION_1,
+	NMETRIC_CW_ID_FW_TYPE_1,
+	NMETRIC_CW_ID_FW_VERSION_LAST = NMETRIC_CW_ID_FW_TYPE_1,
+
+	NMETRIC_CW_ID_FAL_VERSION_BASE = 195,
+	NMETRIC_CW_ID_FAL_VERSION_0 = NMETRIC_CW_ID_FAL_VERSION_BASE,
+	NMETRIC_CW_ID_FAL_VERSION_1,
+	NMETRIC_CW_ID_FAL_VERSION_LAST = NMETRIC_CW_ID_FAL_VERSION_1,
 
 	// Return codes
 	NMETRIC_CW_ID_NERR_OK = 200, // status ok
@@ -77,7 +80,52 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR = 219, // generic notification error
 	                                          // for reference look at "INFER_SUBTYPE_NONE" in
 	                                          // KaenaRuntime repo "tdrv/infer_error_subtype_int.c"
+	
+	NMETRIC_CW_ID_FEATURE_BITMAP = 250
 };
+
+static const nmetric_def_t nmetric_defs[] = {
+	// constant metrics
+	NMETRIC_CONSTANT_DEF(0, POST_TIME_ALWAYS, NMETRIC_CW_ID_INSTANCE_ID), // instance id
+	NMETRIC_CONSTANT_DEF(1, POST_TIME_ALWAYS, NMETRIC_CW_ID_DRIVER_VERSION), // driver version
+
+	// version metrics
+	NMETRIC_VERSION_DEF(0, POST_TIME_ALWAYS, NMETRIC_CW_ID_RT_VERSION_BASE, NDS_ND_COUNTER_RUNTIME_VERSION, 0), // rt version
+	NMETRIC_VERSION_DEF(1, POST_TIME_TICK_1, NMETRIC_CW_ID_FW_VERSION_BASE, NDS_ND_COUNTER_FRAMEWORK_VERSION, NMETRIC_FLAG_VERS_ALLOW_TYPE), // fw version
+	NMETRIC_VERSION_DEF(2, POST_TIME_TICK_1, NMETRIC_CW_ID_FAL_VERSION_BASE, NDS_ND_COUNTER_FAL_VERSION, 0), // fal version
+
+	// counter metrics
+	NMETRIC_COUNTER_DEF(0, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_OK, NDS_NC_COUNTER_INFER_COMPLETED),
+	NMETRIC_COUNTER_DEF(1, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_FAIL, NDS_NC_COUNTER_GENERIC_FAIL),
+	NMETRIC_COUNTER_DEF(2, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_TIMEOUT, NDS_NC_COUNTER_INFER_TIMED_OUT),
+	NMETRIC_COUNTER_DEF(3, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_INFER_BAD_INPUT, NDS_NC_COUNTER_INFER_INCORRECT_INPUT),
+	NMETRIC_COUNTER_DEF(4, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_NUMERICAL_ERR, NDS_NC_COUNTER_ERR_NUMERICAL),
+	NMETRIC_COUNTER_DEF(5, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_MODEL_ERR, NDS_NC_COUNTER_ERR_MODEL),
+	NMETRIC_COUNTER_DEF(6, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_TRANSIENT_ERR, NDS_NC_COUNTER_ERR_TRANSIENT),
+	NMETRIC_COUNTER_DEF(7, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_HW_ERROR, NDS_NC_COUNTER_ERR_HW),
+	NMETRIC_COUNTER_DEF(8, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_RT_ERR, NDS_NC_COUNTER_ERR_RT),
+	NMETRIC_COUNTER_DEF(9, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_ERR, NDS_NC_COUNTER_INFER_COMPLETED_WITH_ERR),
+	NMETRIC_COUNTER_DEF(10, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_NUM_ERR, NDS_NC_COUNTER_INFER_COMPLETED_WITH_NUM_ERR),
+	NMETRIC_COUNTER_DEF(11, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR, NDS_NC_COUNTER_ERR_GENERIC),
+	NMETRIC_COUNTER_DEF(12, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_RESOURCE, NDS_NC_COUNTER_ERR_RESOURCE),
+	NMETRIC_COUNTER_DEF(13, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_RESOURCE_NC, NDS_NC_COUNTER_ERR_RESOURCE_NC),
+	NMETRIC_COUNTER_DEF(14, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_QUEUE_FULL, NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE),
+	NMETRIC_COUNTER_DEF(15, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_INVALID, NDS_NC_COUNTER_ERR_INVALID),
+	NMETRIC_COUNTER_DEF(16, POST_TIME_TICK_0, NMETRIC_CW_ID_NERR_UNSUPPORTED_VERSION, NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION),
+	// special counter metric case
+	NMETRIC_DEF(17, NMETRIC_TYPE_FW_IO_ERR, 1, POST_TIME_TICK_0, NMETRIC_CW_ID_FW_IO_ERROR_COUNT, 0xFF, 0),
+
+	// bitmap metrics
+	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_FEATURE_BITMAP, NDS_ND_COUNTER_FEATURE_BITMAP)
+};
+static const int nmetric_count = sizeof(nmetric_defs) / sizeof(nmetric_def_t);
+
+// IMPORTANT !!!
+// If adding entries to nmetric_def_t, make sure the #defines below are still valid
+// AND don't forget to increase the NMETRIC_..._COUNT in neuron_metrics.h
+#define NMETRIC_INSTANCE_ID_IDX		0
+#define NMETRIC_DRIVER_VERS_IDX 	1
+#define NMETRIC_FW_IO_ERR_IDX		(nmetric_count - 1)
 
 struct nmetric_cw_metric {
 	u8 id;
@@ -85,164 +133,35 @@ struct nmetric_cw_metric {
 	u8 data[];
 } __attribute__((__packed__));
 
-union nmetric_version {
-	struct {
-		u64 build_num : 32;
-		u64 minor_ver : 8;
-		u64 major_ver : 8;
-		u64 reserved : 16;
-	};
-	u64 all;
-};
-
 /**
- * nmetric_id_to_ds_index() - Converts metric aggregation internal datastucture metric id to index of metric in datastore
+ * nmetric_init_constants_metrics() - Reads constants from their various sources
  *
- * @internal_metric_id: index of metric inside internal data structure 
- * @metric_type: type of metric being converted
- *
- * Returns corresponding datastore index, -1 if no mapping exists
  */
-static int nmetric_id_to_ds_index(int internal_metric_id, enum nmetric_metric_type metric_type)
-{
-	if (metric_type == COUNTER) {
-		switch (internal_metric_id) {
-		case NMETRIC_NERR_INFER_OK:
-			return NDS_NC_COUNTER_INFER_COMPLETED;
-		case NMETRIC_NERR_GENERIC_FAIL:
-			return NDS_NC_COUNTER_GENERIC_FAIL;
-		case NMETRIC_TIMED_OUT:
-			return NDS_NC_COUNTER_INFER_TIMED_OUT;
-		case NMETRIC_BAD_INPUT:
-			return NDS_NC_COUNTER_INFER_INCORRECT_INPUT;
-		case NMETRIC_NUM_ERR:
-			return NDS_NC_COUNTER_ERR_NUMERICAL;
-		case NMETRIC_MODEL_ERR:
-			return NDS_NC_COUNTER_ERR_MODEL;
-		case NMETRIC_TRANSIENT_ERR:
-			return NDS_NC_COUNTER_ERR_TRANSIENT;
-		case NMETRIC_HW_ERR:
-			return NDS_NC_COUNTER_ERR_HW;
-		case NMETRIC_RT_ERR:
-			return NDS_NC_COUNTER_ERR_RT;
-		case NMETRIC_COMPLETED_WITH_ERR:
-			return NDS_NC_COUNTER_INFER_COMPLETED_WITH_ERR;
-		case NMETRIC_COMPLETED_WITH_NUMERIC_ERR:
-			return NDS_NC_COUNTER_INFER_COMPLETED_WITH_NUM_ERR;
-		case NMETRIC_NERR_GENERIC_TPB_ERR:
-			return NDS_NC_COUNTER_ERR_GENERIC;
-		case NMETRIC_NERR_RESOURCE:
-			return NDS_NC_COUNTER_ERR_RESOURCE;
-		case NMETRIC_NERR_RESOURCE_NC:
-			return NDS_NC_COUNTER_ERR_RESOURCE_NC;
-		case NMETRIC_NERR_QUEUE_FULL:
-			return NDS_NC_COUNTER_INFER_FAILED_TO_QUEUE;
-		case NMETRIC_NERR_INVALID:
-			return NDS_NC_COUNTER_ERR_INVALID;
-		case NMETRIC_NERR_UNSUPPORTED_NEFF:
-			return NDS_NC_COUNTER_ERR_UNSUPPORTED_NEFF_VERSION;
-		}
-	} else if (metric_type == VERSION) {
-		switch (internal_metric_id) {
-		case NMETRIC_RT_VERSION:
-			return NDS_ND_COUNTER_RUNTIME_VERSION;
-		}
-	}
-
-	return -1; // invalid id
-}
-
-/**
- * nmetric_id_to_cw_id() - Converts metric aggregation internal datastucture metric id to cloudwatch recognized index for metric
- *
- * @internal_metric_id: index of metric inside internal data structure 
- * @metric_type: type of metric being converted
- *
- * Returns corresponding cloudwatch index, 0 if no mapping exists
- */
-static enum nmetric_cw_id nmetric_id_to_cw_id(int internal_metric_id, enum nmetric_metric_type metric_type)
-{
-	if (metric_type == COUNTER) {
-		switch (internal_metric_id) {
-		case NMETRIC_NERR_INFER_OK:
-			return NMETRIC_CW_ID_NERR_OK;
-		case NMETRIC_NERR_GENERIC_FAIL:
-			return NMETRIC_CW_ID_NERR_FAIL;
-		case NMETRIC_TIMED_OUT:
-			return NMETRIC_CW_ID_NERR_TIMEOUT;
-		case NMETRIC_BAD_INPUT:
-			return NMETRIC_CW_ID_NERR_INFER_BAD_INPUT;
-		case NMETRIC_NUM_ERR:
-			return NMETRIC_CW_ID_NERR_NUMERICAL_ERR;
-		case NMETRIC_MODEL_ERR:
-			return NMETRIC_CW_ID_NERR_MODEL_ERR;
-		case NMETRIC_TRANSIENT_ERR:
-			return NMETRIC_CW_ID_NERR_TRANSIENT_ERR;
-		case NMETRIC_HW_ERR:
-			return NMETRIC_CW_ID_NERR_HW_ERROR;
-		case NMETRIC_RT_ERR:
-			return NMETRIC_CW_ID_NERR_RT_ERR;
-		case NMETRIC_COMPLETED_WITH_ERR:
-			return NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_ERR;
-		case NMETRIC_COMPLETED_WITH_NUMERIC_ERR:
-			return NMETRIC_CW_ID_NERR_INFER_COMPLETED_WITH_NUM_ERR;
-		case NMETRIC_NERR_GENERIC_TPB_ERR:
-			return NMETRIC_CW_ID_NERR_GENERIC_TPB_ERR;
-		case NMETRIC_NERR_RESOURCE:
-			return NMETRIC_CW_ID_NERR_RESOURCE;
-		case NMETRIC_NERR_RESOURCE_NC:
-			return NMETRIC_CW_ID_NERR_RESOURCE_NC;
-		case NMETRIC_NERR_QUEUE_FULL:
-			return NMETRIC_CW_ID_NERR_QUEUE_FULL;
-		case NMETRIC_NERR_INVALID:
-			return NMETRIC_CW_ID_NERR_INVALID;
-		case NMETRIC_NERR_UNSUPPORTED_NEFF:
-			return NMETRIC_CW_ID_NERR_UNSUPPORTED_VERSION;
-		case NMETRIC_FW_IO_ERR:
-			return NMETRIC_CW_ID_FW_IO_ERROR_COUNT;
-		default:
-			pr_err("No mapping between cloudwatch id and counter metric id %d\n", internal_metric_id);
-		}
-	} else if (metric_type == VERSION) {
-		switch (internal_metric_id) {
-		case NMETRIC_RT_VERSION:
-			return NMETRIC_CW_ID_RT_VERSION_BASE;
-		default:
-			pr_err("No mapping between cloudwatch id and version metric id %d\n", internal_metric_id);
-		}
-	} else if (metric_type == CONSTANT) {
-		switch (internal_metric_id) {
-		case NMETRIC_DRIVER_VERSION:
-			return NMETRIC_CW_ID_DRIVER_VERSION;
-		case NMETRIC_INSTANCE_ID:
-			return NMETRIC_CW_ID_INSTANCE_ID;
-		}
-	}
-
-	return 0; // if metric mapping to cw id doesn't exist, default unused id will be used
-}
-
 void nmetric_init_constants_metrics()
 {
+	int read_size;
+	struct file *f;
+	int driver_ver_str_len;
+	int instance_id_idx = nmetric_defs[NMETRIC_INSTANCE_ID_IDX].index;
+	int driver_vers_idx = nmetric_defs[NMETRIC_DRIVER_VERS_IDX].index;
+	loff_t offset = 0;
+
 	// initiate buffer to 0
 	memset(nmetric_constant_metrics, 0, nmetric_constants_buf_size);
-
-	// read instance id from sysfile
-	int read_size;
-	loff_t offset = 0;
-	struct file *f = filp_open(nmetric_instance_id_path, O_RDONLY, 0);
-	if (IS_ERR_OR_NULL(f) || (read_size = kernel_read(f, nmetric_constant_metrics[NMETRIC_INSTANCE_ID], NEURON_METRICS_VERSION_STRING_MAX_LEN, &offset)) <= 0)
-		memset(nmetric_constant_metrics[NMETRIC_INSTANCE_ID], '0', sizeof(char)); // if instance id could not be read, default to 0
-	else if (isspace(nmetric_constant_metrics[NMETRIC_INSTANCE_ID][read_size - 1])) // remove trailing space if present
-		nmetric_constant_metrics[NMETRIC_INSTANCE_ID][read_size - 1] = '\0';
+	// read instance id
+	f = filp_open(nmetric_instance_id_path, O_RDONLY, 0);
+	if (IS_ERR_OR_NULL(f) || (read_size = kernel_read(f, nmetric_constant_metrics[instance_id_idx], NEURON_METRICS_VERSION_STRING_MAX_LEN, &offset)) <= 0)
+		memset(nmetric_constant_metrics[instance_id_idx], '0', sizeof(char)); // if instance id could not be read, default to 0
+	else if (isspace(nmetric_constant_metrics[instance_id_idx][read_size - 1])) // remove trailing space if present
+		nmetric_constant_metrics[instance_id_idx][read_size - 1] = '\0';
 
 	if (!IS_ERR_OR_NULL(f))
 		filp_close(f, NULL);
 
 	// record driver version
-	int driver_ver_str_len = strlen(driver_version);
+	driver_ver_str_len = strlen(driver_version);
 	BUG_ON(driver_ver_str_len > NEURON_METRICS_VERSION_STRING_MAX_LEN); // check for buffer overflow
-	memcpy(nmetric_constant_metrics[NMETRIC_DRIVER_VERSION], driver_version, min(driver_ver_str_len, (int)NEURON_METRICS_VERSION_STRING_MAX_LEN));
+	memcpy(nmetric_constant_metrics[driver_vers_idx], driver_version, min(driver_ver_str_len, (int)NEURON_METRICS_VERSION_STRING_MAX_LEN));
 }
 
 /**
@@ -250,31 +169,44 @@ void nmetric_init_constants_metrics()
  *
  * @entry: valid initialized datastore entry to aggregate version info from
  * @ds_index: ds index of version metric to be recorded
- * @capacity: maximum number of versions to be recorded per posting session
  * @versions_buf: specified buffer where versions will be recorded
  *
  */
-static void nmetric_aggregate_version_metrics(struct neuron_datastore_entry *entry, int ds_index, int capacity, struct nmetric_versions *versions_buf)
+static void nmetric_aggregate_version_metrics(struct neuron_datastore_entry *entry, int ds_index, struct nmetric_versions *versions_buf)
 {
-	void *ds_base_ptr = entry->mc->va;
-
-	// check if storage capacity has been reached for metric
-	int version_curr_count = versions_buf->curr_count;
-	if (version_curr_count == capacity)
-		return;
-
-	// temporarily store version
-	u64 version_info = NDS_ND_COUNTERS(ds_base_ptr)[ds_index]; // decode version information
-
-	// check if version has already been stored
 	int i;
-	for (i = 0; i < version_curr_count; i++)
-		if (version_info == versions_buf->version_metrics[i])
-			return;
+	void *ds_base_ptr = entry->mc->va;
+	u64 version_info = NDS_ND_COUNTERS(ds_base_ptr)[ds_index]; // decode version information
+	if (version_info == 0)
+		return;
+	u8 min_index = 0;
+	u32 min_usage_count = ~0u;
 
-	// save runtime version
-	versions_buf->version_metrics[version_curr_count] = version_info;
-	versions_buf->curr_count++;
+	for (i = 0; i < NEURON_METRICS_VERSION_MAX_CAPACITY; i++) {
+		if (version_info == versions_buf->version_metrics[i]) {
+			versions_buf->version_usage_count[i]++;
+			return;
+		}
+		if (versions_buf->version_usage_count[i] < min_usage_count) {
+			min_index = i;
+			min_usage_count = versions_buf->version_usage_count[i];
+		}
+	}
+	versions_buf->version_metrics[min_index] = version_info;
+	versions_buf->version_usage_count[min_index] = 1;
+}
+
+/**
+ * nmetric_check_post_tick()
+ *
+ * Return if a metric needs to be posted based on its tick value and the global tick value
+ *
+ * @tick - current tick value
+ * @metric_tick - metric tick value
+ */
+static inline bool nmetric_check_post_tick(u8 tick, const nmetric_def_t *metric)
+{
+	return tick == POST_TIME_ALWAYS || metric->tick == POST_TIME_ALWAYS || tick == metric->tick;
 }
 
 /**
@@ -286,25 +218,36 @@ static void nmetric_aggregate_version_metrics(struct neuron_datastore_entry *ent
  * @nd: neuron device
  * @entry: valid initialized datastore entry to aggregate metrics from
  * @dest_buf: destination buffer to recieve all aggregated data from datastore entry, must be large enough to accommodate all counters being tracked
- * 
+ * @bitmap: destination buffer to recieve bitmap data from datastore entry
+ * @tick: current tick value
  */
-static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct neuron_datastore_entry *entry, u64 *dest_buf)
+static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct neuron_datastore_entry *entry, u64 *dest_buf, u64 *bitmap, u8 tick)
 {
 	int nc_id;
-	enum nmetric_counter_type internal_metric_id;
-
-	// aggregate all counter metrics from given datastore entry into extension array
+	int nmetric_index;
+	const nmetric_def_t *curr_metric;
 	void *ds_base_ptr = entry->mc->va;
-	for (nc_id = 0; nc_id < NC_PER_DEVICE(nd); nc_id++) {
-		for (internal_metric_id = NMETRIC_COUNTER_FIRST; internal_metric_id < NMETRIC_COUNTER_COUNT; internal_metric_id++) {
-			int ds_metric_index = nmetric_id_to_ds_index(internal_metric_id, COUNTER);
-			if (ds_metric_index != -1) // check if metric mapping to datastore counter exists
-				dest_buf[internal_metric_id] += NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[ds_metric_index];
+
+	for (nmetric_index = 0; nmetric_index < nmetric_count; nmetric_index++) {
+		curr_metric = &nmetric_defs[nmetric_index];
+		if (!nmetric_check_post_tick(tick, curr_metric))
+			continue;
+		switch(curr_metric->type) {
+		case NMETRIC_TYPE_VERSION:
+			nmetric_aggregate_version_metrics(entry,
+							  curr_metric->ds_id,
+							  &nd->metrics.component_versions[curr_metric->index]);
+		break;
+		case NMETRIC_TYPE_COUNTER:
+			for (nc_id = 0; nc_id < NC_PER_DEVICE(nd); nc_id++) {
+				dest_buf[curr_metric->index] += NDS_NEURONCORE_COUNTERS(ds_base_ptr, nc_id)[curr_metric->ds_id];
+			}
+		break;
+		case NMETRIC_TYPE_BITMAP:
+			*bitmap |= NDS_ND_COUNTERS(ds_base_ptr)[curr_metric->ds_id];
+		break;
 		}
 	}
-
-	// aggregate version metrics
-	nmetric_aggregate_version_metrics(entry, NDS_ND_COUNTER_RUNTIME_VERSION, NEURON_METRICS_RT_VERSION_CAPACITY, &nd->metrics.runtime_versions);
 }
 
 /**
@@ -312,24 +255,29 @@ static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct 
  * 
  * @nd: neuron device
  * @curr_metrics: destination buffer to recieve all aggregated data from datastore entry, must be large enough to accommodate all counters being tracked
+ * @curr_bitmap: destination buffer to recieve bitmap from datastore entry
+ * @tick: current tick value
  * 
  */
-static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics)
+static void nmetric_full_aggregate(struct neuron_device *nd, u64 *curr_metrics, u64 *curr_bitmap, u8 tick)
 {
 	// aggregate counter metrics in all cores of all entries of the datastore into current count array
 	int i;
+	const nmetric_def_t *nmetric_fw_io_def = &nmetric_defs[NMETRIC_FW_IO_ERR_IDX];
+
 	for (i = 0; i < NEURON_MAX_DATASTORE_ENTRIES_PER_DEVICE; i++)
 		if (neuron_ds_check_entry_in_use(&nd->datastore, i)) // ensure that datastore entry is in use and valid
-			nmetric_aggregate_nd_counter_entry(nd, &nd->datastore.entries[i], curr_metrics);
+			nmetric_aggregate_nd_counter_entry(nd, &nd->datastore.entries[i], curr_metrics, curr_bitmap, tick);
 
 	// update metrics that do not have counters in nds
-	curr_metrics[NMETRIC_FW_IO_ERR] = fw_io_get_err_count(nd->fw_io_ctx);
+	if (nmetric_check_post_tick(tick, nmetric_fw_io_def))
+		curr_metrics[nmetric_fw_io_def->index] = fw_io_get_err_count(nd->fw_io_ctx);
 }
 
 // Wrapper function for entry aggregate function
 void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore_entry *entry)
 {
-	nmetric_aggregate_nd_counter_entry(nd, entry, nd->metrics.ds_freed_metrics_buf);
+	nmetric_aggregate_nd_counter_entry(nd, entry, nd->metrics.ds_freed_metrics_buf, &nd->metrics.ds_freed_bitmap_buf, POST_TIME_ALWAYS);
 }
 
 /**
@@ -341,16 +289,172 @@ void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore
  */
 void nmetric_mock_fw_io_post_metric(u8 *data, u32 size)
 {
-	// Print out every metric
-	struct nmetric_cw_metric *curr_metric = (struct nmetric_cw_metric *) data;
+	char temp_buf[NEURON_METRICS_VERSION_STRING_MAX_LEN + 1];
+	struct nmetric_cw_metric *curr_metric;
 	u8 *end_metric = data + size;
-	while ((uintptr_t)curr_metric < (uintptr_t)end_metric) {
-		char temp_buf[NEURON_METRICS_VERSION_STRING_MAX_LEN + 1];
+	while (data < end_metric) {
+		curr_metric = (struct nmetric_cw_metric *)data;
 		memcpy(temp_buf, curr_metric->data, curr_metric->len);
 		temp_buf[curr_metric->len] = '\0'; // all metrics are saved as char arrays without trailing null char, so null char must be added
 		trace_metrics_post(curr_metric->id, curr_metric->len, temp_buf);
-		curr_metric = (struct nmetric_cw_metric *)(((uint8_t *)curr_metric) + sizeof(struct nmetric_cw_metric) + curr_metric->len);
+		data += sizeof(struct nmetric_cw_metric) + curr_metric->len;
 	}
+}
+
+/**
+ * nmetric_post_version_with_max_usage()
+ *
+ * Writes the most used version (if it exists) to the post buffer, makes its usage 0, and returns bytes written
+ *
+ * @versions: versions to use
+ * @metric: destination buffer
+ * @available_size: available byte count
+ * @cw_id: cloudwatch id
+ * @add_fw_type: add framework type (appends version_info.reserved, which is the fw type, to the maj vers)
+ * @return: bytes written
+ *
+ */
+static int nmetric_post_version_with_max_usage(struct nmetric_versions *versions, struct nmetric_cw_metric *metric,
+					       int available_size, int cw_id, bool add_fw_type)
+{
+	int idx;
+	int found_idx;
+	int version_len = 0; // length of the version string
+	int total_len = 0; // total length used in the metrics buffer
+	int max_usage = 0;
+
+	nmetric_version_t version_info;
+
+	for (idx = 0; idx < NEURON_METRICS_VERSION_MAX_CAPACITY; idx++) {
+		if (versions->version_usage_count[idx] > max_usage) {
+			max_usage = versions->version_usage_count[idx];
+			found_idx = idx;
+		}
+	}
+	if (max_usage == 0)
+		return 0;
+
+	version_info.all = versions->version_metrics[found_idx];
+	BUG_ON(version_info.all == 0);
+	if (version_info.reserved == 0)
+		add_fw_type = false;
+
+	// check if there is enough space in buffer
+	version_len = snprintf(NULL, 0, "%d.%d.%d", (int)version_info.major_ver,
+			       (int)version_info.minor_ver, (int)version_info.build_num);
+
+	total_len = sizeof(struct nmetric_cw_metric) + version_len;
+	if(add_fw_type)
+		// a single digit for the fw type stored in version_info.reserved
+		total_len += sizeof(struct nmetric_cw_metric) + 1;
+
+	if (available_size < total_len)
+		return 0;
+
+	// save metrics to buffer
+	metric->id = cw_id;
+	metric->len = version_len; // null char will be replaced by next metric and should not be considered in the length
+	snprintf(metric->data, version_len + 1, "%d.%d.%d", (int)version_info.major_ver,
+		 (int)version_info.minor_ver, (int)version_info.build_num);
+
+	if(add_fw_type) {
+		//save framework type to the next id
+		version_len += sizeof(struct nmetric_cw_metric);
+		metric = (struct nmetric_cw_metric *)((void *)metric + version_len);
+		metric->id = cw_id + 1;
+		metric->len = 1;
+		snprintf(metric->data, 2, "%d", (int)version_info.reserved % 10);
+	}
+
+	versions->version_usage_count[found_idx] = 0;
+	return total_len;
+}
+
+/* Functions for posting metric types (writing the metrics to the output buffer)
+ */
+static inline int nmetric_post_constant(const nmetric_def_t *metric, struct nmetric_cw_metric *dest, int available_size) {
+	int const_len = strlen(nmetric_constant_metrics[metric->index]);
+	int metric_size = sizeof(struct nmetric_cw_metric) + const_len;
+	if (available_size < metric_size)
+		return 0;
+	// save metrics to buffer
+	dest->id = metric->cw_id;
+	dest->len = const_len;
+	memcpy(dest->data, nmetric_constant_metrics[metric->index], const_len);
+	return metric_size;
+}
+
+static inline int nmetric_post_version(struct nmetric_versions *versions, const nmetric_def_t *metric,
+				       struct nmetric_cw_metric *dest, int available_size) {
+	int idx;
+	int size;
+	int written_size = 0;
+	int nmetric_cw_id_count = 1;
+	bool add_fw_type = (metric->flags & NMETRIC_FLAG_VERS_ALLOW_TYPE) != 0;
+	if (add_fw_type) {
+		nmetric_cw_id_count = 2; // if type is added, then 2 cw ids will be used for every version post
+	}
+	for (idx = 0; idx < metric->count; idx++) {
+		size = nmetric_post_version_with_max_usage(&versions[metric->index], dest,
+							   available_size,
+							   metric->cw_id + (idx * nmetric_cw_id_count),
+							   add_fw_type);
+		if (size == 0)
+			continue;
+		written_size += size;
+		dest = (struct nmetric_cw_metric *)((void *)dest + size);
+	}
+	return written_size;
+}
+
+static inline int nmetric_post_counter(u64 *curr_metrics, u64 *prev_metrics,
+				       u64 *freed_metrics, const nmetric_def_t *metric,
+				       struct nmetric_cw_metric *dest, int available_size) {
+	int metric_size;
+	int expected_len;
+	int metric_index = metric->index;
+	u64 crt_metric_value = curr_metrics[metric_index] + freed_metrics[metric_index];
+	u64 prev_metric_value = prev_metrics[metric_index];
+
+	if (crt_metric_value <= prev_metric_value) { // on overflow or 0, we skip this one
+		return 0;
+	}
+
+	crt_metric_value -= prev_metric_value;
+	// check if there is enough space in buffer (if there's not, skip, maybe the next one fits)
+	expected_len = snprintf(NULL, 0, "%llu", crt_metric_value);
+	metric_size = sizeof(struct nmetric_cw_metric) + expected_len;
+	if (available_size < metric_size)
+		return 0;
+
+	// save metrics to buffer
+	dest->id = metric->cw_id;
+	dest->len = expected_len;
+	snprintf(dest->data, expected_len + 1, "%llu", crt_metric_value);
+
+	return metric_size;
+}
+
+static inline int nmetric_post_bitmap(const nmetric_def_t *metric, struct nmetric_cw_metric *dest, 
+						u64 curr_bitmap, u64 freed_bitmap, int available_size) {
+	u64 metric_value = curr_bitmap | freed_bitmap;
+
+	// do not post the bitmap if no feature is used
+	if (metric_value == 0)
+		return 0;
+
+	// check if there is enough space in buffer
+	int expected_len = snprintf(NULL, 0, "%llu", metric_value);
+	int metric_size = sizeof(struct nmetric_cw_metric) + expected_len;
+	if (available_size < metric_size)
+		return 0;
+
+	// save metrics to buffer
+	dest->id = metric->cw_id;
+	dest->len = expected_len;
+	snprintf(dest->data, expected_len + 1, "%llu", metric_value); // post the bitmap as decimal not hex, as cw reads it in decimal format
+
+	return metric_size;
 }
 
 /**
@@ -366,71 +470,41 @@ void nmetric_mock_fw_io_post_metric(u8 *data, u32 size)
  * @freed_metrics: buffer containing metrics that were freed before being posted in the current session and not captured in current metrics buf 
  * @versions: buffer containing version metrics gathered from the current session
  * @constants_metrics: buffer containing metrics constant to the device
+ * @curr_bitmap: buffer containing bitmap of the current session not yet posted to fw
+ * @freed_bitmap: buffer containing bitmap that were freed before being posted in the current session and not captured in current bitmap
  * 
  */
-static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics, struct nmetric_versions versions)
+static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics,
+				 struct nmetric_versions *versions, u64 curr_bitmap, u64 freed_bitmap, u8 tick)
 {
-	enum nmetric_constants_type internal_constants_metric_id;
-	enum nmetric_counter_type internal_counter_metric_id;
+	int available_size;
+	int nmetric_index;
+	const nmetric_def_t *curr_metric;
+	struct nmetric_cw_metric *dest;
 	int data_size = 0;
-	struct nmetric_cw_metric *metric = (struct nmetric_cw_metric *)nd->metrics.posting_buffer;
 
-	// record constant metrics
-	for (internal_constants_metric_id = NMETRIC_CONSTANTS_FIRST; internal_constants_metric_id < NMETRIC_CONSTANTS_COUNT; internal_constants_metric_id++) {
-		// check if there is enough space in buffer
-		int expected_len = strlen(nmetric_constant_metrics[internal_constants_metric_id]);
-		if (NEURON_METRICS_MAX_POSTING_BUF_SIZE - data_size < sizeof(struct nmetric_cw_metric) + expected_len)
-			break;
-
-		// save metrics to buffer
-		metric->id = nmetric_id_to_cw_id(internal_constants_metric_id, CONSTANT);
-		metric->len = expected_len;
-		memcpy(metric->data, nmetric_constant_metrics[internal_constants_metric_id], metric->len);
-
-		data_size += sizeof(struct nmetric_cw_metric) + metric->len;
-		metric = (struct nmetric_cw_metric *)&nd->metrics.posting_buffer[data_size];
-	}
-
-	// record version metrics
-	int version_i;
-	for (version_i = 0; version_i < versions.curr_count; version_i++) {
-		union nmetric_version version_info;
-		version_info.all = versions.version_metrics[version_i];
-
-		// check if there is enough space in buffer
-		int expected_len = snprintf(NULL, 0, "%d.%d.%d", version_info.major_ver, version_info.minor_ver, version_info.build_num);
-		if (NEURON_METRICS_MAX_POSTING_BUF_SIZE - data_size < sizeof(struct nmetric_cw_metric) + (expected_len + 1))
-			break;
-
-		// save metrics to buffer
-		metric->id = NMETRIC_CW_ID_RT_VERSION_BASE + version_i;
-		metric->len = expected_len; // null char will be replaced by next metric and should not be considered in the length
-		snprintf(metric->data, metric->len + 1, "%d.%d.%d", version_info.major_ver, version_info.minor_ver, version_info.build_num);
-
-		data_size += sizeof(struct nmetric_cw_metric) + metric->len;
-		metric = (struct nmetric_cw_metric *)&nd->metrics.posting_buffer[data_size];
-	}
-
-	// record counter metrics
-	for (internal_counter_metric_id = NMETRIC_COUNTER_FIRST; internal_counter_metric_id < NMETRIC_COUNTER_COUNT; internal_counter_metric_id++) {
-		int metric_value = curr_metrics[internal_counter_metric_id] +
-				   freed_metrics[internal_counter_metric_id] -
-				   prev_metrics[internal_counter_metric_id];
-		if (!metric_value)
+	for (nmetric_index = 0; nmetric_index < nmetric_count; nmetric_index++) {
+		curr_metric = &nmetric_defs[nmetric_index];
+		if (!nmetric_check_post_tick(tick, curr_metric))
 			continue;
-
-		// check if there is enough space in buffer
-		int expected_len = snprintf(NULL, 0, "%d", metric_value);
-		if (NEURON_METRICS_MAX_POSTING_BUF_SIZE - data_size < sizeof(struct nmetric_cw_metric) + (expected_len + 1))
-			break;
-
-		// save metrics to buffer
-		metric->id = nmetric_id_to_cw_id(internal_counter_metric_id, COUNTER); // if metric mapping to cw id doesn't exist, default unused id will be used
-		metric->len = expected_len; // null char will be replaced by next metric and should not be considered in the length
-		snprintf(metric->data, metric->len + 1, "%d", metric_value);
-
-		data_size += sizeof(struct nmetric_cw_metric) + metric->len;
-		metric = (struct nmetric_cw_metric *)&nd->metrics.posting_buffer[data_size];
+		available_size = NEURON_METRICS_MAX_POSTING_BUF_SIZE - data_size;
+		dest = (struct nmetric_cw_metric *)&nd->metrics.posting_buffer[data_size];
+		switch(curr_metric->type) {
+		case NMETRIC_TYPE_CONSTANT:
+			data_size += nmetric_post_constant(curr_metric, dest, available_size);
+		break;
+		case NMETRIC_TYPE_VERSION:
+			data_size += nmetric_post_version(versions, curr_metric, dest, available_size);
+		break;
+		case NMETRIC_TYPE_COUNTER:
+		case NMETRIC_TYPE_FW_IO_ERR:
+			data_size += nmetric_post_counter(curr_metrics, prev_metrics, freed_metrics,
+							  curr_metric, dest, available_size);
+		break;
+		case NMETRIC_TYPE_BITMAP:
+			data_size += nmetric_post_bitmap(curr_metric, dest, curr_bitmap, freed_bitmap, available_size);
+		break;
+		}
 	}
 
 	// post metrics if available
@@ -443,23 +517,43 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 	}
 }
 
-/** 
+/**
+ *
  * nmetric_cache_shared_bufs() - Caches neuron device buffer values to avoid needing extra locks
  * 
- * @nd: neuron device 
+ * @nd: neuron device
  * @freed_metrics[out]: will contain freed counter data copied from neuron device aggregation
  * @versions[out]: will contain version metrics data copied from neuron device aggregation
- * 
+ * @freed_bitmap: will contain freed bitmap metrics data copied from neuron device aggregation
+ * @tick: current tick value
  */
-static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metrics, struct nmetric_versions *versions)
+static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metrics, struct nmetric_versions *versions, u64 *freed_bitmap, u8 tick)
 {
+	int nmetric_index;
+	const nmetric_def_t *curr_metric;
+	
 	// cache and reset freed metrics buf
 	memcpy(freed_metrics, nd->metrics.ds_freed_metrics_buf, nmetric_counters_buf_size);
-	memset(nd->metrics.ds_freed_metrics_buf, 0, nmetric_counters_buf_size);
-
 	// cache and reset version metrics buf
-	memcpy(versions, &nd->metrics.runtime_versions, nmetric_versions_buf_size);
-	memset(&nd->metrics.runtime_versions, 0, nmetric_versions_buf_size);
+	memcpy(versions, nd->metrics.component_versions, nmetric_versions_buf_size);
+	// cache and reset bitmap metrics buf
+	*freed_bitmap = nd->metrics.ds_freed_bitmap_buf;
+	nd->metrics.ds_freed_bitmap_buf = 0;
+
+	for (nmetric_index = 0; nmetric_index < nmetric_count; nmetric_index++) {
+		curr_metric = &nmetric_defs[nmetric_index];
+		if (!nmetric_check_post_tick(tick, curr_metric))
+			continue;
+		switch(curr_metric->type) {
+		case NMETRIC_TYPE_VERSION:
+			memset(&nd->metrics.component_versions[curr_metric->index], 0, sizeof(struct nmetric_versions));
+		break;
+		case NMETRIC_TYPE_COUNTER:
+		case NMETRIC_TYPE_FW_IO_ERR:
+			nd->metrics.ds_freed_metrics_buf[curr_metric->index] = 0;
+		break;
+		}
+	}
 }
 
 /**
@@ -468,16 +562,30 @@ static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metri
  * @curr_metrics: buffer containing metrics of the current session
  * @prev_metrics: reference buffer
  * @freed_metrics: cache of buffer containing metrics of freed datastore entries
+ * @curr_bitmap: buffer containing bitmap of the current session
+ * @freed_bitmap: cache of buffer containing bitmap from freed datastore
+ * @tick: current tick value
  *
  */
-static void nmetric_start_new_session(u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics)
+static void nmetric_start_new_session(u64 *curr_metrics, u64 *prev_metrics, u64 *freed_metrics, u64 *curr_bitmap, u64 *freed_bitmap, u8 tick)
 {
+	int nmetric_index;
+	const nmetric_def_t *curr_metric;
 	// save metrics to reference array
-	memcpy(prev_metrics, curr_metrics, nmetric_counters_buf_size);
+	for (nmetric_index = 0; nmetric_index < nmetric_count; nmetric_index++) {
+		curr_metric = &nmetric_defs[nmetric_index];
+		if (!nmetric_check_post_tick(tick, curr_metric) || curr_metric->type != NMETRIC_TYPE_COUNTER)
+			continue;
+		prev_metrics[curr_metric->index] = curr_metrics[curr_metric->index];
+	}
 
 	// reset all current metrics
 	memset(curr_metrics, 0, nmetric_counters_buf_size);
 	memset(freed_metrics, 0, nmetric_counters_buf_size);
+
+	// reset bitmap metrics
+	*curr_bitmap = 0;
+	*freed_bitmap = 0;
 }
 
 /**
@@ -492,13 +600,18 @@ static int nmetric_thread_fn(void *arg)
 	u64 curr[NMETRIC_COUNTER_COUNT]; // metrics for the current session so far
 	u64 prev[NMETRIC_COUNTER_COUNT]; // recorded metrics from the last post
 	u64 freed[NMETRIC_COUNTER_COUNT]; // cache holding metrics that were freed before the posting period was reached
-	struct nmetric_versions runtime_versions;
+	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
+	u64 curr_bitmap;  // bitmap for the current session 
+	u64 freed_bitmap; // cache hold the bitmap that was freed before the posting period was reached	
+	u8 tick = 0;
 
 	// initialize all aggregation buffers
 	memset(prev, 0, nmetric_counters_buf_size);
 	memset(curr, 0, nmetric_counters_buf_size);
 	memset(freed, 0, nmetric_counters_buf_size);
-	memset(&runtime_versions, 0, nmetric_versions_buf_size);
+	memset(component_versions, 0, nmetric_versions_buf_size);
+	curr_bitmap = 0;
+	freed_bitmap = 0;
 
 	// metrics are only sent once at rate specified by module param, new metric data may be saved without being immediately sent
 	while (!kthread_should_stop() && nd->metrics.neuron_aggregation.running) {
@@ -508,12 +621,14 @@ static int nmetric_thread_fn(void *arg)
 
 		// aggregate and post metrics
 		neuron_ds_acquire_lock(&nd->datastore);
-		nmetric_full_aggregate(nd, curr);
-		nmetric_cache_shared_bufs(nd, freed, &runtime_versions);
+		nmetric_full_aggregate(nd, curr, &curr_bitmap, tick);
+		nmetric_cache_shared_bufs(nd, freed, component_versions, &freed_bitmap, tick);
 		neuron_ds_release_lock(&nd->datastore);
 
-		nmetric_post_metrics(nd, curr, prev, freed, runtime_versions);
-		nmetric_start_new_session(curr, prev, freed); // reset all current metrics
+		nmetric_post_metrics(nd, curr, prev, freed, component_versions, curr_bitmap, freed_bitmap, tick);
+		nmetric_start_new_session(curr, prev, freed, &curr_bitmap, &freed_bitmap, tick); // reset all current metrics for this tick
+
+		tick = (tick + 1) % POST_TICK_COUNT;
 	}
 	return 0;
 }
@@ -542,17 +657,12 @@ void nmetric_stop_thread(struct neuron_device *nd)
 
 int nmetric_init(struct neuron_device *nd)
 {
-	BUG_ON(NMETRIC_CW_ID_RT_VERSION_LAST - NMETRIC_CW_ID_RT_VERSION_BASE + 1 < NEURON_METRICS_RT_VERSION_CAPACITY); // ensure there exists enough cw id space for requested runtime version posting capacity
-
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
-		pr_info("skipping metric initialization for v2 until fw_io is supported");
-		return 0;
-	}
+	int ret;
 
 	memset(nd->metrics.ds_freed_metrics_buf, 0, nmetric_counters_buf_size);
 
 	// initiate metric aggregator thread
-	int ret = nmetric_create_thread(nd);
+	ret = nmetric_create_thread(nd);
 
 	return ret;
 }

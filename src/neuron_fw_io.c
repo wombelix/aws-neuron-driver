@@ -294,10 +294,20 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool busy_wait)
 	return -1;
 }
 
-void fw_io_initiate_reset(void __iomem *bar0)
+void fw_io_initiate_reset(void __iomem *bar0, bool device_reset, u32 tpb_reset_map)
 {
-	const void *address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_OFFSET;
-	reg_write32((u32 *)address, 1);
+	u32 reset_type;
+	void *address;
+	if (device_reset) {
+		reset_type = FW_IO_RESET_TYPE_DEVICE;
+	} else {
+		reset_type = FW_IO_RESET_TYPE_TPB;
+		address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_TPB_MAP_OFFSET;
+		reg_write32((u32 *)address, tpb_reset_map);
+		mb();
+	}
+	address = bar0 + fw_io_get_bar0_misc_ram_offset() + FW_IO_REG_RESET_OFFSET;
+	reg_write32((u32 *)address, reset_type);
 	mb();
 	fw_io_trigger(bar0);
 }

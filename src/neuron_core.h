@@ -80,7 +80,7 @@ int nc_event_set(struct neuron_device *nd, u8 nc_id, u16 event_index, u32 value)
 
 // followin defines have the max between versions of chip
 // please check the chip's address_map.h to find the values
-#define MAX_NQ_TYPE 5  //for v1 4 and v2 5
+#define MAX_NQ_TYPE 6  //for v1 4 and v2 6
 #define MAX_NQ_ENGINE 16 // for v1 4 engines for v2 16 queues
 
 #define MAX_NQ_SUPPORTED (MAX_NQ_TYPE * MAX_NQ_ENGINE)
@@ -122,6 +122,7 @@ int nc_get_nq_mem_handle(struct neuron_device *nd, int nc_id, int engine_index, 
  * @on_host_memory: if true, NQ is created in host memory
  * @dram_channel: If NQ is created on device memory which DRAM channel to use.
  * @dram_region: If NQ is created on device memory which DRAM region to use.
+ * @force_alloc_mem: If true, force allocate new memory (and delete already allocated memory, if any)
  * @nq_mc[out]: memchunk used by the NQ will be written here
  * @mc_ptr[out]: Pointer to memchunk backing this NQ
  *
@@ -129,8 +130,16 @@ int nc_get_nq_mem_handle(struct neuron_device *nd, int nc_id, int engine_index, 
  */
 int nnq_init(struct neuron_device *nd, u8 nc_id, u8 eng_index, u32 nq_type, u32 size,
 	       u32 on_host_memory, u32 dram_channel, u32 dram_region,
-	       struct mem_chunk **nq_mc, u64 *mmap_offset);
+	       bool force_alloc_mem, struct mem_chunk **nq_mc, u64 *mmap_offset);
 
+/**
+ * nnq_destroy_nc() - Disable notification in the device
+ *
+ * @nd: neuron device
+ * @nc_id: neuron core
+ *
+ */
+void nnq_destroy_nc(struct neuron_device *nd, u8 nc_id);
 
 /**
  * nnq_destroy_all() - Disable notification in the device

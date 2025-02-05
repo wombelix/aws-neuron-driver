@@ -83,6 +83,9 @@ int v2_dma_init(void __iomem *bar0, struct udma *udma, int eng_id)
 		pr_err("SDMA ENG:%d init failed\n", eng_id);
 		goto done;
 	}
+
+	udma_m2m_set_axi_error_abort(udma); // setup dma abort
+
 done:
 	return ret;
 }

@@ -462,6 +462,57 @@ struct udma_gen_axi {
 	u32 reserved0[63];
 };
 
+struct udma_gen_axi_error_detection_table {
+	/* [0x0] Addr to table is {axi_parity_error,axi_timeout_error,axi_response_error} */
+	uint32_t addr0;
+	/* [0x4] */
+	uint32_t addr1;
+	/* [0x8] */
+	uint32_t addr2;
+	/* [0xc] */
+	uint32_t addr3;
+	/* [0x10] */
+	uint32_t addr4;
+	/* [0x14] */
+	uint32_t addr5;
+	/* [0x18] */
+	uint32_t addr6;
+	/* [0x1c] */
+	uint32_t addr7;
+	/* [0x20] */
+	uint32_t addr8;
+	/* [0x24] */
+	uint32_t addr9;
+	/* [0x28] */
+	uint32_t addr10;
+	/* [0x2c] */
+	uint32_t addr11;
+	/* [0x30] */
+	uint32_t addr12;
+	/* [0x34] */
+	uint32_t addr13;
+	/* [0x38] */
+	uint32_t addr14;
+	/* [0x3c] */
+	uint32_t addr15;
+};
+
+struct udma_gen_axi_error_control {
+	/* [0x0] */
+	uint32_t table_addr;
+	/* [0x4] */
+	uint32_t table_data;
+};
+
+struct udma_gen_axi_queue {
+	/* [0x0] this register can change axi queue state ACTIVE/NON_ACTIVE */
+	uint32_t state_request;
+	/* [0x4] This register is read on clear on read */
+	uint32_t error_status;
+	/* [0x8] */
+	uint32_t cfg;
+};
+
 struct udma_gen_spare_reg {
 	u32 zeroes0;
 	u32 zeroes1;
@@ -470,11 +521,31 @@ struct udma_gen_spare_reg {
 };
 
 struct udma_gen_regs_v4 {
-	struct udma_iofic_regs interrupt_regs; /* [0x0000] */
-	u32 reserved0[112];
-	struct udma_gen_axi axi; /* [0x2300] */
-	u32 reserved1[1048]; /* [0x2400] */
-	struct udma_gen_spare_reg spare_reg; /* [0x3460] */
+	struct udma_iofic_regs interrupt_regs;		     /* [0x0000] */
+	uint32_t rsrvd_0[160];
+	struct udma_gen_axi axi;                             /* [0x2300] */
+	uint32_t rsrvd_1[320];
+	struct udma_gen_axi_error_detection_table axi_error_detection_table[7]; /* [0x2900] */
+	uint32_t rsrvd_2[16];
+	struct udma_gen_axi_error_control axi_error_control[7]; /* [0x2b00] */
+	uint32_t rsrvd_3[50];
+	struct udma_gen_axi_queue axi_queue[16];             /* [0x2c00] */
+	uint32_t rsrvd_4[16];
+	uint32_t iofic_base_m2s_desc_rd;			/* [0x2d00] */
+	uint32_t rsrvd_5[63];
+	uint32_t iofic_base_m2s_data_rd;			/* [0x2e00] */
+	uint32_t rsrvd_6[63];
+	uint32_t iofic_base_m2s_cmpl_wr;			/* [0x2f00] */
+	uint32_t rsrvd_7[63];
+	uint32_t iofic_base_s2m_desc_rd;			/* [0x3000] */
+	uint32_t rsrvd_8[63];
+	uint32_t iofic_base_s2m_data_wr;			/* [0x3100] */
+	uint32_t rsrvd_9[63];
+	uint32_t iofic_base_s2m_cmpl_wr;			/* [0x3200] */
+	uint32_t rsrvd_10[63];
+	uint32_t iofic_base_msix;				    /* [0x3300] */
+	uint32_t rsrvd_11[87];
+	struct udma_gen_spare_reg spare_reg;                 /* [0x3460] */
 };
 
 struct udma_gen_ex_vmpr_v4 {

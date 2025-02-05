@@ -11,11 +11,16 @@
 #include <linux/device.h>
 #include <linux/kthread.h>
 
+#include "neuron_device.h"
+
 enum {
 	V2_FW_IO_REG_FW_TRIGGER_OFFSET = 0x800,
 	V2_FW_IO_REG_FW_STATUS_OFFSET = 0x808,
 	V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK = 0x8
 };
+
+// special reset request id for internal driver resets
+#define NEURON_RESET_REQUEST_ALL 0xffffffff
 
 enum neuron_reset_state {
 	NEURON_RESET_STATE_STARTED = 1, // Reset is initiated
@@ -23,12 +28,25 @@ enum neuron_reset_state {
 	NEURON_RESET_STATE_FAILED // Reset failed
 };
 
+struct neuron_reset_request {
+	uint32_t request_id;
+	uint32_t nc_map;
+	volatile enum neuron_reset_state ret;
+	volatile struct neuron_reset_request *next;
+	volatile struct neuron_reset_request *prev;
+};
+
 struct neuron_reset {
 	struct task_struct *thread; // reset thread
 	wait_queue_head_t wait_queue;
-	volatile enum neuron_reset_state state; // state of reset
 	volatile bool stop; // if set, reset thread would exit the loop
-	volatile bool request_pending; // if set, reset thread would start "reset" operation
+	// request pending queue ptrs. always processed in order, singly linked list
+	volatile struct neuron_reset_request *req_pending_head;
+	volatile struct neuron_reset_request *req_pending_tail;
+	// request completed queue ptrs. procs can come in and wait in any order, doubly linked list
+	volatile struct neuron_reset_request *req_cmpl_head;
+	volatile struct neuron_reset_request *req_cmpl_tail;
+	struct mutex nr_lock;
 };
 
 /**
@@ -55,12 +73,25 @@ void nr_stop_thread(struct neuron_device *nd);
 void nr_start(struct neuron_device *nd);
 
 /**
+ * nr_start_ncs() - Initiate reset operation on the given neuron core
+ *
+ * @nd: Neuron device to reset
+ * @nc_map: Neuron core to reset (NEURON_NC_MAP_DEVICE to reset all cores)
+ * @request_id: ID of this reset request
+ *
+ * Return: 0 if reset was successfully queued, 1 otherwise.
+ */
+int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id);
+
+/**
  * nr_wait() - Waits for reset to complete
  *
  * @nd: Neuron device
+ * @request_id: The reset request id to wait for
+ * @check: If true, return success if request_id is not in the queue.
  *
  * Return: 0 if reset was successfully completed, 1 otherwise.
  */
-int nr_wait(struct neuron_device *nd);
+int nr_wait(struct neuron_device *nd, uint32_t request_id, bool check);
 
 #endif

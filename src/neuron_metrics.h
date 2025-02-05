@@ -9,51 +9,56 @@
 
 #define NEURON_METRICS_VERSION_STRING_MAX_LEN 63
 #define NEURON_METRICS_MAX_POSTING_BUF_SIZE 128
-#define NEURON_METRICS_RT_VERSION_CAPACITY 4
-#define NEURON_METRICS_MAX_CAPACITY 4 // largest version capacity value
+#define NEURON_METRICS_VERSION_CAPACITY 2	// version capacity (max distinct versions per device)
+#define NEURON_METRICS_VERSION_MAX_CAPACITY 8	// number of versions to maintain in history
 
-// Version information that will be recaptured every posting session
-enum nmetric_version_type {
-	NMETRIC_VERSION_FIRST,
-	NMETRIC_RT_VERSION = 0, // neuron-rt version
-	NMETRIC_VERSION_COUNT
-};
+#define POST_TIME_ALWAYS	0xF
+#define POST_TIME_TICK_0	0x0
+#define POST_TIME_TICK_1	0x1
+#define POST_TICK_COUNT		2
 
-// Version information captured only once that remains constant relative to the device
-enum nmetric_constants_type {
-	NMETRIC_CONSTANTS_FIRST,
-	NMETRIC_DRIVER_VERSION = 0, // driver version
-	NMETRIC_INSTANCE_ID = 1, // instance id
-	NMETRIC_CONSTANTS_COUNT
-};
+#define NMETRIC_TYPE_CONSTANT	0x0
+#define NMETRIC_TYPE_VERSION	0x1
+#define NMETRIC_TYPE_COUNTER	0x2
+#define NMETRIC_TYPE_FW_IO_ERR	0x3
+#define NMETRIC_TYPE_BITMAP		0x4
 
-enum nmetric_counter_type {
-	NMETRIC_COUNTER_FIRST,
-	NMETRIC_NERR_INFER_OK = 0, // inference completed with no errors
-	NMETRIC_NERR_GENERIC_FAIL = 1, // inference completed with a non-specific error
-	NMETRIC_TIMED_OUT = 2,
-	NMETRIC_BAD_INPUT = 3,
-	NMETRIC_NUM_ERR = 4,
-	NMETRIC_MODEL_ERR = 5,
-	NMETRIC_TRANSIENT_ERR = 6,
-	NMETRIC_HW_ERR = 7,
-	NMETRIC_RT_ERR = 8,
-	NMETRIC_COMPLETED_WITH_ERR = 9,
-	NMETRIC_COMPLETED_WITH_NUMERIC_ERR = 10,
-	NMETRIC_NERR_GENERIC_TPB_ERR = 11,
-	NMETRIC_NERR_RESOURCE = 12,
-	NMETRIC_NERR_RESOURCE_NC = 13,
-	NMETRIC_NERR_QUEUE_FULL = 14,
-	NMETRIC_NERR_INVALID = 15,
-	NMETRIC_NERR_UNSUPPORTED_NEFF = 16,
-	NMETRIC_FW_IO_ERR = 17,
+#define NMETRIC_FLAG_VERS_ALLOW_TYPE	(1)
 
-	NMETRIC_COUNTER_COUNT
-};
+// Sadly, the 3 #defines below need to be updated when adding new metrics to nmetric_defs
+// Number of metrics of type NMETRIC_TYPE_VERSION
+#define NMETRIC_VERSION_COUNT	3
+
+// Number of metrics of type NMETRIC_TYPE_CONSTANT
+#define NMETRIC_CONSTANTS_COUNT	2
+
+// Number of metrics of type NMETRIC_TYPE_COUNTER + the special case (type NMETRIC_TYPE_FW_IO_ERR)
+#define NMETRIC_COUNTER_COUNT	18
+
+// Number of metrics of type NMETRIC_TYPE_BITMAP
+#define NMETRIC_BITMAP_COUNT 1
+
+typedef struct {
+	u8 index;	// metric specific index
+	u8 type;	// metric type
+	u8 count;	// metric specific count
+	u8 tick;	// tick index on which the metric is posted
+	u8 cw_id;	// target cloudwatch id
+	u8 ds_id;	// source datastore id
+	u8 flags;   // metric specific flags
+} nmetric_def_t;
+
+// Create a metric id which is an unique combination of id, type and post time
+#define NMETRIC_DEF(_index, _type, _count, _tick, _cw_id, _ds_id, _flags)	{ .index = _index, .type = _type, .count = _count, .tick = _tick, .cw_id = _cw_id, .ds_id = _ds_id, .flags = _flags }
+
+#define NMETRIC_CONSTANT_DEF(idx, tick, cw_id)			NMETRIC_DEF(idx, NMETRIC_TYPE_CONSTANT, 1, tick, cw_id, 0xFF, 0)
+#define NMETRIC_VERSION_DEF(idx, tick, cw_id, ds_id, flags)		NMETRIC_DEF(idx, NMETRIC_TYPE_VERSION, NEURON_METRICS_VERSION_CAPACITY, tick, cw_id, ds_id, flags)
+#define NMETRIC_COUNTER_DEF(idx, tick, cw_id, ds_id)		NMETRIC_DEF(idx, NMETRIC_TYPE_COUNTER, 1, tick, cw_id, ds_id, 0)
+#define NMETRIC_BITMAP_DEF(idx, tick, cw_id, ds_id)			NMETRIC_DEF(idx, NMETRIC_TYPE_BITMAP, 1, tick, cw_id, ds_id, 0)
 
 struct nmetric_versions {
-	int curr_count; // number of versions currently stored
-	u64 version_metrics[NEURON_METRICS_MAX_CAPACITY];
+	u32 version_usage_count[NEURON_METRICS_VERSION_MAX_CAPACITY];
+	u64 version_metrics[NEURON_METRICS_VERSION_MAX_CAPACITY];
 };
 
 struct nmetric_aggregation_thread {
@@ -63,14 +68,15 @@ struct nmetric_aggregation_thread {
 };
 
 struct neuron_metrics {
-	struct nmetric_versions runtime_versions;
+	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
+	u64 ds_freed_bitmap_buf; // stores unsent bitmap metrics about to be freed from datastore
 	u64 ds_freed_metrics_buf[NMETRIC_COUNTER_COUNT]; // stores unsent metrics about to be freed from datastore
 	struct nmetric_aggregation_thread neuron_aggregation; // aggregation thread that periodically aggregates and posts metrics
-	u8 posting_buffer[NEURON_METRICS_MAX_POSTING_BUF_SIZE];
+	u8 posting_buffer[NEURON_METRICS_MAX_POSTING_BUF_SIZE + 1];
 };
 
 /**
- * nmetric_init_constants_metrics() - Gathers and stores device constant informatation for metric posting. 
+ * nmetric_init_constants_metrics() - Gathers and stores device constant information for metric posting.
  * 
  * @note Should be called before metric posting is initialized
  * 

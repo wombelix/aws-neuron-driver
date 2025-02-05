@@ -403,3 +403,35 @@ int udma_m2m_copy_start(struct udma *udma, u32 qid, u32 m2s_count, u32 s2m_count
 	}
 	return ret;
 }
+
+// for more info reference https://sim.amazon.com/issues/NRT-315
+void udma_m2m_set_axi_error_abort(struct udma *udma)
+{
+	unsigned int i, q;
+	struct udma_gen_regs_v4 *gen_regs = (struct udma_gen_regs_v4 *)udma->gen_regs;
+
+	// step 1: program axi error detection table (skip msix)
+	for (i = 0; i < 6; i++) {
+		reg_write32(&gen_regs->axi_error_detection_table[i].addr1, 0xf);
+		reg_write32(&gen_regs->axi_error_detection_table[i].addr2, 0xf);
+		reg_write32(&gen_regs->axi_error_detection_table[i].addr3, 0xf);
+	}
+
+	// step 2: program axi error control
+	for (i = 0; i < 6; i++) {
+		for (q = 0; q < DMA_MAX_Q_MAX; q++) {
+			reg_write32(&gen_regs->axi_error_control[i].table_addr, (q << 3) | 0x7);
+			reg_write32(&gen_regs->axi_error_control[i].table_data, 0x10);
+		}
+	}
+
+	// step 3: unmask intc interrupts
+	// TODO: which interrupts to unmask? just do all of them for now
+	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_m2s_desc_rd, 0xffffffff);
+	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_m2s_data_rd, 0xffffffff);
+	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_m2s_cmpl_wr, 0xffffffff);
+	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_s2m_desc_rd, 0xffffffff);
+	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_s2m_data_wr, 0xffffffff);
+	udma_iofic_error_ints_unmask_one((struct iofic_grp_ctrl *)&gen_regs->iofic_base_s2m_cmpl_wr, 0xffffffff);
+}
+

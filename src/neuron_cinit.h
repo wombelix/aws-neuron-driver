@@ -29,10 +29,18 @@ struct neuron_cinit {
 void nci_set_state(struct neuron_device *nd, u32 nc_id, u32 state, u32 *new_state);
 
 /**
- * nci_reset_state() - Resets the core init state to invalid
+ * nci_reset_state() - Resets the device init state to invalid
  *
  * @nd: Neuron device
  */
 void nci_reset_state(struct neuron_device *nd);
+
+/**
+ * nci_reset_state_nc() - Resets the core init state to invalid
+ *
+ * @nd: Neuron device
+ * @nc_id: Neuron Core
+ */
+void nci_reset_state_nc(struct neuron_device *nd, u32 nc_id);
 
 #endif

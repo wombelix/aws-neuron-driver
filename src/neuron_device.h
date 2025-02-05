@@ -6,6 +6,10 @@
 #ifndef NEURON_DEVICE_H
 #define NEURON_DEVICE_H
 
+// Maximum neuron devices supported on a system.
+#define MAX_NEURON_DEVICE_COUNT 16
+#define MAX_NC_PER_DEVICE 4 //for v1 4 and v2 2
+
 #include "neuron_arch.h"
 #include "neuron_mempool.h"
 #include "neuron_ring.h"
@@ -19,10 +23,6 @@
 #include "neuron_metrics.h"
 #include "v1/address_map.h"
 #include "v2/address_map.h"
-
-// Maximum neuron devices supported on a system.
-#define MAX_NEURON_DEVICE_COUNT 16
-#define MAX_NC_PER_DEVICE 4 //for v1 4 and v2 2
 
 #define NC_PER_DEVICE(nd)                                                                          \
 	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE)
@@ -42,9 +42,16 @@ struct neuron_pci_device {
 	u64 bar4_size;
 };
 
+enum neuron_device_state {
+	NEURON_DEVICE_STATE_RESET = 0,
+	NEURON_DEVICE_STATE_READY = 1,
+	NEURON_DEVICE_STATE_INVALID = 2
+};
+
 struct neuron_device {
 	struct pci_dev *pdev;
 	int device_index;
+	volatile enum neuron_device_state device_state; // current state of this device
 
 	// all the processes that are opened this device
 	struct neuron_attached_process attached_processes[NEURON_MAX_PROCESS_PER_DEVICE];
@@ -53,7 +60,7 @@ struct neuron_device {
 
 	struct neuron_pci_device npdev;
 
-	bool dmar_init_done;
+	bool dmar_init_done[MAX_NC_PER_DEVICE];
 	struct ndma_eng ndma_engine[NUM_DMA_ENG_PER_DEVICE];
 	struct mem_chunk *ndma_q_dummy_mc; // when any DMA queue is reset, it would set to point to this mc
 

@@ -213,20 +213,13 @@ int udma_init(struct udma *udma, struct udma_params *udma_params);
 int udma_q_init(struct udma *udma, u32 qid, struct udma_q_params *q_params);
 
 /**
- * udma_q_reset() - Reset a udma queue
- *
- * Prior to calling this function make sure:
- * 1. Queue interrupts are masked
- * 2. No additional descriptors are written to the descriptor ring of the queue
- * 3. No completed descriptors are being fetched
- *
- * The queue can be initialized again using 'udma_q_init'
+ * udma_q_pause() - Pauses a udma queue
  *
  * @udma_q:	udma queue data structure
  *
  * Return: 0 on success, a negative error code otherwise.
  */
-int udma_q_reset(struct udma_q *udma_q);
+int udma_q_pause(struct udma_q *udma_q);
 
 /**
  * udma_q_handle_get() -  Return a pointer to a queue date structure.
@@ -252,6 +245,22 @@ void udma_iofic_m2s_error_ints_unmask(struct udma *udma);
  * @udma: udma data structure
  */
 void udma_iofic_s2m_error_ints_unmask(struct udma *udma);
+
+/**
+ * udma_iofic_error_ints_unmask_one() - Unmask error interrupts for the given iofic_ctrl.
+ *
+ * @iofic_ctrl: iofic data structure
+ * @mask: mask of interrupts to unmask
+ */
+void udma_iofic_error_ints_unmask_one(struct iofic_grp_ctrl *iofic_ctrl, uint32_t mask);
+
+/**
+ * udma_m2m_set_axi_error_abort() - Program axi error detection.
+ * Needed to trigger udma abort for v2: https://issues.amazon.com/issues/NRT-315
+ *
+ * @udma: udma data structure
+ */
+void udma_m2m_set_axi_error_abort(struct udma *udma);
 
 /**
  * udma_state_set() - Change the UDMA's state

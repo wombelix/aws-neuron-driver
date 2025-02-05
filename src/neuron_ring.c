@@ -305,6 +305,68 @@ int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid)
 	return 0;
 }
 
+int ndmar_quiesce_queues(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask)
+{
+	if (engine_count > DMA_QUIESCE_MAX_ENG)
+		return -EINVAL;
+
+	// For Inferentia reset queues on all 3 engines that belong to NC
+	// Skip h2t because it is shared between models, processes
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		u32 start_eng = nc_id * V1_DMA_ENG_PER_NC;
+		u32 e;
+		for (e = 0; e < V1_DMA_ENG_PER_NC; e++) {
+			int q;
+			struct ndma_eng *eng  = ndmar_acquire_engine(nd, start_eng + e);
+			if (eng == NULL)
+				return -EINVAL;
+			for (q = 0; q < V1_MAX_DMA_RINGS; q++) {
+				u32 mask = 0x1 << q;
+				// skip h2t because it is shared
+				if ((start_eng + e) == ndmar_get_h2t_eng_id(nd, nc_id) && q == ndmar_get_h2t_qid()) {
+					continue;
+				}
+				// check if only the specific queues were requested
+				if (engine_count > 0) {
+					// if was not specified for this engine or was not requested for this queue
+					if (e >= engine_count || (queue_mask[e] & mask) == 0) {
+						continue;
+					}
+				}
+				udma_q_pause(&eng->udma.udma_q_m2s[q]);
+				udma_q_pause(&eng->udma.udma_q_s2m[q]);
+			}
+			ndmar_release_engine(eng);
+		}
+	} else {
+		u32 start_eng = nc_id * V2_DMA_ENG_PER_NC;
+		u32 e;
+		for (e = 0; e < V2_DMA_ENG_PER_NC; e++) {
+			int q;
+			struct ndma_eng *eng  = ndmar_acquire_engine(nd, start_eng + e);
+			if (eng == NULL)
+				return -EINVAL;
+			for (q = 0; q < V2_MAX_DMA_RINGS; q++) {
+				u32 mask = 0x1 << q;
+				// check if only the specific queues were requested
+				if (engine_count > 0) {
+					// if was not specified for this engine or was not requested for this queue
+					if (e >= engine_count || (queue_mask[e] & mask) == 0) {
+						continue;
+					}
+				}
+				udma_q_pause(&eng->udma.udma_q_m2s[q]);
+				udma_q_pause(&eng->udma.udma_q_s2m[q]);
+			}
+			ndmar_release_engine(eng);
+		}
+	}
+	// sleep a bit, ideally we would wait for prefetch and scheduling
+	// to get disabled but that requires reads that we don't want to do
+	udelay(4);
+	return 0;
+}
+
 int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 {
 	int ret = 0;
@@ -482,15 +544,16 @@ void ndmar_preinit(struct neuron_device *nd)
 	}
 }
 
-int ndmar_init(struct neuron_device *nd)
+static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 {
 	int ret = 0;
 	int nc_per_dev;
 	int dma_eng_per_nc, dma_eng_per_nd;
 	enum neuron_arch arch = narch_get_arch();
 
-	if (nd->dmar_init_done)
+	if (nd->dmar_init_done[nc_idx]) {
 		return 0;
+	}
 
 
 	if (arch == NEURON_ARCH_INFERENTIA) {
@@ -506,9 +569,11 @@ int ndmar_init(struct neuron_device *nd)
 		dma_eng_per_nd = nc_per_dev * dma_eng_per_nc;
 	}
 
-	// init all seng DMA engines in the ND
+	// init all seng DMA engines in the NC
 	int eng_id;
-	for (eng_id = 0; eng_id < dma_eng_per_nd; eng_id++) {
+	int start_eng = nc_idx * dma_eng_per_nc;
+	int end_eng = (nc_idx + 1) * dma_eng_per_nc - 1;
+	for (eng_id = start_eng; eng_id <= end_eng; eng_id++) {
 		ret = ndmar_eng_init(nd, eng_id);
 		if (ret) {
 			pr_err("nd%d: DMA eng%d init failed - %d\n", nd->device_index, eng_id, ret);
@@ -517,36 +582,65 @@ int ndmar_init(struct neuron_device *nd)
 	}
 
 	// allocate H2T engines and rings
-	int nc_id;
-	for (nc_id = 0; nc_id < nc_per_dev; nc_id++) {
-		const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
+	eng_id = ndmar_get_h2t_eng_id(nd, nc_idx);
+	if (eng_id < start_eng || eng_id > end_eng) {
 		ret = ndmar_eng_init(nd, eng_id);
-                if (ret) {
-                        pr_err("nd%d: DMA eng%d init failed - %d\n", nd->device_index, eng_id, ret);
-                        return ret;
-                }
-
-		ret = ndmar_h2t_ring_alloc(nd, nc_id);
 		if (ret) {
-			pr_err("nd%d:nc%d H2T ring allocation failed - %d\n", nd->device_index, nc_id, ret);
-			return ret;
-		}
-
-		struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
-		if (eng == NULL)
-			return -EINVAL;
-		const int qid = ndmar_get_h2t_qid();
-		ret = ndmar_h2t_ring_init(eng, qid);
-		ndmar_release_engine(eng);
-		if (ret) {
-			pr_err("H2T ring init failed - %d\n", ret);
+			pr_err("nd%d: DMA eng%d init failed - %d\n", nd->device_index, eng_id, ret);
 			return ret;
 		}
 	}
 
+	ret = ndmar_h2t_ring_alloc(nd, nc_idx);
+	if (ret) {
+		pr_err("nd%d:nc%d H2T ring allocation failed - %d\n", nd->device_index, nc_idx, ret);
+		return ret;
+	}
 
-	nd->dmar_init_done = true;
+	struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
+	if (eng == NULL)
+		return -EINVAL;
+	const int qid = ndmar_get_h2t_qid();
+	ret = ndmar_h2t_ring_init(eng, qid);
+	ndmar_release_engine(eng);
+	if (ret) {
+		pr_err("H2T ring init failed - %d\n", ret);
+		return ret;
+	}
+
+	nd->dmar_init_done[nc_idx] = true;
+
 	return ret;
+}
+
+int ndmar_init_ncs(struct neuron_device *nd, uint32_t nc_map) {
+	int ret = 0;
+	int nc_per_dev;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		nc_per_dev = V1_NC_PER_DEVICE;
+	} else {
+		if (narch_is_emu())
+			nc_per_dev = nc_per_dev_param;
+		else
+			nc_per_dev = V2_NC_PER_DEVICE;
+	}
+
+	int nc_idx;
+	for (nc_idx = 0; nc_idx < nc_per_dev; nc_idx++) {
+		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
+			ret = ndmar_init_nc(nd, nc_idx);
+			if (ret) {
+				pr_err("nd%d: DMA init failed on nc %d", nd->device_index, nc_idx);
+				return ret;
+			}
+		}
+	}
+	return ret;
+}
+
+int ndmar_init(struct neuron_device *nd)
+{
+	return ndmar_init_ncs(nd, -1);
 }
 
 static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
@@ -569,15 +663,37 @@ static void ndmar_h2t_ring_free(struct neuron_device *nd, int eng_id)
 	ndmar_release_engine(eng);
 }
 
+static void ndmar_close_nc(struct neuron_device *nd, int nc_idx)
+{
+	if (!nd->dmar_init_done[nc_idx]) {
+		return;
+	}
+	const int eng_id = ndmar_get_h2t_eng_id(nd, nc_idx);
+	ndmar_h2t_ring_free(nd, eng_id);
+	nd->dmar_init_done[nc_idx] = false;
+}
+
+void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map)
+{
+	int nc_per_dev;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		nc_per_dev = V1_NC_PER_DEVICE;
+	} else {
+		if (narch_is_emu())
+			nc_per_dev = nc_per_dev_param;
+		else
+			nc_per_dev = V2_NC_PER_DEVICE;
+	}
+
+	int nc_idx;
+	for (nc_idx = 0; nc_idx < nc_per_dev; nc_idx++) {
+		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
+			ndmar_close_nc(nd, nc_idx);
+		}
+	}
+}
+
 void ndmar_close(struct neuron_device *nd)
 {
-	const int nc_per_dev  = (narch_get_arch() == NEURON_ARCH_INFERENTIA) ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE;
-	if(!nd->dmar_init_done)
-		return;
-	int nc_id;
-	for (nc_id = 0; nc_id < nc_per_dev; nc_id++) {
-		const int eng_id = ndmar_get_h2t_eng_id(nd, nc_id);
-		ndmar_h2t_ring_free(nd, eng_id);
-	}
-	nd->dmar_init_done = false;
+	ndmar_close_ncs(nd, NEURON_NC_MAP_DEVICE);
 }

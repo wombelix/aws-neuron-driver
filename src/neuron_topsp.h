@@ -17,6 +17,7 @@
  * @on_host_memory: if true, NQ is created in host memory
  * @dram_channel: If NQ is created on device memory which DRAM channel to use.
  * @dram_region: If NQ is created on device memory which DRAM region to use.
+ * @force_alloc_mem: If true, force allocate new memory (and delete already allocated memory, if any)
  * @nq_mc[out]: memchunk used by the NQ will be written here
  * @mc_ptr[out]: Pointer to memchunk backing this NQ
  *
@@ -24,7 +25,7 @@
  */
 int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
 	       u32 on_host_memory, u32 dram_channel, u32 dram_region,
-	       struct mem_chunk **nq_mc, u64 *mmap_offset);
+	       bool force_alloc_mem, struct mem_chunk **nq_mc, u64 *mmap_offset);
 
 /**
  * ts_nq_destroy() - Cleanup and free notification queue.
@@ -37,6 +38,15 @@ int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u3
  * Return: 0 on success, a negative error code otherwise.
  */
 int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type);
+
+/**
+ * ts_nq_destroy_one() - Disable notification in the device
+ *
+ * @nd: neuron device
+ * @ts_id: topsp id
+ *
+ */
+void ts_nq_destroy_one(struct neuron_device *nd, u8 ts_id);
 
 /**
  * ts_nq_destroy_all() - Disable notification in the device

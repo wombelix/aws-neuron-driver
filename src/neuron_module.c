@@ -14,12 +14,13 @@
 #define CREATE_TRACE_POINTS
 #include "neuron_trace.h"
 
-MODULE_DESCRIPTION("Neuron Driver");
+MODULE_DESCRIPTION("Neuron Driver, built from SHA: 56608623f337d300666ae2fec0e41c743f6f7da7");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.3.26.0");
+MODULE_VERSION("2.5.7.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.3.26.0-67ad286904ed6cc43a8761d89c8477de0ba961e1";
+const char driver_version[] = "2.5.7.0";
+const char driver_revision[] = "56608623f337d300666ae2fec0e41c743f6f7da7";
 
 extern int ncdev_module_init(void);
 extern void ncdev_module_exit(void);
@@ -58,7 +59,7 @@ static int __init neuron_module_init(void)
 {
 	int ret;
 
-	printk(KERN_INFO "Neuron Driver Started with Version:%s", driver_version);
+	printk(KERN_INFO "Neuron Driver Started with Version:%s-%s", driver_version, driver_revision);
 
 	nmetric_init_constants_metrics();
 

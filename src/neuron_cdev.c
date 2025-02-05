@@ -47,6 +47,7 @@ struct ncdev {
 	struct cdev cdev;
 	struct mutex ncdev_lock;
 	struct neuron_device *ndev; // neuron device associated with this device node.
+	struct device *device;
 };
 
 /* char device nodes created for each device. */
@@ -222,6 +223,16 @@ static int ncdev_dma_queue_release(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 	return ndmar_queue_release(nd, arg.eng_id, arg.qid);
+}
+
+static int ncdev_dma_quiesce_queues(struct neuron_device *nd, void *param)
+{
+	int ret;
+	struct neuron_ioctl_dma_quiesce_queues arg;
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_quiesce_queues*)param, sizeof(arg));
+	if (ret)
+		return ret;
+	return ndmar_quiesce_queues(nd, arg.nc_id, arg.engine_count, arg.queue_mask);
 }
 
 static int ncdev_dma_descriptor_copyout(struct neuron_device *nd, void *param)
@@ -534,7 +545,7 @@ int ncdev_program_engine(struct neuron_device *nd, void *param)
 	int ret;
 	struct mem_chunk *src_mc;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program__engine *)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program_engine *)param, sizeof(arg));
 	if (ret)
 		return ret;
 
@@ -552,6 +563,37 @@ int ncdev_program_engine(struct neuron_device *nd, void *param)
 		goto error;
 
 	ret = ndma_memcpy(nd, 0, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
+			  arg.dst + arg.offset, arg.size);
+
+error:
+	mc_free(&src_mc);
+	return ret;
+}
+
+int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_program_engine_nc arg;
+	int ret;
+	struct mem_chunk *src_mc;
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program_engine_nc *)param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	if (ncdev_verify_mem_region(nd, arg.dst))
+		return -ENOMEM;
+
+	ret = mc_alloc(nd, MC_LIFESPAN_LOCAL, arg.size, MEM_LOC_HOST, 0, 0, arg.nc_id, &src_mc);
+	if (ret) {
+		ret = -ENOMEM;
+		return ret;
+	}
+
+	ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + arg.offset, arg.size);
+	if (ret)
+		goto error;
+
+	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | PCI_HOST_BASE(nd),
 			  arg.dst + arg.offset, arg.size);
 
 error:
@@ -682,7 +724,7 @@ static long ncdev_bar_read(struct neuron_device *nd, u8 bar, u64 *reg_addresses,
 	int ret;
 	u64 data_size = data_count * sizeof(u32);
 	int i;
-	if (bar == 0) {
+	if (bar == 0 || bar == 2) {
 		u32 *data = NULL;
 		data = kmalloc(data_size, GFP_KERNEL);
 		if (data == NULL)
@@ -698,6 +740,14 @@ static long ncdev_bar_read(struct neuron_device *nd, u8 bar, u64 *reg_addresses,
 		ret = copy_to_user(user_va, data, data_size);
 		kfree(data);
 	} else {
+		// TODO: we don't have any use case for r/w memory over the BAR right now.  Disabling.
+		//
+		// We'd like to use DMA for r/w of BAR4 because we might expect access to large amounts of data.
+		// Access via DMA requires an application to own a TPB because it determines which of the h2t DMAs
+		// are safe to use, otherwise a TPB along with its DMA could be reset while that DMA is used here.
+		// Don't want/need to solve it now.
+		ret = -EINVAL;
+		/*
 		struct mem_chunk *mc;
 		u32 nc_id = 0;
 		dma_addr_t src_addr = reg_addresses[0];
@@ -717,6 +767,7 @@ static long ncdev_bar_read(struct neuron_device *nd, u8 bar, u64 *reg_addresses,
 		}
 		ret = copy_to_user(user_va, mc->va, data_size);
 		mc_free(&mc);
+		*/
 	}
 	return ret;
 }
@@ -816,11 +867,21 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 				trace_bar_write(nd, 2, off, data[i]);
 			}
 		} else {
+			// TODO: we don't have any use case for r/w memory over the BAR right now.  Disabling.
+			//
+			// We'd like to use DMA for r/w of BAR4 because we might expect access to large amounts of data.
+			// Access via DMA requires an application to own a TPB because it determines which of the h2t DMAs
+			// are safe to use, otherwise a TPB along with its DMA could be reset while that DMA is used here.
+			// Don't want/need to solve it now.
+			ret = -EINVAL;
+
+			/*
 			dma_addr_t dst_addr = reg_addresses[0] - (u64)nd->npdev.bar0;
 
 			ret = ndma_memcpy(nd, 0, virt_to_phys(data) | PCI_HOST_BASE(nd), dst_addr, data_size);
 			if (ret)
 				return ret;
+			*/
 		}
 	}
 done:
@@ -921,6 +982,24 @@ done:
 	return ret;
 }
 
+static long ncdev_nc_reset(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_device_reset arg;
+	int ret;
+
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	ndmar_close_ncs(nd, arg.nc_map);
+	arg.request_id = task_tgid_nr(current);
+	ret = nr_start_ncs(nd, arg.nc_map, arg.request_id);
+	if (ret) {
+		return ret;
+	}
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
 static long ncdev_device_reset_deprecated(struct neuron_device *nd)
 {
 	ndmar_close(nd);
@@ -934,14 +1013,26 @@ static long ncdev_device_reset_status_deprecated(struct neuron_device *nd, void 
 	return copy_to_user(param, &result, 1);
 }
 
+static long ncdev_nc_reset_ready(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_device_ready arg;
+	int ret;
+	arg.result = 0;
+
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	arg.result = nr_wait(nd, arg.request_id, false);
+
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
 static long ncdev_device_ready_deprecated(struct neuron_device *nd, void *param)
 {
-	int ret;
 	u8 result;
-	result = nr_wait(nd);
-	ret = ndmar_init(nd);
-	if (ret)
-		result = 0;
+	// deprecated api returns true (1) if success and false if failed.
+	result = (nr_wait(nd, task_tgid_nr(current), false) == 0);
 	return copy_to_user(param, &result, 1);
 }
 
@@ -1082,8 +1173,8 @@ static long ncdev_nc_nq_init_v1(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 
-	ret = nnq_init(nd, arg.nc_id, arg.engine_index, arg.nq_type, arg.size, true, 0, 0, &mc,
-		       &arg.mmap_offset);
+	ret = nnq_init(nd, arg.nc_id, arg.engine_index, arg.nq_type, arg.size, true, 0, 0,
+		       false, &mc, &arg.mmap_offset);
 	if (ret)
 		return ret;
 
@@ -1100,14 +1191,45 @@ static long ncdev_nc_nq_init_v2(struct neuron_device *nd, void *param)
 	if (ret)
 		return ret;
 
-	if (arg.nq_topsp)
-		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
-				 arg.on_host_memory, arg.dram_channel, arg.dram_region, &mc,
-				 &arg.mmap_offset);
-	else
+	if (arg.nq_dev_type == NQ_DEVICE_TYPE_NEURON_CORE) {
 		ret = nnq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
-			       arg.on_host_memory, arg.dram_channel, arg.dram_region, &mc,
-			       &arg.mmap_offset);
+			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
+			       false, &mc, &arg.mmap_offset);
+	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
+		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
+				 false, &mc, &arg.mmap_offset);
+	} else {
+		return -ENOSYS;
+	}
+	if (ret)
+		return ret;
+
+	arg.mem_handle = ncdev_mem_chunk_to_mem_handle(mc);
+	return copy_to_user(param, &arg, sizeof(arg));
+}
+
+static long ncdev_nc_nq_init_with_realloc_v2(struct neuron_device *nd, void *param)
+{
+	struct neuron_ioctl_notifications_init_with_realloc_v2 arg;
+	int ret;
+	struct mem_chunk *mc;
+
+	ret = neuron_copy_from_user(__func__, &arg, param, sizeof(arg));
+	if (ret)
+		return ret;
+
+	if (arg.nq_dev_type == NQ_DEVICE_TYPE_NEURON_CORE) {
+		ret = nnq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+			       arg.on_host_memory, arg.dram_channel, arg.dram_region,
+			       arg.force_alloc_mem, &mc, &arg.mmap_offset);
+	} else if (arg.nq_dev_type == NQ_DEVICE_TYPE_TOPSP) {
+		ret = ts_nq_init(nd, arg.nq_dev_id, arg.engine_index, arg.nq_type, arg.size,
+				 arg.on_host_memory, arg.dram_channel, arg.dram_region,
+				 arg.force_alloc_mem, &mc, &arg.mmap_offset);
+	} else {
+		return -ENOSYS;
+	}
 	if (ret)
 		return ret;
 
@@ -1272,19 +1394,29 @@ static long ncdev_nc_model_started_count(struct neuron_device *nd, void *param)
 // that are not compatible with old RT.  When MIN is incremented
 // it will prevent old RT from starting up.
 
-// TODO the driver might need to return different sets on different
-// architectures.
-#define RT_MIN_COMPATIBLE_VERSION 2
 // version 3 of runtime requires 1) aligned memory allocation support  2) SPROT
 // version 4 of the runtime requires support for DMA queue init w/o already allocated rings. (2.7)
-#define RT_MAX_COMPATIBLE_VERSION 4
+// version 5 of the runtime requires V2 device renumbering (don't care for V1)
+// version 6 of the runtime requires ham notification support +
+//           new V2 reset api for single-tpb reset +
+//           new notification init API with force mem realloc/resize
+#define V1_RT_MIN_COMPATIBLE_VERSION 2
+#define V1_RT_MAX_COMPATIBLE_VERSION 6
+
+#define V2_RT_MIN_COMPATIBLE_VERSION 5
+#define V2_RT_MAX_COMPATIBLE_VERSION 6
 
 static long ncdev_compatible_version(void *param)
 {
 	struct neuron_ioctl_compatible_version arg;
 
-	arg.min = RT_MIN_COMPATIBLE_VERSION;
-	arg.max = RT_MAX_COMPATIBLE_VERSION;
+	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		arg.min = V1_RT_MIN_COMPATIBLE_VERSION;
+		arg.max = V1_RT_MAX_COMPATIBLE_VERSION;
+	} else {
+		arg.min = V2_RT_MIN_COMPATIBLE_VERSION;
+		arg.max = V2_RT_MAX_COMPATIBLE_VERSION;
+	}
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
@@ -1326,7 +1458,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 	    cmd == NEURON_IOCTL_MEM_COPY || cmd == NEURON_IOCTL_MEM_GET_PA ||
 	    cmd == NEURON_IOCTL_MEM_GET_INFO || cmd == NEURON_IOCTL_BAR_WRITE ||
 	    cmd == NEURON_IOCTL_POST_METRIC || cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V1 ||
-	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2) {
+	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2 ||
+	    cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_WITH_REALLOC_V2) {
 		if (!npid_is_attached(nd)) {
 			pr_err("Process not allowed to request cmd=%u, pid not attached\n", cmd);
 			npid_print_usage(nd);
@@ -1338,12 +1471,16 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_device_reset_deprecated(nd);
 	} else if (cmd == NEURON_IOCTL_DEVICE_RESET_STATUS) {
 		return ncdev_device_reset_status_deprecated(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NC_RESET) {
+		return ncdev_nc_reset(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_CINIT_SET_STATE) {
 		return ncdev_cinit_set_state(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NC_MODEL_STARTED_COUNT) {
 		return ncdev_nc_model_started_count(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_READY) {
 		return ncdev_device_ready_deprecated(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NC_RESET_READY) {
+		return ncdev_nc_reset_ready(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_INFO) {
 		return ncdev_device_info(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_INIT) {
@@ -1374,6 +1511,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_dma_queue_get_state(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_DESCRIPTOR_COPYOUT) {
 		return ncdev_dma_descriptor_copyout(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_DMA_QUIESCE_QUEUES) {
+		return ncdev_dma_quiesce_queues(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC) {
 		return ncdev_mem_alloc(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC_V2) {
@@ -1392,6 +1531,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_mem_buf_copy(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE) {
 		return ncdev_program_engine(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE_NC) {
+		return ncdev_program_engine_nc(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEMSET) {
 		return ncdev_memset(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_SEMAPHORE_READ) {
@@ -1416,6 +1557,8 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_nc_nq_init_v1(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_V2) {
 		return ncdev_nc_nq_init_v2(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_INIT_WITH_REALLOC_V2) {
+		return ncdev_nc_nq_init_with_realloc_v2(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_DESTROY_V1) {
 		return 0;
 	} else if (cmd == NEURON_IOCTL_NOTIFICATIONS_QUEUE_INFO) {
@@ -1443,7 +1586,6 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 
 static int ncdev_open(struct inode *inode, struct file *filep)
 {
-	int ret;
 	struct ncdev *dev;
 	struct neuron_device *nd;
 
@@ -1453,19 +1595,17 @@ static int ncdev_open(struct inode *inode, struct file *filep)
 	dev = &devnodes[iminor(inode)];
 	nd = dev->ndev;
 
-	// wait for reset to complete.
-	ret = nr_wait(nd);
-	if (!ret) {
-		pr_err("nd%d: failed to reset device\n", nd->device_index);
-		return EAGAIN;
+	// wait for device init to complete.
+	// TODO: implement some better wait system than schedule()
+	while (nd->device_state == NEURON_DEVICE_STATE_RESET) {
+		schedule();
 	}
+	if (nd->device_state == NEURON_DEVICE_STATE_INVALID) {
+		pr_err("nd%d is in an invalid state", nd->device_index);
+		return -EINVAL;
+	}
+
 	mutex_lock(&dev->ncdev_lock);
-	ret = ndmar_init(nd);
-	if (ret) {
-		pr_err("nd%d: failed to initialize DMA engines\n", nd->device_index);
-		mutex_unlock(&dev->ncdev_lock);
-		return EAGAIN;
-	}
 	if (!npid_attach(nd)) {
 		pr_err("nd%d: pid %d failed to open\n", nd->device_index, task_tgid_nr(current));
 		npid_print_usage(nd);
@@ -1500,6 +1640,9 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 
 	// if the current process is going away then cleanup per process state
 	if (npid_is_attached(nd) == 1) {
+		// If this proc exited in the middle of a reset, wait for the reset to be processed.
+		nr_wait(nd, task_tgid_nr(current), true);
+
 		// before resetting DMA, allow current NeuronCore execution to finish and settle.
 		msleep(1000);  // TODO - investigate directly clearing semaphore and events.
 		ndmar_handle_process_exit(nd, task_tgid_nr(current));
@@ -1562,6 +1705,43 @@ static struct file_operations ncdev_fops = {
 	.mmap = ncdev_mmap,
 };
 
+static int reset_ret = -1;
+
+static ssize_t device_reset_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+    return sprintf(buf, "%d\n", reset_ret);
+}
+
+static ssize_t driver_reset_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+{
+	int minor = MINOR(dev->devt);
+	reset_ret = nr_start_ncs(devnodes[minor].ndev, NEURON_NC_MAP_DEVICE, NEURON_RESET_REQUEST_ALL);
+
+	return count;
+}
+
+static DEVICE_ATTR(reset, S_IWUSR | S_IRUSR, device_reset_show, driver_reset_store);
+
+static ssize_t neuron_core_count_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	int ret = 0;
+	int neuron_core_count = (narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE);
+	ret = sprintf(buf, "%d", neuron_core_count);
+	return ret;
+}
+
+static DEVICE_ATTR(core_count, S_IRUSR, neuron_core_count_show, NULL);
+
+static struct attribute *attrs[] = {
+	&dev_attr_reset.attr,
+	&dev_attr_core_count.attr,
+   	NULL,
+};
+
+static struct attribute_group attr_group = {
+   	.attrs = attrs,
+};
+
 static inline int ncdev_init_device_node(struct ncdev *devnode, const char *dev_name, int minor,
 				  struct file_operations *fops, struct neuron_device *ndev)
 {
@@ -1584,10 +1764,19 @@ static inline int ncdev_init_device_node(struct ncdev *devnode, const char *dev_
 	device = device_create(neuron_dev_class, NULL, /* no parent device */
 			       devno, NULL, /* no additional data */
 			       "%s", dev_name);
-
 	if (IS_ERR(device)) {
 		ret = PTR_ERR(device);
 		pr_err("error %d while trying to create %s\n", ret, dev_name);
+		device_destroy(neuron_dev_class, devno);
+		cdev_del(cdev);
+		return ret;
+	}
+	devnode->device = device;
+
+	ret = sysfs_create_group(&(device->kobj), &attr_group);
+	if (ret) {
+		pr_err("failed to create an attribute group for %s\n", dev_name);
+		sysfs_remove_group(&(device->kobj), &attr_group);
 		device_destroy(neuron_dev_class, devno);
 		cdev_del(cdev);
 		return ret;
@@ -1618,6 +1807,8 @@ static int ncdev_remove_device_node(struct ncdev *devnode)
 {
 	int minor;
 	dev_t devno;
+
+	sysfs_remove_group(&(devnode->device->kobj), &attr_group);
 
 	minor = devnode->minor;
 	devno = MKDEV(major, minor);

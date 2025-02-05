@@ -40,6 +40,16 @@ struct neuron_ioctl_device_init {
 	__u32 mem_regions; // [in] How many regions to create in the device memory
 };
 
+struct neuron_ioctl_device_reset {
+	__u32 nc_map;     // [in] NeuronCore map (NEURON_NC_MAP_DEVICE for full device)
+	__u32 request_id; // [out] ID of the reset request
+};
+
+struct neuron_ioctl_device_ready {
+	__u32 request_id; // [in] ID of the reset request
+	__s32 result;     // [out] return status of the reset
+};
+
 struct neuron_ioctl_mem_get_info {
 	__u64 mem_handle; // [in] Memory handle of the allocated memory.
 	__u64 *mmap_offset; // [out] offset where this mem can be mmapped
@@ -102,6 +112,14 @@ struct neuron_ioctl_program_engine {
 	__u32 offset; // [in] Offset in the dst address where the data to be written/read.
 };
 
+struct neuron_ioctl_program_engine_nc {
+	__u32 nc_id; // [in] Neuron core id
+	__u64 dst; // [in] Destination engine address
+	void *buffer; // [in] Buffer from/to where data to be copied.
+	__u32 size; // [in] Size of the data to be copied.
+	__u32 offset; // [in] Offset in the dst address where the data to be written/read.
+};
+
 struct neuron_ioctl_bar_rw {
 	__u32 bar; // [in] BAR index
 	__u64 *address; // [in] Array of register addresses.
@@ -136,6 +154,14 @@ struct neuron_ioctl_dma_queue_init {
 struct neuron_ioctl_dma_queue_release {
 	__u32 eng_id; // [in] DMA engine index
 	__u32 qid; // [in] Queue index in the DMA engine
+};
+
+#define DMA_QUIESCE_MAX_ENG 64 // arbitrary large-enough number of DMA engines
+struct neuron_ioctl_dma_quiesce_queues {
+	__u32 nc_id; // [in] NC index
+						  // below is unused and not implemented
+	__u32 engine_count;   // [in] total number of engines in the array below
+	__u32 queue_mask[DMA_QUIESCE_MAX_ENG]; // [in] which queues per engine to reset
 };
 
 struct neuron_ioctl_dma_ack_completed {
@@ -203,13 +229,27 @@ struct neuron_ioctl_notifications_init_v1 {
 
 struct neuron_ioctl_notifications_init_v2 {
 	__u32 nq_dev_id; // [in] Notification device Index
-	__u32 nq_topsp; // [in] If true, notification for TopSp else NeuronCore.
+	__u32 nq_dev_type; // [in] Notification device type.
 	__u32 nq_type; // [in] Notification queue type
 	__u32 engine_index; // [in] Engine Index.
 	__u32 size; // [in] Notification queue size in bytes
 	__u32 on_host_memory; // [in] If true allocates NQ in host memory; else allocates in device memory
 	__u32 dram_channel; // [in] DRAM channel in device memory
 	__u32 dram_region; // [in] DRAM region in device memory
+	__u64 mmap_offset; // [out] mmap() offset for this NQ
+	__u64 mem_handle; // [out] mem_handle for this NQ
+};
+
+struct neuron_ioctl_notifications_init_with_realloc_v2 {
+	__u32 nq_dev_id; // [in] Notification device Index
+	__u32 nq_dev_type; // [in] Notification device type.
+	__u32 nq_type; // [in] Notification queue type
+	__u32 engine_index; // [in] Engine Index.
+	__u32 size; // [in] Notification queue size in bytes
+	__u32 on_host_memory; // [in] If true allocates NQ in host memory; else allocates in device memory
+	__u32 dram_channel; // [in] DRAM channel in device memory
+	__u32 dram_region; // [in] DRAM region in device memory
+	__u32 force_alloc_mem; // If true force allocates new memory (and deletes already allocated memory, if any)
 	__u64 mmap_offset; // [out] mmap() offset for this NQ
 	__u64 mem_handle; // [out] mem_handle for this NQ
 };
@@ -232,7 +272,7 @@ struct neuron_ioctl_notifications_destroy_nq {
 
 struct neuron_ioctl_notifications_queue_info {
 	__u8 nq_dev_id; // [in] Neuron Core Index or top sp index
-	__u8 nq_top_sp; // [in] If set then get info for top sp NQ
+	__u8 nq_dev_type; // [in] Neuron device type
 	__u8 nq_type; // [in] Notification queue type
 	__u8 engine_index; // [in] Engine Index.
 	__u32 head; // [out] Notification queue head
@@ -367,6 +407,8 @@ struct neuron_ioctl_device_info {
 #define NEURON_IOCTL_DMA_COPY_DESCRIPTORS _IOR(NEURON_IOCTL_BASE, 38, struct neuron_ioctl_dma_copy_descriptors *)
 /** Copy descriptors in the Queue to host memory */
 #define NEURON_IOCTL_DMA_DESCRIPTOR_COPYOUT _IOWR(NEURON_IOCTL_BASE, 39, struct neuron_ioctl_dma_descriptor_copyout *)
+/** Quiesce all DMA queue used by one NC */
+#define NEURON_IOCTL_DMA_QUIESCE_QUEUES _IOR(NEURON_IOCTL_BASE, 40, struct neuron_ioctl_dma_quiesce_all*)
 
 /** Increment, decrement, get and set operations on NeuronCore's sempahore and events
  *  Applications can use semaphore and event to synchronize with host software.
@@ -382,6 +424,7 @@ struct neuron_ioctl_device_info {
 #define NEURON_IOCTL_NOTIFICATIONS_INIT_V1 _IOR(NEURON_IOCTL_BASE, 51, struct neuron_ioctl_notifications_init_v1 *)
 #define NEURON_IOCTL_NOTIFICATIONS_DESTROY_V1 _IOR(NEURON_IOCTL_BASE, 52, struct neuron_ioctl_notifications_destroy *)
 #define NEURON_IOCTL_NOTIFICATIONS_INIT_V2 _IOR(NEURON_IOCTL_BASE, 53, struct neuron_ioctl_notifications_init_v2 *)
+#define NEURON_IOCTL_NOTIFICATIONS_INIT_WITH_REALLOC_V2 _IOR(NEURON_IOCTL_BASE, 54, struct neuron_ioctl_notifications_init_with_realloc_v2 *)
 
 #define NEURON_IOCTL_NOTIFICATIONS_QUEUE_INFO _IOR(NEURON_IOCTL_BASE, 58, struct neuron_ioctl_notifications_queue_info *)
 
@@ -412,5 +455,14 @@ struct neuron_ioctl_device_info {
 
 /** Returns pci device information */
 #define NEURON_IOCTL_DEVICE_BDF _IOR(NEURON_IOCTL_BASE, 101, struct neuron_ioctl_device_bdf *)
+
+/** Resets the requested NC (-1 for full device) */
+#define NEURON_IOCTL_NC_RESET _IOR(NEURON_IOCTL_BASE, 103, struct neuron_ioctl_device_reset *)
+
+/** Waits for NC reset to complete */
+#define NEURON_IOCTL_NC_RESET_READY _IOR(NEURON_IOCTL_BASE, 104, struct neuron_ioctl_device_ready *)
+
+/** Neuron-core specific versions of program_engine ioctl to target right cores/dmas */
+#define NEURON_IOCTL_PROGRAM_ENGINE_NC _IOWR(NEURON_IOCTL_BASE, 105, struct neuron_ioctl_program_engine_nc *)
 
 #endif

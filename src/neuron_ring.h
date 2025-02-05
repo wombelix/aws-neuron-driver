@@ -65,6 +65,16 @@ struct ndma_eng {
 int ndmar_init(struct neuron_device *nd);
 
 /**
+ * ndmar_init_ncs() - Initialize DMA structures for given neuron core
+ *
+ * @nd:     Neuron device to initialize
+ * @nc_map: Neuron core to initialize (NEURON_NC_MAP_DEVICE for entire device)
+ *
+ * Return: 0 if initialization succeeds, a negative error code otherwise.
+ */
+int ndmar_init_ncs(struct neuron_device *nd, uint32_t nc_map);
+
+/**
  * ndmar_close() - Close and cleanup DMA for given neuron device
  *
  * @nd: Neuron device to cleanup
@@ -72,6 +82,16 @@ int ndmar_init(struct neuron_device *nd);
  * Return: 0 if cleanup succeeds, a negative error code otherwise.
  */
 void ndmar_close(struct neuron_device *nd);
+
+/**
+ * ndmar_close_ncs() - Close and cleanup DMA for given neuron core
+ *
+ * @nd:     Neuron device to cleanup
+ * @nc_map: Neuron core to cleanup (NEURON_NC_MAP_DEVICE for entire device)
+ *
+ * Return: 0 if cleanup succeeds, a negative error code otherwise.
+ */
+void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map);
 
 /**
  * ndmar_eng_init() - Initialize a DMA engine
@@ -123,6 +143,18 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
  * Return: 0 if queue release succeeds, a negative error code otherwise.
  */
 int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid);
+
+/**
+ * ndmar_quiesce_queues() - Quiesce DMA queues.
+ *
+ * @nd: Neuron device which contains the DMA engines
+ * @nc_id: NC id that owns the queues
+ * @engine_count: the number of elements in the queue_mask array - currently not used, always pass 0
+ * @queue_mask:   per engine queues to reset - currently not used and ignored.
+ *
+ * Return: 0 if queue release succeeds, a negative error code otherwise.
+ */
+int ndmar_quiesce_queues(struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask);
 
 /**
  * ndmar_handle_process_exit() - Stops all the queues used by the given process.

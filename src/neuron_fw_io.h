@@ -31,10 +31,16 @@ enum { FW_IO_SUCCESS = 0, // completed successfully
 	FW_IO_UNKNOWN_COMMAND // request failed because command is not supported
 };
 
+// Bitmap of PIR reset types to be written to FW_IO_REG_RESET_OFFSET
+enum { FW_IO_RESET_TYPE_DEVICE = 1,
+	FW_IO_RESET_TYPE_TPB = 2  // Requires FW_IO_REG_RESET_TPB_MAP_OFFSET to be populated with a tpb map prior to use
+};
+
 // offsets in MISC RAM for FWIO
 enum {
 	FW_IO_REG_DEVICE_ID_OFFSET = 0x24,
 	FW_IO_REG_METRIC_OFFSET = 0x100, // 0x100 to 0x17F, 128 bytes
+	FW_IO_REG_RESET_TPB_MAP_OFFSET = 0x1d8,
 	FW_IO_REG_RESET_OFFSET = 0x1ec,
 	FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET = 0x1f4,
 	FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET = 0x1f0,
@@ -99,7 +105,7 @@ int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req,
  * Return: fwio context on success, NULL on failure.
  */
 struct fw_io_ctx *fw_io_setup(int device_index, void __iomem *bar0, u64 bar0_size,
-			      void __iomem *bar2, u64 bar2_size);
+				  void __iomem *bar2, u64 bar2_size);
 
 /**
  * fw_io_destroy() - Removes previously setup FWIO.
@@ -123,8 +129,12 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size);
  * fw_io_initiate_reset() - Initiate device local reset.
  *
  * @bar0: Device's BAR0 base address
+ * @device_reset: True if we are doing a device-level reset
+ * @tpb_reset_map: If device_reset is false (tpb reset), bitmap of blocks to reset
+ *     [1:0] NC mask
+ *     [13:8] TopSp mask
  */
-void fw_io_initiate_reset(void __iomem *bar0);
+void fw_io_initiate_reset(void __iomem *bar0, bool device_reset, u32 tpb_reset_map);
 
 /**
  * fw_io_is_reset_initiated() - Check if local reset is initiated or not.

@@ -377,6 +377,35 @@ static int udma_q_init_validate(struct udma *udma, u32 qid, struct udma_q_params
 	return 0;
 }
 
+int udma_q_pause(struct udma_q *udma_q)
+{
+	udma_q_enable(udma_q, 0);
+	return 0;
+}
+
+/*
+ * Reset a udma queue
+ */
+static int udma_q_reset(struct udma_q *udma_q)
+{
+	u32 __iomem *q_sw_ctrl_reg;
+
+	BUG_ON(udma_q->cdesc_size != 0);
+
+	udma_q_pause(udma_q);
+
+	/* Assert the queue reset */
+	if (udma_q->type == UDMA_TX) {
+		q_sw_ctrl_reg = &udma_q->q_regs->m2s_q.q_sw_ctrl;
+		reg_write32(q_sw_ctrl_reg, UDMA_M2S_Q_SW_CTRL_RST_Q);
+	} else {
+		q_sw_ctrl_reg = &udma_q->q_regs->s2m_q.q_sw_ctrl;
+		reg_write32(q_sw_ctrl_reg, UDMA_S2M_Q_SW_CTRL_RST_Q);
+	}
+	return 0;
+}
+
+
 /** Initializes the udma queue data structure.
  */
 static void udma_q_init_internal(struct udma *udma, u32 qid, struct udma_q_params *q_params)
@@ -427,6 +456,8 @@ static void udma_q_init_internal(struct udma *udma, u32 qid, struct udma_q_param
 
 	/* reset the queue pointers */
 	udma_q_set_pointers(udma_q);
+
+	udma_q_enable(udma_q, 1);
 }
 
 /** Validates and Initializes the udma queue data structure and hardware.
@@ -463,26 +494,6 @@ static bool udma_q_is_enabled(struct udma_q *udma_q)
 		return true;
 
 	return false;
-}
-
-/*
- * Reset a udma queue
- */
-int udma_q_reset(struct udma_q *udma_q)
-{
-	u32 __iomem *q_sw_ctrl_reg;
-
-	BUG_ON(udma_q->cdesc_size != 0);
-
-	/* Assert the queue reset */
-	if (udma_q->type == UDMA_TX) {
-		q_sw_ctrl_reg = &udma_q->q_regs->m2s_q.q_sw_ctrl;
-		reg_write32(q_sw_ctrl_reg, UDMA_M2S_Q_SW_CTRL_RST_Q);
-	} else {
-		q_sw_ctrl_reg = &udma_q->q_regs->s2m_q.q_sw_ctrl;
-		reg_write32(q_sw_ctrl_reg, UDMA_S2M_Q_SW_CTRL_RST_Q);
-	}
-	return 0;
 }
 
 /*

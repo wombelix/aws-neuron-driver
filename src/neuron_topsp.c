@@ -88,7 +88,7 @@ static int ts_nq_destroy(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 n
 
 
 int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u32 size,
-	       u32 on_host_memory, u32 dram_channel, u32 dram_region,
+	       u32 on_host_memory, u32 dram_channel, u32 dram_region, bool force_alloc_mem,
 	       struct mem_chunk **nq_mc, u64 *mmap_offset)
 {
 	// Check that size is power of 2
@@ -105,13 +105,18 @@ int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u3
 		return -EINVAL;
 
 	struct mem_chunk *mc = nd->ts_nq_mc[ts_id][nq_id];
-	if (mc == NULL) {
+	if (mc == NULL || force_alloc_mem) {
+		struct mem_chunk *_mc = NULL;
 		int ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, size, (on_host_memory) ? 0 : size, on_host_memory ? MEM_LOC_HOST : MEM_LOC_DEVICE,
-				   dram_channel, dram_region, 0, &mc);
+				   dram_channel, dram_region, 0, &_mc);
 		if (ret)
 			return ret;
-		ts_nq_set_hwaddr(nd, ts_id, eng_index, nq_type, size, mc->pa);
-		nd->ts_nq_mc[ts_id][nq_id] = mc;
+		ts_nq_set_hwaddr(nd, ts_id, eng_index, nq_type, size, _mc->pa);
+		nd->ts_nq_mc[ts_id][nq_id] = _mc;
+		if (mc) {
+			mc_free(&mc);
+		}
+		mc = _mc;
 	}
 	if (mc->mem_location == MEM_LOC_HOST)
 		*mmap_offset = nmmap_offset(mc);
@@ -121,17 +126,21 @@ int ts_nq_init(struct neuron_device *nd, u8 ts_id, u8 eng_index, u32 nq_type, u3
 	return 0;
 }
 
+void ts_nq_destroy_one(struct neuron_device *nd, u8 ts_id)
+{
+	u8 eng_index;
+	u8 nq_type;
+	for (eng_index = 0; eng_index < MAX_NQ_ENGINE; eng_index++) {
+		for (nq_type = 0; nq_type < MAX_NQ_TYPE; nq_type++) {
+			ts_nq_destroy(nd, ts_id, eng_index, nq_type);
+		}
+	}
+}
+
 void ts_nq_destroy_all(struct neuron_device *nd)
 {
 	u8 ts_id;
-	u8 eng_index;
-	u8 nq_type;
-
 	for (ts_id = 0; ts_id < TS_PER_DEVICE(nd); ts_id++) {
-		for (eng_index = 0; eng_index < MAX_NQ_ENGINE; eng_index++) {
-			for (nq_type = 0; nq_type < MAX_NQ_TYPE; nq_type++) {
-				ts_nq_destroy(nd, ts_id, eng_index, nq_type);
-			}
-		}
+		ts_nq_destroy_one(nd, ts_id);
 	}
 }

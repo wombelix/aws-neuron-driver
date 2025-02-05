@@ -13,6 +13,7 @@
 #include <linux/pci.h>
 #include <linux/atomic.h>
 #include <linux/version.h>
+#include <linux/delay.h>
 
 #include "neuron_device.h"
 #include "neuron_ds.h"
@@ -104,7 +105,6 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 	ret = nr_create_thread(nd);
 	if (ret)
 		return ret;
-	nr_start(nd);
 
 	// Set the core init state to invalid
 	nci_reset_state(nd);
@@ -128,6 +128,10 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 		pci_info(nd->pdev, "create device node failed\n");
 		goto fail_chardev;
 	}
+
+	ret = nr_start_ncs(nd, NEURON_NC_MAP_DEVICE, NEURON_RESET_REQUEST_ALL);
+	if (ret)
+		return ret;
 
 	return 0;
 
@@ -187,6 +191,16 @@ static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &revision);
 	narch_init(device == TRN_DEVICE_ID0 ? NEURON_ARCH_TRN : NEURON_ARCH_INFERENTIA, revision);
 }
+
+// for V2 rename Neuron devices for better customer experience.
+// https://quip-amazon.com/rRRZAGmIdAaW/TRN1-Discovery
+// map routing id to user id:
+const u32 v2_routing_id_to_user_id[MAX_NEURON_DEVICE_COUNT] = {
+	0,   4,  1,  5,
+	3,   7,  2,  6,
+	12,  8, 13,  9,
+	15, 11, 14, 10 };
+
 
 static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
@@ -273,16 +287,25 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	nd->device_index = atomic_add_return(1, &device_count) - 1;
 #endif 
 	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
-		nd->device_index = 0;
-		ret = fw_io_device_id_read(nd->npdev.bar0, &nd->device_index);
-		BUG_ON(ret != 0);
-		// TODO temporary for the bringup, remove
-		printk("** BDF: %2.2x:%2.2x.%x => nd[%d]\n", dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), nd->device_index);
-		if (nd->device_index < 0) {
-			pr_err("Invalid device index %u", nd->device_index);
+		u32 routing_id = (u32)-1;
+		// Poll the device id until the device is ready
+		int i;
+		for (i = 0; i < 300; i++) {
+			ret = fw_io_device_id_read(nd->npdev.bar0, &routing_id);
+			BUG_ON(ret != 0);
+			if (routing_id != 0xdeadbeef) {
+				break;
+			}
+			msleep(1000);
+		}
+		if (routing_id < 0 || routing_id >= MAX_NEURON_DEVICE_COUNT) {
+			pr_err("Invalid device index %u", routing_id);
 			ret = -ENODEV;
 			goto fail_bar2_resource;
 		}
+		nd->device_index = v2_routing_id_to_user_id[routing_id];
+		// TODO temporary for the bringup, remove
+		printk("** BDF: %2.2x:%2.2x.%x => nd[%d] (routing id: %u)\n", dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), nd->device_index, routing_id);
 	}
 
 	ret = neuron_pci_device_init(nd);
