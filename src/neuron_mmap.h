@@ -42,13 +42,12 @@ struct nmmap_node {
 void nmmap_create_node(struct neuron_device *nd, void *va, pid_t pid, u64 size, u64 pa);
 
 /**
- * nmmap_delete_node - Deletes the mmap node. If external drivers have any free function regsistered
+ * nmmap_delete_node - Deletes all mmap nodes for the current PID. If external drivers have any free function regsistered
  * then this will call the routine
  *
- * @vma: virtual memory area
+ * @nd: neuron device
  */
-void nmmap_delete_node(struct vm_area_struct *vma);
-
+void nmmap_delete_all_nodes(struct neuron_device *nd);
 /**
  * nmmap_offset() - Return mmap offset for given memory chunk.
  *

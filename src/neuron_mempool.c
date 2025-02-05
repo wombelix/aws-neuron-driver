@@ -264,7 +264,7 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 	u64 device_dram_addr[MAX_DRAM_CHANNELS];
 	u64 device_dram_size[MAX_DDR_REGIONS];
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		mpset->num_channels = V1_MAX_DRAM_CHANNELS;
 		device_dram_addr[0] = P_0_DRAM_0_BASE;
 		device_dram_addr[1] = P_0_DRAM_1_BASE;
@@ -308,7 +308,7 @@ static int mpset_init_device_pools(struct mempool_set *mpset, struct neuron_devi
 	for (channel = 0; channel < mpset->num_channels; channel++) {
 		for (region = 0; region < mpset->mp_device_num_regions; region++) {
 			const dma_addr_t start_addr = device_dram_addr[channel] + (region * region_sz);
-			if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+			if (narch_get_arch() == NEURON_ARCH_V1)
 				continue;
 			struct mem_chunk *mc = NULL;
 			ret = mc_alloc(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, MEM_LOC_DEVICE,

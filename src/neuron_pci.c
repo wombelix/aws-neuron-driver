@@ -220,7 +220,7 @@ int neuron_pci_device_close(struct neuron_device *nd)
 static int neuron_pci_get_apb_bar(struct neuron_device *nd)
 {
 	int apb_bar;
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
+	if (narch_get_arch() == NEURON_ARCH_V2) {
 		if (narch_is_emu())
 			apb_bar = TRN_APB_BAR_EMU;
 		else if (narch_is_qemu())
@@ -240,7 +240,7 @@ static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 	u8 revision;
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &revision);
 	// TODO - this is temp 
-	narch_init(device == TRN1_DEVICE_ID0 || (device == INF2_DEVICE_ID0)  ? NEURON_ARCH_TRN : NEURON_ARCH_INFERENTIA, revision);
+	narch_init(device == TRN1_DEVICE_ID0 || (device == INF2_DEVICE_ID0)  ? NEURON_ARCH_V2 : NEURON_ARCH_V1, revision);
 }
 
 // for V2 rename Neuron devices for better customer experience.
@@ -304,7 +304,7 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	nd->npdev.bar0 = pci_iomap(dev, apb_bar, pci_resource_len(dev, apb_bar));
 	nd->npdev.bar0_size = pci_resource_len(dev, apb_bar);
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		ret = pci_request_region(dev, INF_AXI_BAR, "AXI");
 		if (ret != 0) {
 			pci_info(dev, "Can't map BAR2\n");
@@ -348,7 +348,7 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		goto fail_bar2_resource;
 	}
 
-	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() != NEURON_ARCH_V1) {
 		u32 routing_id = (u32)-1;
 		// Poll the device id until the device is ready
 		int i;
@@ -432,7 +432,7 @@ fail_memset_mc:
 fail_nds_resource:
 	neuron_ds_destroy(&nd->datastore);
 fail_bar2_resource:
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_V1)
 		pci_release_region(dev, INF_AXI_BAR);
 fail_bar2_map:
 fail_bar0_resource:
@@ -461,7 +461,7 @@ static void neuron_pci_remove(struct pci_dev *dev)
 	apb_bar = neuron_pci_get_apb_bar(nd);
 	pci_release_region(dev, apb_bar);
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_V1)
 		pci_release_region(dev, INF_AXI_BAR);
 
 	pci_release_region(dev, BAR4);

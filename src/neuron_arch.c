@@ -32,7 +32,7 @@ void narch_init(enum neuron_arch arch, u8 revision)
 		return;
 	arch_info.arch = arch;
 	arch_info.revision = revision;
-	v2_chip = (arch == NEURON_ARCH_TRN);
+	v2_chip = (arch == NEURON_ARCH_V2);
 }
 
 enum neuron_arch narch_get_arch(void)

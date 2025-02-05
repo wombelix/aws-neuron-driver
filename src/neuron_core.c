@@ -54,25 +54,25 @@ DECLARE_FAULT_ATTR(neuron_fail_nc_mmap);
 #define NC_EVENT_SIZE 4
 
 #define MMAP_P_OFFSET(nd)                                                                          		\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_P_OFFSET : V2_MMAP_P_OFFSET)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_P_OFFSET : V2_MMAP_P_OFFSET)
 #define MMAP_NC_EVENT_OFFSET(nd)                                                                   		\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_NC_EVENT_OFFSET : V2_MMAP_NC_EVENT_OFFSET)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_EVENT_OFFSET : V2_MMAP_NC_EVENT_OFFSET)
 #define MMAP_NC_SEMA_READ_OFFSET(nd)                                                               		\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_NC_SEMA_READ_OFFSET : V2_MMAP_NC_SEMA_READ_OFFSET)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_READ_OFFSET : V2_MMAP_NC_SEMA_READ_OFFSET)
 #define MMAP_NC_SEMA_SET_OFFSET(nd)                                                                	\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_NC_SEMA_SET_OFFSET : V2_MMAP_NC_SEMA_SET_OFFSET)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_SET_OFFSET : V2_MMAP_NC_SEMA_SET_OFFSET)
 #define MMAP_NC_SEMA_INCR_OFFSET(nd)                                                               	\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_NC_SEMA_INCR_OFFSET : V2_MMAP_NC_SEMA_INCR_OFFSET)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_INCR_OFFSET : V2_MMAP_NC_SEMA_INCR_OFFSET)
 #define MMAP_NC_SEMA_DECR_OFFSET(nd)                                                               	\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_NC_SEMA_DECR_OFFSET : V2_MMAP_NC_SEMA_DECR_OFFSET)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SEMA_DECR_OFFSET : V2_MMAP_NC_SEMA_DECR_OFFSET)
 
 #define MMAP_NC_SIZE(nd)                                                                           	\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_MMAP_NC_SIZE : V2_MMAP_NC_SIZE)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_MMAP_NC_SIZE : V2_MMAP_NC_SIZE)
 
 #define SEMAPHORE_COUNT(nd)                                                                        	\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_SEMAPHORE_COUNT : V2_SEMAPHORE_COUNT)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_SEMAPHORE_COUNT : V2_SEMAPHORE_COUNT)
 #define EVENTS_COUNT(nd)                                                                           	\
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_EVENTS_COUNT : V2_EVENTS_COUNT)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_EVENTS_COUNT : V2_EVENTS_COUNT)
 
 static u64 nc_get_axi_offset(struct neuron_device *nd, int nc_index)
 {
@@ -81,9 +81,9 @@ static u64 nc_get_axi_offset(struct neuron_device *nd, int nc_index)
 
 static void *nc_get_semaphore_base(struct neuron_device *nd, u8 nc_id)
 {
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_V1)
 		return nd->npdev.bar2 + nc_get_axi_offset(nd, nc_id);
-	else if (narch_get_arch() == NEURON_ARCH_TRN)
+	else if (narch_get_arch() == NEURON_ARCH_V2)
 		return nd->npdev.bar0 + V2_PCIE_BAR0_TPB_0_OFFSET +
 		       (V2_PCIE_BAR0_TPB_0_SIZE * nc_id);
 	else
@@ -144,9 +144,9 @@ int nc_semaphore_decrement(struct neuron_device *nd, u8 nc_id, u16 semaphore_ind
 static void *nc_get_event_addr(struct neuron_device *nd, u8 nc_id, u16 event_index)
 {
 	void *base;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_V1)
 		base = nd->npdev.bar2 + nc_get_axi_offset(nd, nc_id) + MMAP_NC_EVENT_OFFSET(nd);
-	else if (narch_get_arch() == NEURON_ARCH_TRN)
+	else if (narch_get_arch() == NEURON_ARCH_V2)
 		base = nd->npdev.bar0 + V2_PCIE_BAR0_TPB_0_OFFSET +
 		       (V2_PCIE_BAR0_TPB_0_SIZE * nc_id) + MMAP_NC_EVENT_OFFSET(nd);
 	else

@@ -35,7 +35,7 @@
 #define TRN1_DEVICE_ID0 0x7164
 
 #define NC_PER_DEVICE(nd)                                                                          \
-	(narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE)
+	(narch_get_arch() == NEURON_ARCH_V1 ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE)
 
 // Global host memory buf size used for memset the device memory
 #define MEMSET_HOST_BUF_SIZE MAX_DMA_DESC_SIZE // guessed optimal DMA transfer and PCIe TLP size.
@@ -102,7 +102,7 @@ struct neuron_device {
 	struct nsysfsmetric_metrics sysfs_metrics;
 };
 
-#define PCI_HOST_BASE(nd) (narch_get_arch() == NEURON_ARCH_TRN ? V2_PCIE_A0_BASE : PCIEX8_0_BASE)
+#define PCI_HOST_BASE(nd) (narch_get_arch() == NEURON_ARCH_V2 ? V2_PCIE_A0_BASE : PCIEX8_0_BASE)
 
 /**
  * neuron_pci_get_device() - Returns devices associated with given index.

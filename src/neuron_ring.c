@@ -51,7 +51,7 @@ static struct ndma_ring *ndmar_get_ring(struct ndma_queue *queue)
 }
 
 uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id) {
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
+	if (narch_get_arch() == NEURON_ARCH_V2) {
 		return (nc_id == 0) ? V2_D2H_IDX : V2_H2D_IDX;
 	} else {
 		return  (nc_id * V1_DMA_ENG_PER_NC) + (V1_DMA_ENG_PER_NC - 1);
@@ -60,12 +60,12 @@ uint32_t ndmar_get_h2t_eng_id(struct neuron_device *nd, uint32_t nc_id) {
 
 int ndmar_get_h2t_qid(void)
 {
-       return (narch_get_arch() == NEURON_ARCH_TRN) ? 0 : V1_MAX_DMA_RINGS - 1;
+       return (narch_get_arch() == NEURON_ARCH_V2) ? 0 : V1_MAX_DMA_RINGS - 1;
 }
 
 bool ndmar_is_nx_ring(uint32_t eng_id, uint32_t q_id)
 {
-	if (narch_get_arch() != NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() != NEURON_ARCH_V1) {
 		// for v2 the last queue is reserved for collectives, and the second
 		// to last queue in engs 0-10 are reserved for NX cores
 		return (q_id == (V2_DMA_QUEUE_PER_ENG - 2)) && ((eng_id % V2_DMA_ENG_PER_NC) < (V2_TPB_ENG_PER_NC + V2_TS_PER_DEVICE));
@@ -210,7 +210,7 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 {
 	int ret, eng_id, qid, dma_eng_per_nd;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
 	} else {
 		int nc_per_dev;
@@ -312,7 +312,7 @@ int ndmar_quiesce_queues(struct neuron_device *nd, u32 nc_id, u32 engine_count, 
 
 	// For Inferentia reset queues on all 3 engines that belong to NC
 	// Skip h2t because it is shared between models, processes
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		u32 start_eng = nc_id * V1_DMA_ENG_PER_NC;
 		u32 e;
 		for (e = 0; e < V1_DMA_ENG_PER_NC; e++) {
@@ -517,7 +517,7 @@ int ndmar_eng_init(struct neuron_device *nd, int eng_id)
 
 	trace_dma_engine_init(nd, eng_id);
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_V1)
 		ret = v1_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
 	else
 		ret = v2_dma_init(nd->npdev.bar0, &eng->udma, eng_id);
@@ -556,7 +556,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 	}
 
 
-	if (arch == NEURON_ARCH_INFERENTIA) {
+	if (arch == NEURON_ARCH_V1) {
 		nc_per_dev = V1_NC_PER_DEVICE;
 		dma_eng_per_nc = V1_DMA_ENG_PER_NC;
 		dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
@@ -616,7 +616,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx)
 int ndmar_init_ncs(struct neuron_device *nd, uint32_t nc_map) {
 	int ret = 0;
 	int nc_per_dev;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		nc_per_dev = V1_NC_PER_DEVICE;
 	} else {
 		if (narch_is_emu())
@@ -676,7 +676,7 @@ static void ndmar_close_nc(struct neuron_device *nd, int nc_idx)
 void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map)
 {
 	int nc_per_dev;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		nc_per_dev = V1_NC_PER_DEVICE;
 	} else {
 		if (narch_is_emu())

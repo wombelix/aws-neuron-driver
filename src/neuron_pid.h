@@ -23,7 +23,7 @@ struct neuron_attached_process {
 	size_t memory_used[MEM_LOC_COUNT]; // currently allocated memory size
 };
 
-#define PCI_HOST_BASE(nd) (narch_get_arch() == NEURON_ARCH_TRN ? V2_PCIE_A0_BASE : PCIEX8_0_BASE)
+#define PCI_HOST_BASE(nd) (narch_get_arch() == NEURON_ARCH_V2 ? V2_PCIE_A0_BASE : PCIEX8_0_BASE)
 
 /**
  * npid_print_usage() - print all attached process info.

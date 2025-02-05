@@ -42,11 +42,11 @@ module_param(use_rr, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(use_rr, "use readless reads");
 
 static u64 fw_io_get_bar0_misc_ram_offset(void) {
-	return narch_get_arch() == NEURON_ARCH_INFERENTIA ?  V1_MMAP_BAR0_APB_MISC_RAM_OFFSET : V2_MMAP_BAR0_APB_MISC_RAM_OFFSET;
+	return narch_get_arch() == NEURON_ARCH_V1 ?  V1_MMAP_BAR0_APB_MISC_RAM_OFFSET : V2_MMAP_BAR0_APB_MISC_RAM_OFFSET;
 }
 
 static u64 fw_io_get_phys_host_offset(void){
-	return narch_get_arch() == NEURON_ARCH_INFERENTIA ?  PCIEX8_0_BASE : V2_PCIE_A0_BASE;
+	return narch_get_arch() == NEURON_ARCH_V1 ?  PCIEX8_0_BASE : V2_PCIE_A0_BASE;
 }
 
 int fw_io_device_id_read(void *bar0, u32 *device_id)
@@ -307,7 +307,7 @@ int fw_io_read_csr_array(void **ptrs, u32 *values, u32 num_csrs, bool operationa
 	if (num_csrs > MAX_READLESS_READ_REGISTER_COUNT)
 		return -EINVAL;
 
-	if ((narch_get_arch() == NEURON_ARCH_TRN) && !use_rr) {
+	if ((narch_get_arch() == NEURON_ARCH_V2) && !use_rr) {
 		return fw_io_read_csr_array_direct(ptrs, values, num_csrs, operational);
 	}
 
@@ -405,7 +405,7 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
 
 int fw_io_topology(struct fw_io_ctx *ctx, u32 *device_ids, int *count)
 {
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		return fw_io_topology_v1(ctx, device_ids, count);
 	} else {
 		return 0;
@@ -454,7 +454,7 @@ struct fw_io_ctx *fw_io_setup(void __iomem *bar0, u64 bar0_size,
 	ctx->response_addr = virt_to_phys(ctx->response);
 	ctx->response_addr |= fw_io_get_phys_host_offset();
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA){
+	if (narch_get_arch() == NEURON_ARCH_V1){
 		if (fw_io_register_read_region(ctx, bar0, bar0_size, P_0_APB_BASE)) {
 			pr_err("failed to register readless read BAR0 region\n");
 			goto error;

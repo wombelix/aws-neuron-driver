@@ -55,7 +55,7 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	u64 first_wait_time = (8 * est_wait_time) / 10; // first wait will be for 80% of est wait time. This will reduce the number of times we need to poll for completion
 	u64 wait = (est_wait_time * 100) - first_wait_time;
 
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
+	if (narch_get_arch() == NEURON_ARCH_V2) {
 		// for some reason getting a timeout when staging some of
 		// BERT training graphs.  Need to investigate: https://t.corp.amazon.com/P55240908
 		// In the meantime make the timeout 100x the original
@@ -146,7 +146,7 @@ static int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr
 	int ret = -1;
 	bool use_write_barrier = false;
 
-	use_write_barrier = narch_get_arch() == NEURON_ARCH_TRN && set_dmb;
+	use_write_barrier = narch_get_arch() == NEURON_ARCH_V2 && set_dmb;
 	ret = udma_m2m_copy_prepare_one(&eng->udma, ring->qid, src, dst, size, set_dmb,
 					use_write_barrier, false);
 	if (ret) {
@@ -209,7 +209,7 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 				// if the memcpy possibly starts within a NeuronCore reset window, 
 				// the timeout is possible due to DMA hanging caused by hardware issue.
 				// if so, restart DMA and retry the memcpy
-				if (narch_get_arch() != NEURON_ARCH_TRN) {
+				if (narch_get_arch() != NEURON_ARCH_V2) {
 					goto fail;
 				}
 				if (!nr_op_in_reset_wnd(memcpy_start_time, nd)) {
@@ -438,7 +438,7 @@ int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32
 		// (that will look as though host is also set)
 		// SUNDA:
 		// similar idea.  Just check for valid address allocated in host memory
-		if (narch_get_arch() == NEURON_ARCH_TRN) { 
+		if (narch_get_arch() == NEURON_ARCH_V2) { 
 			if ((pa & V2_PCIE_ALL_RT_MASK) == PCI_HOST_BASE(nd)) {
 				if (!ndma_is_valid_host_mem(nd, pa))
 					return -EINVAL;
@@ -450,7 +450,7 @@ int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32
 		} else {
 			// For V1 need to set the first model start state. If the desc has pa for PE instr fifo, then
 			// whichever dma engine queue that has this mc is set to have the pe instr.
-			if (narch_get_arch() == NEURON_ARCH_INFERENTIA &&
+			if (narch_get_arch() == NEURON_ARCH_V1 &&
 			    desc_type == NEURON_DMA_QUEUE_TYPE_RX)
 				ndmar_set_model_started_v1(nd, pa, dst_mc);
 		}

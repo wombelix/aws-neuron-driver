@@ -8,11 +8,12 @@
 
 #define MAX_CHILD_NODES_NUM	32
 #define MAX_METRIC_ID		NDS_ND_COUNTER_COUNT + NDS_NC_COUNTER_COUNT + 64
-#define COUNTER_ATTR_TYPE	2
+#define MAX_COUNTER_ATTR_TYPE_COUNT	3
 
 enum nsysfsmetric_attr_type {
     TOTAL,     // counter value accumulated
-    PRESENT,   // counter value at the current window, controlled by refresh_rate
+    PRESENT,   // counter value at the current window
+    PEAK,      // max value
     OTHER,     // all other types besides TOTAL and PRESENT
 };
 
@@ -24,11 +25,13 @@ enum nsysfsmetric_metric_id_category {
 enum nsysfsmetric_non_nds_ids {  // The metrics needed by sysfs metrics but not stored in datastore
     NON_NDS_COUNTER_HOST_MEM,
     NON_NDS_COUNTER_DEVICE_MEM,
-    NON_NDS_OTHER_REFRESH_RATE,
-    NON_NDS_COUNTER_RESET_COUNT,
+    NON_NDS_COUNTER_RESET_REQ_COUNT,
+    NON_NDS_COUNTER_RESET_FAIL_COUNT,
     NON_NDS_COUNTER_MODEL_LOAD_COUNT,
     NON_NDS_COUNTER_INFERENCE_COUNT,
-    NON_NDS_OTHER_ARCH_TYPE,
+    NON_NDS_OTHER_NEURON_ARCH_TYPE,
+    NON_NDS_OTHER_NEURON_INSTANCE_TYPE,
+    NON_NDS_OTHER_NEURON_DEVICE_NAME
 };
 
 struct neuron_device;
@@ -36,6 +39,7 @@ struct neuron_device;
 struct nsysfsmetric_counter {
     u64 total;
     u64 present;
+    u64 peak;
 };
 
 struct nsysfsmetric_node { // represent a subdirectory in sysfs
@@ -48,7 +52,7 @@ struct nsysfsmetric_node { // represent a subdirectory in sysfs
 };
 
 struct nsysfsmetric_metrics { // per neuron_device
-    struct nsysfsmetric_node root;
+    struct nsysfsmetric_node root; // represent the neuron device
     struct nsysfsmetric_node *dynamic_metrics_dirs[MAX_NC_PER_DEVICE];
     struct nsysfsmetric_counter nrt_metrics[MAX_METRIC_ID][MAX_NC_PER_DEVICE]; // runtime metrics, indiced by metric_id and nc_id
     struct nsysfsmetric_counter dev_metrics[MAX_METRIC_ID]; // TODO: pacific metrics
@@ -61,12 +65,12 @@ typedef struct nsysfsmetric_attr_info {
     int attr_type;
 } nsysfsmetric_attr_info_t;
 
-typedef struct nsysfsmetric_node_info {
+typedef struct nsysfsmetric_counter_node_info {
     char *node_name;
     int metric_id;
     int attr_cnt;
-    nsysfsmetric_attr_info_t attr_info_tbl[COUNTER_ATTR_TYPE]; // present and total
-} nsysfsmetric_node_info_t;
+    nsysfsmetric_attr_info_t attr_info_tbl[MAX_COUNTER_ATTR_TYPE_COUNT]; // present, total, and/or peak
+} nsysfsmetric_counter_node_info_t;
 
 /**
  * nsysfsmetric_register() - Perform various sysfs inits such as kobj init and attribute group creation per neuron device
@@ -122,20 +126,17 @@ void nsysfsmetric_nc_inc_counter(struct neuron_device *nd, int metric_id_categor
 void nsysfsmetric_nc_dec_counter(struct neuron_device *nd, int metric_id_category, int id, int nc_id, u64 delta);
 
 /**
- * nsysfsmetric_inc_counter() - Increment the counter with id for neuron_device nd by delta
- * 
- * @param nd: The pointer to the neuron_device
- * @param metric_id_category: one of the three metric categories (NDS_NC_METRIC, NON_NDS_METRIC, NON_NDS_METRIC)
- * @param id: the index that represents the counter
- * @param delta: the amount to be incremented/decremented
- */
-void nsysfsmetric_inc_counter(struct neuron_device *nd, int metric_id_category, int id, int delta);
-
-/**
- * nsysfsmetric_inc_reset_count() - Increment the RESET_COUNT metrics
+ * nsysfsmetric_inc_reset_req_count() - Increment the RESET_COUNT metrics
  * 
  * @param nd: The pointer to the neuron_device 
  */
-void nsysfsmetric_inc_reset_count(struct neuron_device *nd);
+void nsysfsmetric_inc_reset_req_count(struct neuron_device *nd, int nc_id);
+
+/**
+ * nsysfsmetric_inc_reset_fail_count() - Increment the NON_NDS_COUNTER_RESET_FAIL_COUNT metrics
+ * 
+ * @param nd: The pointer to the neuron_device
+ */
+void nsysfsmetric_inc_reset_fail_count(struct neuron_device *nd);
 
 #endif

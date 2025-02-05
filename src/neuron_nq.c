@@ -34,7 +34,7 @@
 static u8 nnq_get_nqid(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_type)
 {
 	u8 nq_id = 0;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA)
+	if (narch_get_arch() == NEURON_ARCH_V1)
 		nq_id = (nq_type * MAX_NQ_TYPE) + index;
 	else
 		nq_id = (nq_type * V2_MAX_NQ_QUEUES) + index; //for v2 nq is based on queue
@@ -47,7 +47,7 @@ static void nnq_set_hwaddr(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_
 	void *apb_base;
 	u32 low, high;
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		apb_base = nd->npdev.bar0 + pu_get_relative_offset(nc_id);
 	} else {
 		if (nq_type == NQ_TYPE_TRACE_DMA) {
@@ -61,7 +61,7 @@ static void nnq_set_hwaddr(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_
 	low = (u32)(queue_pa & 0xffffffff);
 	high = (u32)(queue_pa >> 32U);
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		switch (nq_type) {
 		case NQ_TYPE_ERROR:
 			pu_write_error_notification_cfg_0(apb_base, low);
@@ -170,7 +170,7 @@ void nnq_destroy_nc(struct neuron_device *nd, u8 nc_id)
 		}
 	}
 
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
+	if (narch_get_arch() == NEURON_ARCH_V2) {
 		u8 ts_per_nc = V2_TS_PER_DEVICE / V2_NC_PER_DEVICE;
 		for (ts_id = nc_id * ts_per_nc; ts_id < (nc_id + 1) * ts_per_nc; ts_id++) {
 			ts_nq_destroy_one(nd, ts_id);

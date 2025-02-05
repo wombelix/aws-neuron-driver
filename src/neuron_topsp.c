@@ -39,12 +39,12 @@
 #include "neuron_mmap.h"
 #include "neuron_device.h"
 #include "neuron_arch.h"
-#define TS_PER_DEVICE(nd) (narch_get_arch() == NEURON_ARCH_INFERENTIA ? 0 : V2_TS_PER_DEVICE)
+#define TS_PER_DEVICE(nd) (narch_get_arch() == NEURON_ARCH_V1 ? 0 : V2_TS_PER_DEVICE)
 
 static u8 ts_nq_get_nqid(struct neuron_device *nd, u8 index, u32 nq_type)
 {
 	u8 nq_id = 0;
-	BUG_ON(narch_get_arch() != NEURON_ARCH_TRN);
+	BUG_ON(narch_get_arch() != NEURON_ARCH_V2);
 	nq_id = (nq_type * V2_MAX_NQ_QUEUES) + index; //for v2 nq is based on queue
 	return nq_id;
 }
@@ -55,7 +55,7 @@ static void ts_nq_set_hwaddr(struct neuron_device *nd, u8 ts_id, u8 index, u32 n
 	void *apb_base;
 	u32 low, high;
 
-	BUG_ON(narch_get_arch() != NEURON_ARCH_TRN);
+	BUG_ON(narch_get_arch() != NEURON_ARCH_V2);
 	apb_base = nd->npdev.bar0 + notific_get_relative_offset_topsp(ts_id);
 
 	low = (u32)(queue_pa & 0xffffffff);

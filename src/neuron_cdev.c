@@ -524,7 +524,7 @@ static int ncdev_verify_mem_region(struct neuron_device *nd, u64 addr)
 	int mrs_n;
 	int i;
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		mrs = v1_mem_regions;
 		mrs_n = sizeof(v1_mem_regions) / sizeof(v1_mem_regions[0]);
 	} else {
@@ -798,7 +798,7 @@ static int ncdev_ok_bar0_write(u64 off)
 	};
 	const u64 *blocked;
 	u32 blocked_count, i;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		if (v1_dma_bar0_blocked(off)) {
 			return -1;
 		}
@@ -857,7 +857,7 @@ static long ncdev_bar_write(struct neuron_device *nd, u8 bar, u64 *reg_addresses
 			trace_bar_write(nd, 0, off, data[i]);
 		}
 	} else {
-		if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+		if (narch_get_arch() == NEURON_ARCH_V1) {
 			int i;
 			u64 off = reg_addresses[0] - (u64)nd->npdev.bar2;
 			for (i = 0; i < data_count; i++, off += sizeof(u32)) {
@@ -1416,7 +1416,7 @@ static long ncdev_compatible_version(void *param)
 {
 	struct neuron_ioctl_compatible_version arg;
 
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		arg.min = V1_RT_MIN_COMPATIBLE_VERSION;
 		arg.max = V1_RT_MAX_COMPATIBLE_VERSION;
 	} else {
@@ -1669,6 +1669,7 @@ static int ncdev_flush(struct file *filep, fl_owner_t id)
 		ncrwl_release_current_process(nd);
 		neuron_ds_release_pid(&nd->datastore, task_tgid_nr(current));
 		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_CUR_PROCESS);
+		nmmap_delete_all_nodes(nd);
 	}
 	npid_detach(nd);
 
@@ -1693,6 +1694,7 @@ static int ncdev_release(struct inode *inode, struct file *filep)
 	if (dev->open_count == 0) {
 		neuron_ds_clear(&nd->datastore);
 		mpset_free_expired_mc(&nd->mpset, MC_LIFESPAN_ALL_PROCESS);
+		nmmap_delete_all_nodes(nd);
 	}
 	mutex_unlock(&dev->ncdev_lock);
 
@@ -1749,7 +1751,7 @@ static DEVICE_ATTR(reset, S_IWUSR | S_IRUSR, device_reset_show, driver_reset_sto
 static ssize_t neuron_core_count_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int ret = 0;
-	int neuron_core_count = (narch_get_arch() == NEURON_ARCH_INFERENTIA ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE);
+	int neuron_core_count = (narch_get_arch() == NEURON_ARCH_V1 ? V1_NC_PER_DEVICE : V2_NC_PER_DEVICE);
 	ret = sprintf(buf, "%d", neuron_core_count);
 	return ret;
 }

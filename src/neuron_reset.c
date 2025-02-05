@@ -51,7 +51,7 @@ static int nr_initiate_reset(struct neuron_device *nd)
 		return 0;
 
 	if (narch_is_qemu()) {
-		if (narch_get_arch() == NEURON_ARCH_TRN) {
+		if (narch_get_arch() == NEURON_ARCH_V2) {
 			volatile void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET + V2_APB_SENG_0_RESERVED1_RELBASE + 0x10;
 			writel(1, (volatile uint32_t *)addr);
 		}
@@ -60,7 +60,7 @@ static int nr_initiate_reset(struct neuron_device *nd)
 		uint32_t nc_map = nd->nr.req_pending_head->nc_map;
 		uint32_t tpb_reset_map = 0;
 		// Build the tpb reset map if we are not performing a device reset
-		if (narch_get_arch() == NEURON_ARCH_TRN && nc_map != NEURON_NC_MAP_DEVICE) {
+		if (narch_get_arch() == NEURON_ARCH_V2 && nc_map != NEURON_NC_MAP_DEVICE) {
 			for (i = 0; i < MAX_NC_PER_DEVICE; i++) {
 				if ((1 << i) & nc_map) {
 					// Add this tpb to the reset map
@@ -108,7 +108,7 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 {
 	if (no_reset)
 		return 0;
-	if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	if (narch_get_arch() == NEURON_ARCH_V1) {
 		int i;
 		for (i = 0; i < NR_RESET_RETRY_COUNT; i++) {
 			if (fw_io_is_device_ready_v1(nd->npdev.bar0))
@@ -119,7 +119,7 @@ static int nr_wait_for_reset_completion(struct neuron_device *nd)
 		if (i == NR_RESET_RETRY_COUNT)
 			return -1;
 		return 0;
-	} else if (narch_get_arch() == NEURON_ARCH_TRN) {
+	} else if (narch_get_arch() == NEURON_ARCH_V2) {
 		int i;
 		uint32_t retry_count = NR_RESET_RETRY_COUNT;
 		void *addr = nd->npdev.bar0 + V2_PCIE_BAR0_APB_OFFSET;
@@ -172,19 +172,22 @@ static int nr_reset_thread_fn(void *arg)
 		ret = nr_initiate_reset(nd);
 		if (ret) {
 			state = NEURON_RESET_STATE_FAILED;
+			nsysfsmetric_inc_reset_fail_count(nd);
 		} else {
 			ret = nr_wait_for_reset_completion(nd);
 			if (ret) {
 				pr_info("nd%d: device didnt come out reset\n", nd->device_index);
 				state = NEURON_RESET_STATE_FAILED;
+				nsysfsmetric_inc_reset_fail_count(nd);
 			} else {
-				if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+				if (narch_get_arch() == NEURON_ARCH_V1) {
 					fw_io_device_id_write(nd->npdev.bar0, nd->device_index);
 				}
 				ret = ndmar_init_ncs(nd, req->nc_map);
 				if (ret) {
 					pr_info("nd%d: failed to initialize dma after reset\n", nd->device_index);
 					state = NEURON_RESET_STATE_FAILED;
+					nsysfsmetric_inc_reset_fail_count(nd);
 				} else {
 					pr_info("nd%d: reset request %u completed\n", nd->device_index, req->request_id);
 					state = NEURON_RESET_STATE_COMPLETED;
@@ -308,6 +311,8 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
 			// Reset the model started counter
 			nd->nc_model_started_count[nc_idx] = 0;
 			nnq_destroy_nc(nd, nc_idx);
+
+			nsysfsmetric_inc_reset_req_count(nd, nc_idx);
 		}
 	}
 	struct neuron_reset_request *req = (struct neuron_reset_request *)kmalloc(sizeof(struct neuron_reset_request), GFP_KERNEL);
@@ -330,7 +335,6 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
 	mutex_unlock(&nd->nr.nr_lock);
 	wake_up_interruptible(&nd->nr.wait_queue);
 
-	nsysfsmetric_inc_reset_count(nd); 
 	return 0;
 }
 

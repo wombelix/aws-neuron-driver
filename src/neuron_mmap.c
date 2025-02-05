@@ -24,10 +24,13 @@ struct nmmap_node *nmmap_search_va(struct neuron_device *nd, void *va)
 		struct nmmap_node *mmap = rb_entry(node, struct nmmap_node, node);
 
 		if (va >= mmap->va && va < (mmap->va + mmap->size)) {
-			if (mmap->pid == task_tgid_nr(current))
+			if (mmap->pid == task_tgid_nr(current)) {
 				return mmap;
-			else
+			}
+			else {
+				pr_err("found 0x%llx on dev: %d slot: %d from another pid: %u != %u\n", (u64)va, nd->device_index, slot, mmap->pid, task_tgid_nr(current));
 				return NULL;
+			}
 		} else if (va < mmap->va) {
 			node = node->rb_left;
 		} else {
@@ -104,7 +107,7 @@ void nmmap_create_node(struct neuron_device *nd, void *va, pid_t pid, u64 size, 
 	write_unlock(&nd->mpset.rbmmaplock);
 }
 
-void nmmap_delete_node(struct vm_area_struct *vma)
+static void nmmap_delete_node(struct vm_area_struct *vma)
 {
 	struct neuron_device *nd = (struct neuron_device *)vma->vm_private_data;
 	void (*free_callback)(void *data) = NULL;
@@ -124,10 +127,55 @@ void nmmap_delete_node(struct vm_area_struct *vma)
 			data = mmap->data;
 		}
 		kfree(mmap);
+	} else {
+		pr_err("FAILED to delete mmap 0x%llx, pid: %d, dev: %d, slot: %d\n", (u64)(void*)vma->vm_start, task_tgid_nr(current), nd->device_index, slot);
 	}
 	write_unlock(&nd->mpset.rbmmaplock);
 	if (free_callback)
 		free_callback(data);
+}
+
+/* Cleanup all mmaped entries when the process goes away
+ * Iterate over the entries in the process' slot and delete them
+ * I'm sure there is a more efficient way of traversing rbtree but
+ * normally the entries are removed when an application calls mmap.
+ * So this is only for the exceptions, does not have to be fast.
+ */
+void nmmap_delete_all_nodes(struct neuron_device *nd)
+{
+	int slot;
+	struct rb_node *root_node = NULL;
+
+	slot = npid_find_process_slot(nd);
+	if (slot == -1) {
+		return;
+	}
+
+	do {
+		void (*free_callback)(void *data) = NULL;
+		void *data = NULL;
+
+		write_lock(&nd->mpset.rbmmaplock);
+		root_node = nd->mpset.mmap_root[slot].rb_node; /* top of the tree */
+		if (root_node) {
+			struct nmmap_node *mmap = rb_entry(root_node, struct nmmap_node, node);
+			BUG_ON(mmap == NULL);
+			if (task_tgid_nr(current) == mmap->pid) {
+				nmmap_remove_node_rbtree(&nd->mpset.mmap_root[slot], mmap);
+				if (mmap->free_callback != NULL) {
+					free_callback = mmap->free_callback;
+					data = mmap->data;
+				}
+				kfree(mmap);
+			} else {
+				pr_err("found mmap entry from another process, bailing out %d != %d", task_tgid_nr(current), mmap->pid);
+				root_node = NULL;
+			}
+		}
+		write_unlock(&nd->mpset.rbmmaplock);
+		if (free_callback)
+			free_callback(data);
+	} while (root_node != NULL);
 }
 
 u64 nmmap_offset(struct mem_chunk *mc)
@@ -188,7 +236,7 @@ static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma, u64 *b
 	start = vma->vm_pgoff << PAGE_SHIFT;
 	size = vma->vm_end - vma->vm_start;
 
-	if (narch_get_arch() == NEURON_ARCH_TRN) {
+	if (narch_get_arch() == NEURON_ARCH_V2) {
 		if (start >= V2_HBM_0_BASE && start + size < V2_HBM_0_BASE + V2_HBM_0_SIZE)
 			offset = start;
 		else if (start >= V2_HBM_1_BASE && start + size < V2_HBM_1_BASE + V2_HBM_1_SIZE)
@@ -196,7 +244,7 @@ static int nmmap_dm(struct neuron_device *nd, struct vm_area_struct *vma, u64 *b
 			offset = start - V2_HBM_1_BASE + V2_HBM_0_SIZE;
 		else
 			return -EINVAL;
-	} else if (narch_get_arch() == NEURON_ARCH_INFERENTIA) {
+	} else if (narch_get_arch() == NEURON_ARCH_V1) {
 		// Note: 1) we mapped the address to get VA but R/W access to the BAR
 		// from the instance might still be blocked.
 		// 2) in the new future Neuron software will not request the mapping when running on INF
