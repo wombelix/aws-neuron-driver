@@ -342,8 +342,8 @@ struct neuron_ioctl_device_info {
 
 /* Deprecated reset related IOCTLs. Now it would always return success. */
 #define NEURON_IOCTL_DEVICE_RESET _IO(NEURON_IOCTL_BASE, 1)
-#define NEURON_IOCTL_DEVICE_RESET_STATUS _IOR(NEURON_IOCTL_BASE, 2, __u8)
 #define NEURON_IOCTL_DEVICE_READY _IOR(NEURON_IOCTL_BASE, 2, __u8)
+#define NEURON_IOCTL_DEVICE_RESET_STATUS _IOR(NEURON_IOCTL_BASE, 106, __u8)
 
 /** Returns devices information and connection topology. */
 #define NEURON_IOCTL_DEVICE_INFO _IOR(NEURON_IOCTL_BASE, 3, struct neuron_ioctl_device_info *)
@@ -464,5 +464,7 @@ struct neuron_ioctl_device_info {
 
 /** Neuron-core specific versions of program_engine ioctl to target right cores/dmas */
 #define NEURON_IOCTL_PROGRAM_ENGINE_NC _IOWR(NEURON_IOCTL_BASE, 105, struct neuron_ioctl_program_engine_nc *)
+
+#define NEURON_IOCTL_MAX 106
 
 #endif

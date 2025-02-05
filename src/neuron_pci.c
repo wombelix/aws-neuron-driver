@@ -27,18 +27,22 @@
 #include "neuron_dma.h"
 
 /* Vendor / Device ID for all devices supported by the driver */
-#define INF_VENDOR_ID 0x1D0F
-#define INF_DEVICE_ID0 0x7064
-#define INF_DEVICE_ID1 0x7065
-#define INF_DEVICE_ID2 0x7066
-#define INF_DEVICE_ID3 0x7067
-#define TRN_DEVICE_ID0 0x7164
+#define AMZN_VENDOR_ID  0x1D0F
+#define INF1_DEVICE_ID0 0x7064
+#define INF1_DEVICE_ID1 0x7065
+#define INF1_DEVICE_ID2 0x7066
+#define INF1_DEVICE_ID3 0x7067
+#define INF2_DEVICE_ID0 0x7264
+#define TRN1_DEVICE_ID0 0x7164
+
+
 static struct pci_device_id neuron_pci_dev_ids[] = {
-	{ PCI_DEVICE(INF_VENDOR_ID, INF_DEVICE_ID0) },
-	{ PCI_DEVICE(INF_VENDOR_ID, INF_DEVICE_ID1) },
-	{ PCI_DEVICE(INF_VENDOR_ID, INF_DEVICE_ID2) },
-	{ PCI_DEVICE(INF_VENDOR_ID, INF_DEVICE_ID3) },
-	{ PCI_DEVICE(INF_VENDOR_ID, TRN_DEVICE_ID0) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID0) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID1) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID2) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID3) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN1_DEVICE_ID0) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, INF2_DEVICE_ID0) },
 	{
 		0,
 	},
@@ -244,7 +248,8 @@ static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 	unsigned short device = nd->pdev->device;
 	u8 revision;
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &revision);
-	narch_init(device == TRN_DEVICE_ID0 ? NEURON_ARCH_TRN : NEURON_ARCH_INFERENTIA, revision);
+	// TODO - this is temp 
+	narch_init(device == TRN1_DEVICE_ID0 || (device == INF2_DEVICE_ID0)  ? NEURON_ARCH_TRN : NEURON_ARCH_INFERENTIA, revision);
 }
 
 // for V2 rename Neuron devices for better customer experience.
@@ -370,12 +375,19 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 			goto fail_bar2_resource;
 		}
 
+		// TODO - this should be a "valid routing_id check for both TRN1 & INF2
 		if (routing_id < 0 || routing_id >= MAX_NEURON_DEVICE_COUNT) {
 			pr_err("Invalid device index %u", routing_id);
 			ret = -ENODEV;
 			goto fail_bar2_resource;
 		}
-		nd->device_index = v2_routing_id_to_user_id[routing_id];
+
+		// TODO - TRN1 and INF2 mappings are different - likely all of this and the INF1 should be encapsulated.
+		if (nd->pdev->device == TRN1_DEVICE_ID0)
+			nd->device_index = v2_routing_id_to_user_id[routing_id];
+		else
+			nd->device_index = routing_id;
+
 		// TODO temporary for the bringup, remove
 		printk("** BDF: %2.2x:%2.2x.%x => nd[%d] (routing id: %u)\n", dev->bus->number, PCI_SLOT(dev->devfn), PCI_FUNC(dev->devfn), nd->device_index, routing_id);
 		

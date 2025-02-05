@@ -1031,8 +1031,12 @@ static long ncdev_nc_reset_ready(struct neuron_device *nd, void *param)
 static long ncdev_device_ready_deprecated(struct neuron_device *nd, void *param)
 {
 	u8 result;
-	// deprecated api returns true (1) if success and false if failed.
-	result = (nr_wait(nd, task_tgid_nr(current), false) == 0);
+	// there is a bug with this deprecated ioctl (see caller for more details)
+	// where this api can be called twice. set the flag to check if the request
+	// exists and return success if not so the second pass doesn't fail
+	//
+	// deprecated api returns true (1) if success and false if failed
+	result = (nr_wait(nd, task_tgid_nr(current), true) == 0);
 	return copy_to_user(param, &result, 1);
 }
 
@@ -1469,6 +1473,16 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 
 	if (cmd == NEURON_IOCTL_DEVICE_RESET) {
 		return ncdev_device_reset_deprecated(nd);
+	} else if (cmd == NEURON_IOCTL_DEVICE_READY) {
+		// WARNING - there is a bug in older driver versions where
+		// NEURON_IOCTL_DEVICE_READY and NEURON_IOCTL_DEVICE_RESET_STATUS
+		// are assigned to the same ioctl 2. device_ready is an important
+		// api to call to wait for pacific reset completion, while
+		// reset_status api is a no-op. Make sure this ioctl is checked
+		// before RESET_STATUS so we enter the right function.
+		return ncdev_device_ready_deprecated(nd, (void *)param);
+	} else if (cmd == NEURON_IOCTL_NC_RESET_READY) {
+		return ncdev_nc_reset_ready(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_RESET_STATUS) {
 		return ncdev_device_reset_status_deprecated(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NC_RESET) {
@@ -1477,10 +1491,6 @@ long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long param)
 		return ncdev_cinit_set_state(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_NC_MODEL_STARTED_COUNT) {
 		return ncdev_nc_model_started_count(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_DEVICE_READY) {
-		return ncdev_device_ready_deprecated(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_NC_RESET_READY) {
-		return ncdev_nc_reset_ready(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_INFO) {
 		return ncdev_device_info(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DEVICE_INIT) {

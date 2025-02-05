@@ -14,13 +14,13 @@
 #define CREATE_TRACE_POINTS
 #include "neuron_trace.h"
 
-MODULE_DESCRIPTION("Neuron Driver, built from SHA: ee8767b9b4cd171ca08d67709f84a0c029f616e3");
+MODULE_DESCRIPTION("Neuron Driver, built from SHA: a99e5e5035bc761fbf8ffa99618678a56f4325e4");
 MODULE_LICENSE("GPL");
-MODULE_VERSION("2.6.5.0");
+MODULE_VERSION("2.6.33.0");
 MODULE_ALIAS("pci:v00001d0fd00007064sv*sd*bc*sc*i*");
 
-const char driver_version[] = "2.6.5.0";
-const char driver_revision[] = "ee8767b9b4cd171ca08d67709f84a0c029f616e3";
+const char driver_version[] = "2.6.33.0";
+const char driver_revision[] = "a99e5e5035bc761fbf8ffa99618678a56f4325e4";
 
 extern int ncdev_module_init(void);
 extern void ncdev_module_exit(void);
