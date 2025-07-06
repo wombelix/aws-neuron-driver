@@ -44,8 +44,8 @@ tasks:
         ./aws-neuron-driver-publish-source -repopath ../aws-neuron-driver
 
         cd ../aws-neuron-driver
-        git push origin main
-        git push origin --tags
+        git push -o skip-ci origin main
+        git push -o skip-ci origin --tags
       fi
 
   - mirror: |
