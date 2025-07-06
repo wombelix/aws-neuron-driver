@@ -12,12 +12,42 @@ secrets:
   - 5b076ab5-1361-4d71-905b-4ff8c836c62c
 
 environment:
+  SRHT_GIT_SSH_KEY: ~/.ssh/5b076ab5-1361-4d71-905b-4ff8c836c62c
+  GO111MODULE: 'on'
   GIT_MIRROR_SSH_KEY: ~/.ssh/5b076ab5-1361-4d71-905b-4ff8c836c62c
   GIT_MIRROR_GITHUB: git@github.com:wombelix/aws-neuron-driver.git
   GIT_MIRROR_GITLAB: git@gitlab.com:wombelix/aws-neuron-driver.git
   GIT_MIRROR_CODEBERG: git@codeberg.org:wombelix/aws-neuron-driver.git
 
 tasks:
+  - publish: |
+      curl -o /tmp/latest-release-notes.rst https://raw.githubusercontent.com/aws-neuron/aws-neuron-sdk/refs/heads/master/release-notes/runtime/aws-neuronx-dkms/index.rst
+
+      if ! diff -q aws-neuron-driver/archive/release-notes-runtime-aws-neuronx-dkms.rst /tmp/latest-release-notes.rst > /dev/null; then
+
+        curl -sSfLO https://go.dev/dl/go1.23.10.linux-amd64.tar.gz
+        sudo rm -rf /usr/local/go && sudo tar -C /usr/local/ -xzf go1.23.10.linux-amd64.tar.gz
+        sudo ln -s /usr/local/go/bin/go /usr/local/bin/go
+        go version
+        go env
+
+        export GIT_SSH_COMMAND="ssh -i ${SRHT_GIT_SSH_KEY}"
+        git clone https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source
+
+        cd aws-neuron-driver-publish-source
+
+        git config --global user.name "Dominik Wombacher"
+        git config --global user.email "dominik@wombacher.cc"
+
+        make build
+
+        ./aws-neuron-driver-publish-source -repopath ../aws-neuron-driver
+
+        cd ../aws-neuron-driver
+        git push origin main
+        git push origin --tags
+      fi
+
   - mirror: |
       cd build-helper-scripts
       source git-mirror.sh
