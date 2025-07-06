@@ -130,7 +130,7 @@ static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
 }
 
 /* initialize one DMA queue on one DMA engine */
-int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_ring_size,
+int udma_m2m_init_queue(struct udma *udma, int qid, u32 eng_id, u32 m2s_ring_size, u32 s2m_ring_size,
 			bool allocatable, struct udma_ring_ptr *m2s_ring,
 			struct udma_ring_ptr *s2m_ring, struct udma_ring_ptr *s2m_compl_ring)
 {
@@ -178,6 +178,7 @@ int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_r
 	qp.cdesc_base = NULL; // no completion for TX
 	qp.cdesc_phy_base = 0;
 	qp.allocatable = allocatable;
+	qp.eng_id = eng_id;
 	ret = udma_q_init(udma, qid, &qp);
 	if (ret) {
 		pr_err("failed to init m2s queue %d, err: %d\n", qid, ret);

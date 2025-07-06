@@ -32,13 +32,13 @@ struct ndma_h2t_dma_context {
 	struct ndma_ring *ring;               //
 	dma_addr_t        src;                // original src
 	dma_addr_t        dst;                // original dst
-	u32               size;               // original size 
+	u64               size;               // original size 
 	bool              smove;              //
 	bool              dmove;              //
 	u64               start_time;         // start time for this transfer
-	u32               offset;             // initial offset for this transfer
-	u32               remaining;          // initial remaining for this transfer
-	u32               outstanding;        // outstanding data for this transfer - used to compute wait time. (vs pending)
+	u64               offset;             // initial offset for this transfer
+	u64               remaining;          // initial remaining for this transfer
+	u64               outstanding;        // outstanding data for this transfer - used to compute wait time. (vs pending)
 	int               pending_transfers;  // pending transfers for this context.  Used to update ring ptrs
 	void             *completion_ptr;     // completion buffer pointer (host memory buffer we poll on for completions)
 };

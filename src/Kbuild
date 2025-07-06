@@ -18,3 +18,4 @@ neuron-objs += v3/notific.o v3/neuron_dhal_v3.o v3/neuron_pelect.o
 
 ccflags-y += -O3 -Wall -Werror -Wno-declaration-after-statement -Wunused-macros -Wunused-local-typedefs
 ccflags-y += -I$(src)/
+ccflags-y += $(call cc-option,-march=armv8.2-a)

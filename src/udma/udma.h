@@ -118,6 +118,7 @@ struct udma_q_params {
 	dma_addr_t cdesc_phy_base; // completion descriptors ring physical base address
 	u8 adapter_rev_id; // PCI adapter revision ID
 	enum udma_type type; // m2s (TX) or s2m (RX)
+	u32 eng_id;
 };
 
 #define UDMA_INSTANCE_NAME_LEN 25
@@ -162,6 +163,7 @@ struct __attribute__((__aligned__(64))) udma_q {
 	enum udma_queue_status status;
 	struct udma *udma; // pointer to parent UDMA
 	u32 qid; // the index number of the queue
+	u32 eng_id; // engine_id that this queue belongs to
 	enum udma_type type; /* Tx or Rx */
 	u8 adapter_rev_id; // PCI adapter revision ID
 	u32 cfg; // default value of CFG CSR. Cache here to avoid reads during queue enable/disable
@@ -449,6 +451,7 @@ int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_que
  *
  * @udma: UDMA structure.
  * @qid: Queue index.
+ * @eng_id: Engine index
  * @m2s_ring_size: Number of descriptors in the m2s queue.
  * @s2m_ring_size: Number of descriptors in the s2m queue.
  * @desc_allocatable: If false it means, descriptors cant be allocated from this queue.
@@ -458,7 +461,7 @@ int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_que
  *
  * Return: 0 if initialization is successful, a negative error code otherwise.
  */
-int udma_m2m_init_queue(struct udma *udma, int qid, u32 m2s_ring_size, u32 s2m_ring_size,
+int udma_m2m_init_queue(struct udma *udma, int qid, u32 eng_id, u32 m2s_ring_size, u32 s2m_ring_size,
 			bool desc_allocatable, struct udma_ring_ptr *m2s_ring,
 			struct udma_ring_ptr *s2m_ring, struct udma_ring_ptr *s2m_compl_ring);
 

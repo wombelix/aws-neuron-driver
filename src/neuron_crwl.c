@@ -246,6 +246,20 @@ int ncrwl_nc_range_pid_get( uint32_t nc_index, pid_t *pid)
 	return 0;
 }
 
+int ncrwl_current_process_range_mark_cnt(void)
+{
+	int i;
+	int cnt = 0;
+	mutex_lock(&ncrwl_range_lock);
+	for (i = 0; i < MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE; i++) {
+		if (ncrwl_range_pids[i] == task_tgid_nr(current)) {
+			cnt++;
+		}
+	}
+	mutex_unlock(&ncrwl_range_lock);
+	return cnt;
+}
+
 void ncrwl_release_current_process(struct neuron_device *nd)
 {
 	struct neuron_crwl *crwl;

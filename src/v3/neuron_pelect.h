@@ -10,14 +10,22 @@
 struct neuron_device;
 
 /**
- * npe_election_exec() - execute election code for a primary/secondary device
+ * npe_election_exec_on_rst() - execute election code for a primary/secondary device after the initial reset
  *
  * @nd: Neuron device
  * @reset_successful: indicates the device reset successfully
  *
  * Return: 0 if election was successful.  Currently not used.
  */
-int npe_election_exec(struct neuron_device *nd, bool reset_successful);
+int npe_election_exec_on_rst(struct neuron_device *nd, bool reset_successful);
+
+/**
+ * npe_handle_no_reset_param()
+ *
+ *   If no reset param is in play, force pod election to known state that we would have if we 
+ *   skipped the initial election.
+ */
+void npe_handle_no_reset_param(void);
 
 /**
  * npe_cleanup() - cleanup and pod state left around (miscram)
@@ -41,10 +49,12 @@ int npe_get_pod_id(u8 *pod_id);
 int npe_get_pod_status(u32 *state, u8 *node_id);
 
 /**
- * npe_pod_ctrl() - force a change to pod state
+ * npe_pod_ctrl() - request a change to pod state
  *
- * @ctrl:   control change request
- * @state:  state of the election
+ * @pnd:		array of neuron devices
+ * @ctrl:    	control change request
+ * @timeout: 	timeout for the control operation
+ * @state:   	state of the election
  */
-int npe_pod_ctrl(u32 ctrl, u32 *state);
+int npe_pod_ctrl(struct neuron_device **pnd, u32 ctrl, u32 timeout, u32 *state);
 #endif

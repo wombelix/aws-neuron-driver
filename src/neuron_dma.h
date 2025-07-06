@@ -28,7 +28,7 @@ struct neuron_device;
  * Return: 0 if copy succeeds, a negative error code otherwise.
  */
 int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
-		   u32 src_offset, u32 dst_offset, u32 size);
+		   u64 src_offset, u64 dst_offset, u64 size);
 
 /**
  * ndma_memcpy_mc_async() - Copy data from a memory to another memory chunk.
@@ -46,7 +46,7 @@ int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct me
  * Return: 0 
  */
 int ndma_memcpy_mc_async(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
-		   u32 src_offset, u32 dst_offset, u32 size, u64 prefetch_addr, int pdma_ctx_handle, int *dma_ctx_handle);
+		   u64 src_offset, u64 dst_offset, u64 size, u64 prefetch_addr, int pdma_ctx_handle, int *dma_ctx_handle);
 
 
 /**
@@ -61,8 +61,8 @@ int ndma_memcpy_mc_async(struct neuron_device *nd, struct mem_chunk *src_mc, str
  *
  * Return: 0 if copy succeeds, a negative error code otherwise.
  */
-int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset,
-			  struct mem_chunk *dst_mc, u32 dst_offset, u32 size);
+int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u64 src_offset,
+			  struct mem_chunk *dst_mc, u64 dst_offset, u64 size);
 
 /**
  * ndma_memcpy_buf_from_mc() - Copyout data from given buffer to a memory chunk.
@@ -76,8 +76,8 @@ int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset
  *
  * Return: 0 if copy succeeds, a negative error code otherwise.
  */
-int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offset,
-			    struct mem_chunk *src_mc, u32 src_offset, u32 size);
+int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u64 dst_offset,
+			    struct mem_chunk *src_mc, u64 src_offset, u64 size);
 
 /**
  * ndma_memcpy_dma_copy_descriptors() - Copy dma descriptors to mc which is backing a dma queue.
@@ -91,8 +91,8 @@ int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offs
  *
  * Return: 0 if copy succeeds, a negative error code otherwise.
  */
-int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32 src_offset,
-				     struct mem_chunk *dst_mc, u32 dst_offset, u32 size,
+int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u64 src_offset,
+				     struct mem_chunk *dst_mc, u64 dst_offset, u64 size,
 				     u32 queue_type);
 
 /**
@@ -107,7 +107,7 @@ int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32
  *
  * Return: 0 if copy succeeds, a negative error code otherwise.
  */
-int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 value, u32 size);
+int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 value, u64 size);
 
 /**
  * ndma_memcpy() - Copy data from one physical address to another physical address.
@@ -120,7 +120,7 @@ int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 
  *
  * Return: 0 if copy succeeds, a negative error code otherwise.
  */
-int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size);
+int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u64 size);
 
 
 /**
@@ -172,6 +172,5 @@ int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *rin
  * on the host memory for the data to be written.
  */
 int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_d2d);
-
 
 #endif

@@ -59,14 +59,15 @@ struct neuron_dm_special_mmap_ent {
 	enum neuron_dm_resource_type resource;
 	u64  offset;
 	u64  size;
-	u64  bar0_offset;
+	u64  bar_offset;
+	int  bar_num;
 };
 
-#define DM_SPECIAL_MM_ENT(blk, blk_id, res, blk_mmoff, blk_baroff, blk_sz, res_off, res_sz)  \
-						{blk, blk_id, res, (blk_mmoff) + (blk_sz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
+#define DM_SPECIAL_MM_ENT(blk, blk_id, res, blk_mmoff, blk_baroff, blk_sz, res_off, res_sz, bar_num)  \
+						{blk, blk_id, res, (blk_mmoff) + (blk_sz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off, bar_num}
 
-#define DM_SPECIAL_MM_ENT_(blk, blk_id, res, blk_mmoff, blk_baroff, blk_mmsz, blk_sz, res_off, res_sz)  \
-						{blk, blk_id, res, (blk_mmoff) + (blk_mmsz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off}
+#define DM_SPECIAL_MM_ENT_(blk, blk_id, res, blk_mmoff, blk_baroff, blk_mmsz, blk_sz, res_off, res_sz, bar_num)  \
+						{blk, blk_id, res, (blk_mmoff) + (blk_mmsz)*(blk_id) + (res_off), res_sz, (blk_baroff) + (blk_sz)*(blk_id) + res_off, bar_num}
 
 /**
  * nmmap_create_node - Creates a memory map node that can be used by external drivers

@@ -37,7 +37,9 @@ struct udma_m2s {
 	u32 reserved1[17];
 	/* [0x54] M2S packet length configuration */
 	u32 cfg_len;
-	u32 reserved2[42];
+	/* [0x58] Stream interface configuration */
+	u32 stream_cfg;
+	u32 reserved2[41];
 };
 
 struct udma_m2s_rd {
@@ -144,6 +146,22 @@ struct udma_m2s_regs_v4 {
  * 1 - length 0x0000 = 64k
  */
 #define UDMA_M2S_CFG_LEN_ENCODE_64K (1 << 24)
+
+/**** stream_cfg register ****/
+/*
+ * Disables the stream interface operation.
+ * Changing to 1 stops at the end of packet transmission.
+ */
+#define UDMA_M2S_STREAM_CFG_DISABLE  (1 << 0)
+/*
+ * Configuration of the stream FIFO read control.
+ * 0 - Cut through
+ * 1 - Threshold based
+ */
+#define UDMA_M2S_STREAM_CFG_RD_MODE  (1 << 1)
+/* Minimum number of beats to start packet transmission. */
+#define UDMA_M2S_STREAM_CFG_RD_TH_MASK 0x0007FF00
+#define UDMA_M2S_STREAM_CFG_RD_TH_SHIFT 8
 
 #define UDMA_M2S_RD_DESC_PREF_CFG_2_PERF_FORCE_RR_SHIFT 16
 /* Maximum number of descriptors per packet */
@@ -430,6 +448,9 @@ struct udma_s2m_regs_v4 {
 #define INT_CONTROL_GRP_UDMA_M2S_PREF_RING_ID (1 << 11)
 /* Interrupt controller level ring id s2m error */
 #define INT_CONTROL_GRP_UDMA_S2M_PREF_RING_ID (1 << 2)
+
+/* Disables the stream interface operation. */
+#define UDMA_S2M_DMA_RING_DISABLE (1 << 0)
 
 
 struct iofic_grp_ctrl {

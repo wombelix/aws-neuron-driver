@@ -1136,11 +1136,14 @@ static int npe_pod_status_v1(u32 *pod_state, u8 *node_id)
 /**
  * npe_pod_ctrl() - control the state of the pode
  *
+ * @pnd:    array of neuron devices
  * @param pod_ctrl  - control operation to perform
+ * @param timeout - timeout for the control operation
  * @param pod_state - state/outcome of the pod's election process
  *
  */
-static int npe_pod_ctrl_v1(u32 pod_ctrl, u32 *pod_state)
+
+static int npe_pod_ctrl_v1(struct neuron_device **pnd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
 {
 	*pod_state = NEURON_POD_E_STATE_STANDALONE;
 	return 0;

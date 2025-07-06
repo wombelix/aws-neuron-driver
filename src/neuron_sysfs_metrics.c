@@ -89,7 +89,8 @@ const static nsysfsmetric_counter_node_info_t status_counter_nodes_info_tbl[] = 
     COUNTER_NODE_INFO("hw_collectives_error",        NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_COLLECTIVES)),
     COUNTER_NODE_INFO("hw_hbm_ue_error",             NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_HBM_UE)),
     COUNTER_NODE_INFO("hw_nc_ue_error",              NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_NC_UE)),
-    COUNTER_NODE_INFO("hw_dma_abort_error",          NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT))
+    COUNTER_NODE_INFO("hw_dma_abort_error",          NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT)),
+    COUNTER_NODE_INFO("execute_sw_nq_overflow",      NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_ERR_SW_NQ_OVERFLOW))
 };
 const static int status_counter_nodes_info_tbl_cnt = sizeof(status_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
 

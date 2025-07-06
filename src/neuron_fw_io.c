@@ -242,6 +242,11 @@ static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 
 		ctx->fw_io_err_count++;
 		pr_err(KERN_ERR "seq: %u, cmd: %u failed %u\n", ctx->next_seq_num, command_id,
 	       	ctx->response->error_code);
+		// if we get an unsupported command response, don't retry
+		if (ctx->response->error_code == FW_IO_UNKNOWN_COMMAND) {
+			ret = -1;
+			goto done;
+		}
 	}
 done:
 

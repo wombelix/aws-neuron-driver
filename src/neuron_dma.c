@@ -303,9 +303,9 @@ static int ndma_memcpy_chunks( struct ndma_eng *eng, struct ndma_ring *ring, str
 	int        ret;
 	dma_addr_t src;
    	dma_addr_t dst;
-	u32        chunk_size;
-	u32        remaining;
-	u32        offset;
+	u64        chunk_size;
+	u64        remaining;
+	u64        offset;
 	int        pending_transfers;
 	bool       done;
 	const u32  sync_threshold = DMA_H2T_DESC_COUNT/2 - UDMA_MAX_NUM_CDESC_PER_CACHE_LINE - 1;
@@ -333,7 +333,7 @@ static int ndma_memcpy_chunks( struct ndma_eng *eng, struct ndma_ring *ring, str
 		src_offset = dma_ctx->smove ? src + offset : src;
 		dst_offset = dma_ctx->dmove ? dst + offset : dst;
 
-		ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, chunk_size, ndhal->ndhal_ndma.ndma_get_m2m_barrier_type(done));
+		ret = ndma_memcpy64k(eng, ring, src_offset, dst_offset, (u32)chunk_size, ndhal->ndhal_ndma.ndma_get_m2m_barrier_type(done));
 		if (ret) { 
 			return ret;
 		}
@@ -389,7 +389,7 @@ static int _ndma_memcpy_wait_for_completion( struct neuron_device *nd, u32 nc_id
 			break;
 		}
 		
-		pr_info("Failed to copy memory during a NeuronCore reset: nd %d, src %#llx, dst %#llx, size %u. Retrying the copy.\n", 
+		pr_info("Failed to copy memory during a NeuronCore reset: nd %d, src %#llx, dst %#llx, size %llu. Retrying the copy.\n", 
 				nd->device_index, dma_ctx->src, dma_ctx->dst, dma_ctx->size);
 
 		dma_ctx->start_time = get_jiffies_64();
@@ -425,7 +425,7 @@ static int _ndma_memcpy_wait_for_completion( struct neuron_device *nd, u32 nc_id
  * if dmove is set then the dest offset will keep changing after every max desc size is copied
  *
  */
-static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size, bool smove, bool dmove, 
+static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u64 size, bool smove, bool dmove, 
 		                           u64 prefetch_addr, int pwait_handle, int wait_handle)
 {
 	int ret = 0;
@@ -455,9 +455,9 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 	dma_ctx->ring              = ring;
 	dma_ctx->src               = src;
 	dma_ctx->dst               = dst;
-	dma_ctx->offset            = 0;
+	dma_ctx->offset            = 0ull;
 	dma_ctx->remaining         = size;
-	dma_ctx->pending_transfers = 0;
+	dma_ctx->pending_transfers = 0ull;
 	dma_ctx->size              = size;
 	dma_ctx->smove             = smove;
 	dma_ctx->dmove             = dmove;
@@ -465,7 +465,7 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 
 	// Sanity check 
 	if ((pdma_ctx != NULL) && (!pdma_ctx->inuse)) {
-		pr_err("Async dma previous request on nd %d nc %d has invalid state. src %#llx, dst %#llx, size %u.\n", 
+		pr_err("Async dma previous request on nd %d nc %d has invalid state. src %#llx, dst %#llx, size %llu.\n", 
 				nd->device_index, nc_id, pdma_ctx->src, pdma_ctx->dst, pdma_ctx->size);
 		ret = -EINVAL;
 		goto fail;
@@ -498,7 +498,7 @@ static int ndma_memcpy_offset_move(struct neuron_device *nd, u32 nc_id, dma_addr
 				}
 
 				if (dma_ctx != pdma_ctx) {
-					pr_err("Async dma request on nd %d nc %d is too large. src %#llx, dst %#llx, size %u.\n", 
+					pr_err("Async dma request on nd %d nc %d is too large. src %#llx, dst %#llx, size %llu.\n", 
 							nd->device_index, nc_id, dma_ctx->src, dma_ctx->dst, dma_ctx->size);
 					ret = -EINVAL;
 					goto fail;
@@ -529,9 +529,9 @@ fail:
 	return ret;
 }
 
-int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 value, u32 size)
+int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 value, u64 size)
 {
-	u32 transfer_size, remaining_size;
+	u64 transfer_size, remaining_size;
 	struct mem_chunk *memset_mc = nd->memset_mc;
 	int ret = 0;
 
@@ -544,7 +544,7 @@ int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 
 	// transfer the contents to the memory
 	ret = ndma_memcpy_mc(nd, memset_mc, mc, 0, offset, transfer_size);
 	if (ret) {
-		pr_err("memset memory failed for size:%d\n", transfer_size);
+		pr_err("memset memory failed for size:%llu\n", transfer_size);
 		goto error;
 	}
 	remaining_size = size - transfer_size;
@@ -553,7 +553,7 @@ int ndma_memset(struct neuron_device *nd, struct mem_chunk *mc, u64 offset, u32 
 		ret = ndma_memcpy_offset_move(nd, mc->nc_id, mc->pa + offset, mc->pa + offset + transfer_size, remaining_size, false, true, 0, 
 										NEURON_DMA_H2T_CTX_HANDLE_SYNC, NEURON_DMA_H2T_CTX_HANDLE_SYNC);
 		if (ret) {
-			pr_err("memset device to device failed for size:%d\n", remaining_size);
+			pr_err("memset device to device failed for size:%llu\n", remaining_size);
 			goto error;
 		}
 	}
@@ -563,13 +563,13 @@ error:
 	return ret;
 }
 
-int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u32 size)
+int ndma_memcpy(struct neuron_device *nd, u32 nc_id, dma_addr_t src, dma_addr_t dst, u64 size)
 {
 	return ndma_memcpy_offset_move(nd, nc_id, src, dst, size, true, true, 0, NEURON_DMA_H2T_CTX_HANDLE_SYNC, NEURON_DMA_H2T_CTX_HANDLE_SYNC);
 }
 
 int ndma_memcpy_mc_async(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
-		   u32 src_offset, u32 dst_offset, u32 size, u64 prefetch_addr, int pdma_ctx_handle, int *dma_ctx_handle)
+		   u64 src_offset, u64 dst_offset, u64 size, u64 prefetch_addr, int pdma_ctx_handle, int *dma_ctx_handle)
 {
 	dma_addr_t src_pa, dst_pa;
 	u32 nc_id = 0;
@@ -589,7 +589,7 @@ int ndma_memcpy_mc_async(struct neuron_device *nd, struct mem_chunk *src_mc, str
 }
 
 int ndma_memcpy_mc(struct neuron_device *nd, struct mem_chunk *src_mc, struct mem_chunk *dst_mc,
-		   u32 src_offset, u32 dst_offset, u32 size)
+		   u64 src_offset, u64 dst_offset, u64 size)
 {
 	dma_addr_t src_pa, dst_pa;
 	u32 nc_id = 0; //default use NC 0
@@ -661,8 +661,8 @@ int ndma_memcpy_mc_wait( struct neuron_device *nd, struct mem_chunk *src_mc, str
 }
 
 
-int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset,
-			  struct mem_chunk *dst_mc, u32 dst_offset, u32 size)
+int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u64 src_offset,
+			  struct mem_chunk *dst_mc, u64 dst_offset, u64 size)
 {
 	dma_addr_t src_pa;
 	dma_addr_t dst_pa;
@@ -682,8 +682,8 @@ int ndma_memcpy_buf_to_mc(struct neuron_device *nd, void *buffer, u32 src_offset
 	return ndma_memcpy(nd, nc_id, src_pa, dst_pa, size);
 }
 
-int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u32 dst_offset,
-				struct mem_chunk *src_mc, u32 src_offset, u32 size)
+int ndma_memcpy_buf_from_mc(struct neuron_device *nd, void *buffer, u64 dst_offset,
+				struct mem_chunk *src_mc, u64 src_offset, u64 size)
 {
 	dma_addr_t src_pa;
 	dma_addr_t dst_pa;
@@ -758,11 +758,11 @@ done:
 	return found;
 }
 
-int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u32 src_offset,
-					 struct mem_chunk *dst_mc, u32 dst_offset, u32 size,
+int ndma_memcpy_dma_copy_descriptors(struct neuron_device *nd, void *buffer, u64 src_offset,
+					 struct mem_chunk *dst_mc, u64 dst_offset, u64 size,
 					 u32 desc_type)
 {
-	u32 curr_size = size;
+	u64 curr_size = size;
 	union udma_desc *desc = (union udma_desc *)buffer;
 	phys_addr_t pa;
 

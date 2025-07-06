@@ -41,9 +41,6 @@
 #include "neuron_fw_io.h"
 #include "neuron_log.h"
 
-// Temp define for memory range check. Will be replaced when we address >4GbB memory allocation support
-#define      UINT32_MAX  (4294967295U)
-
 static dev_t neuron_dev;
 static int major;
 static struct class *neuron_dev_class;
@@ -208,53 +205,72 @@ done:
 	return ret;
 }
 
-static int ncdev_dma_copy_descriptors(struct neuron_device *nd, void *param)
+static int ncdev_dma_copy_descriptors(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_dma_copy_descriptors arg;
+	static_assert(NEURON_IOCTL_DMA_COPY_DESCRIPTORS != NEURON_IOCTL_DMA_COPY_DESCRIPTORS64);
+
 	struct mem_chunk *src_mc;
-	u32 offset = 0, copy_size = 0;
-	u32 remaining;
+	u64 mem_handle;
+	void *buffer;
+	u64 offset;
+	u64 num_descs;
+	enum neuron_dma_queue_type queue_type;
+	u64 copy_offset = 0, copy_size = 0;
+	u64 remaining;
 	int ret;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_copy_descriptors *)param, sizeof(arg));
-	if (ret)
-		return ret;
+	if (cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS) {
+		struct neuron_ioctl_dma_copy_descriptors arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_copy_descriptors *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		mem_handle = arg.mem_handle;
+		buffer = arg.buffer;
+		offset = arg.offset;
+		num_descs = arg.num_descs;
+		queue_type = arg.queue_type;
+	} else if (cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS64) {
+		struct neuron_ioctl_dma_copy_descriptors64 arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_dma_copy_descriptors64 *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		mem_handle = arg.mem_handle;
+		buffer = arg.buffer;
+		offset = arg.offset;
+		num_descs = arg.num_descs;
+		queue_type = arg.queue_type;
+	} else {
+		return -EINVAL;
+	}
 
-	struct mem_chunk *mc = ncdev_mem_handle_to_mem_chunk(nd, arg.mem_handle);
+	struct mem_chunk *mc = ncdev_mem_handle_to_mem_chunk(nd, mem_handle);
 	if (!mc)
 		return -EINVAL;
-	// range check 
-	if ((u64)arg.offset + ((u64)arg.num_descs * (u64)sizeof(union udma_desc)) > (u64)UINT32_MAX) {
-		ret = -EINVAL;
-		goto out;
-	}
 	// check access is within the range.
-	if (arg.offset + (arg.num_descs * sizeof(union udma_desc)) > mc->size) {
-		ret = -EINVAL;
-		goto out;
+	if (offset + (num_descs * sizeof(union udma_desc)) > mc->size) {
+		return -EINVAL;
 	}
 
-	remaining = arg.num_descs * sizeof(union udma_desc);
+	remaining = num_descs * sizeof(union udma_desc);
 	ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, 0, MEM_LOC_HOST, 0, 0, mc->nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
 	if (ret) {
-		ret = -ENOMEM;
-		goto out;
+		return -ENOMEM;
 	}
 	while (remaining) {
 		copy_size = remaining < MAX_DMA_DESC_SIZE ? remaining : MAX_DMA_DESC_SIZE;
-		ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + offset, copy_size);
+		ret = neuron_copy_from_user(__func__, src_mc->va, buffer + copy_offset, copy_size);
 		if (ret) {
 			break;
 		}
-		ret = ndma_memcpy_dma_copy_descriptors(nd, src_mc->va, 0, mc, arg.offset + offset,
-						       copy_size, arg.queue_type);
+		ret = ndma_memcpy_dma_copy_descriptors(nd, src_mc->va, 0, mc, offset + copy_offset,
+						       copy_size, queue_type);
 		if (ret) {
 			break;
 		}
 		remaining -= copy_size;
-		offset += copy_size;
+		copy_offset += copy_size;
 	}
-out:
+
 	mc_free(&src_mc);
 	return ret;
 }
@@ -437,10 +453,21 @@ static int ncdev_mem_alloc(struct neuron_device *nd, void *param)
 static int ncdev_mem_alloc_libnrt(struct neuron_device *nd, unsigned int cmd, void *param)
 {
 	static_assert(NEURON_IOCTL_MEM_ALLOC_V2 != NEURON_IOCTL_MEM_ALLOC_V2MT);
+	static_assert(NEURON_IOCTL_MEM_ALLOC_V2 != NEURON_IOCTL_MEM_ALLOC_V2MT64);
+	static_assert(NEURON_IOCTL_MEM_ALLOC_V2MT != NEURON_IOCTL_MEM_ALLOC_V2MT64);
 
 	enum mem_location location;
 	u64 mh;
 	struct mem_chunk *mc;
+	u64 *mem_handle;
+	u32 host_memory;
+	u64 size;
+	u64 align;
+	u32 dram_channel;
+	u32 dram_region;
+	u32 nc_id;
+	mem_alloc_category_t mem_type;
+
 	int ret;
 
 	if (cmd == NEURON_IOCTL_MEM_ALLOC_V2) {
@@ -449,61 +476,73 @@ static int ncdev_mem_alloc_libnrt(struct neuron_device *nd, unsigned int cmd, vo
 			     sizeof(mem_alloc_arg));
 		if (ret)
 			return ret;
-		mem_alloc_category_t mem_alloc_type;
-		if (mem_alloc_arg.host_memory) {
-			location = MEM_LOC_HOST;
-			mem_alloc_type = NEURON_MEMALLOC_TYPE_UNKNOWN_HOST;
+
+		size = mem_alloc_arg.size;
+		align = mem_alloc_arg.align;
+		host_memory = mem_alloc_arg.host_memory;
+		dram_channel = mem_alloc_arg.dram_channel;
+		dram_region = mem_alloc_arg.dram_region;
+		nc_id = mem_alloc_arg.nc_id;
+		mem_handle = mem_alloc_arg.mem_handle;
+		if (host_memory) {
+			mem_type = NEURON_MEMALLOC_TYPE_UNKNOWN_HOST;
 		} else {
-			location = MEM_LOC_DEVICE;
-			mem_alloc_type = NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE;
+			mem_type = NEURON_MEMALLOC_TYPE_UNKNOWN_DEVICE;
 		}
-		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, mem_alloc_arg.align, location, mem_alloc_arg.dram_channel,
-			       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, mem_alloc_type, &mc);
-		if (ret)
-			return ret;
-
-		trace_ioctl_mem_alloc(nd, mc);
-
-		ret = ncdev_mem_chunk_to_mem_handle(nd, mc, &mh);
-		if (!ret) {
-			ret = copy_to_user(mem_alloc_arg.mem_handle, &mh, sizeof(mc));
-		}
-
-		if (ret) {
-			mc_free(&mc);
-			return ret;
-		}
-		return 0;
 	} else if (cmd == NEURON_IOCTL_MEM_ALLOC_V2MT) {
 		struct neuron_ioctl_mem_alloc_v2_mem_type mem_alloc_arg;
 		ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2_mem_type *)param,
 			     sizeof(mem_alloc_arg));
 		if (ret)
 			return ret;
-		if (mem_alloc_arg.host_memory)
-			location = MEM_LOC_HOST;
-		else
-			location = MEM_LOC_DEVICE;
-		ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, mem_alloc_arg.size, mem_alloc_arg.align, location, mem_alloc_arg.dram_channel,
-			       mem_alloc_arg.dram_region, mem_alloc_arg.nc_id, mem_alloc_arg.mem_type, &mc);
+
+		size = mem_alloc_arg.size;
+		align = mem_alloc_arg.align;
+		host_memory = mem_alloc_arg.host_memory;
+		dram_channel = mem_alloc_arg.dram_channel;
+		dram_region = mem_alloc_arg.dram_region;
+		nc_id = mem_alloc_arg.nc_id;
+		mem_type = mem_alloc_arg.mem_type;
+		mem_handle = mem_alloc_arg.mem_handle;
+	} else if (cmd == NEURON_IOCTL_MEM_ALLOC_V2MT64) {
+		struct neuron_ioctl_mem_alloc_v2_mem_type64 mem_alloc_arg;
+		ret = neuron_copy_from_user(__func__, &mem_alloc_arg, (struct neuron_ioctl_mem_alloc_v2_mem_type64 *)param,
+			     sizeof(mem_alloc_arg));
 		if (ret)
 			return ret;
 
-		trace_ioctl_mem_alloc(nd, mc);
-
-		ret = ncdev_mem_chunk_to_mem_handle(nd, mc, &mh);
-		if (!ret) {
-			ret = copy_to_user(mem_alloc_arg.mem_handle, &mh, sizeof(mc));
-		}
-
-		if (ret) {
-			mc_free(&mc);
-			return ret;
-		}
-		return 0;
+		size = mem_alloc_arg.size;
+		align = mem_alloc_arg.align;
+		host_memory = mem_alloc_arg.host_memory;
+		dram_channel = mem_alloc_arg.dram_channel;
+		dram_region = mem_alloc_arg.dram_region;
+		nc_id = mem_alloc_arg.nc_id;
+		mem_type = mem_alloc_arg.mem_type;
+		mem_handle = mem_alloc_arg.mem_handle;
 	} else {
 		return -EINVAL;
 	}
+
+	if (host_memory)
+		location = MEM_LOC_HOST;
+	else
+		location = MEM_LOC_DEVICE;
+	ret = mc_alloc_align(nd, MC_LIFESPAN_CUR_PROCESS, size, align, location, dram_channel, dram_region, nc_id, mem_type, &mc);
+	if (ret)
+		return ret;
+
+	trace_ioctl_mem_alloc(nd, mc);
+
+	ret = ncdev_mem_chunk_to_mem_handle(nd, mc, &mh);
+	if (!ret) {
+		ret = copy_to_user(mem_handle, &mh, sizeof(mc));
+	}
+
+	if (ret) {
+		mc_free(&mc);
+		return ret;
+	}
+	return 0;
 }
 
 static int ncdev_mem_get_pa_deprecated(struct neuron_device *nd, void *param)
@@ -664,57 +703,112 @@ static int ncdev_mem_free(struct neuron_device *nd, void *param)
 	return 0;
 }
 
-static int ncdev_memset(struct neuron_device *nd, void *param)
+static int ncdev_memset(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_memset arg;
+	static_assert(NEURON_IOCTL_MEMSET != NEURON_IOCTL_MEMSET64);
+
 	struct mem_chunk *mc;
+	u64 mem_handle;
+	u64 offset;
+	u64 size;
+	u32 value;
 	int ret = 0;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_memset *)param, sizeof(arg));
-	if (ret)
-		return ret;
-	mc = ncdev_mem_handle_to_mem_chunk(nd, arg.mem_handle);
-	if (!mc)
+	// 
+	if (cmd == NEURON_IOCTL_MEMSET) {
+		struct neuron_ioctl_memset arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_memset *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		mem_handle = arg.mem_handle;
+		offset = arg.offset;
+		size = arg.size;
+		value = arg.value;
+	} else if (cmd == NEURON_IOCTL_MEMSET64) {
+		struct neuron_ioctl_memset64 arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_memset64 *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		mem_handle = arg.mem_handle;
+		offset = arg.offset;
+		size = arg.size;
+		value = arg.value;
+	} else {
 		return -EINVAL;
+	}
+
+	mc = ncdev_mem_handle_to_mem_chunk(nd, mem_handle);
+	if (!mc) {
+		return -EINVAL;
+	}
+
 	// check access is within the range.
-	if ((u64)arg.offset + (u64)arg.size > mc->size) {
+	if (offset + size > mc->size) {
 		pr_err("offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 
-	ret = ndma_memset(nd, mc, arg.offset, arg.value, arg.size);
+	ret = ndma_memset(nd, mc, offset, value, size);
 	if (ret) {
 		pr_err("memset failed\n");
 	}
 	return ret;
 }
 
-static int ncdev_mem_copy(struct neuron_device *nd, void *param)
+static int ncdev_mem_copy(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_mem_copy arg;
+	static_assert(NEURON_IOCTL_MEM_COPY != NEURON_IOCTL_MEM_COPY64);
+
 	struct mem_chunk *src_mc;
 	struct mem_chunk *dst_mc;
+	u64 src_mem_handle;
+	u64 dst_mem_handle;
+	u64 src_offset;
+	u64 dst_offset;
+	u64 size;
 	int ret;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy *)param, sizeof(arg));
-	if (ret)
-		return ret;
-	src_mc = ncdev_mem_handle_to_mem_chunk(nd, arg.src_mem_handle);
+	if (cmd == NEURON_IOCTL_MEM_COPY) {
+		struct neuron_ioctl_mem_copy arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		src_mem_handle = arg.src_mem_handle;
+		dst_mem_handle = arg.dst_mem_handle;
+		src_offset = arg.src_offset;
+		dst_offset = arg.dst_offset;
+		size = arg.size;
 	dst_mc = ncdev_mem_handle_to_mem_chunk(nd, arg.dst_mem_handle);
+	} else if (cmd == NEURON_IOCTL_MEM_COPY64) {
+		struct neuron_ioctl_mem_copy64 arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy64 *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		src_mem_handle = arg.src_mem_handle;
+		dst_mem_handle = arg.dst_mem_handle;
+		src_offset = arg.src_offset;
+		dst_offset = arg.dst_offset;
+		size = arg.size;
+	} else {
+		return -EINVAL;
+	}
+
+	src_mc = ncdev_mem_handle_to_mem_chunk(nd, src_mem_handle);
+	dst_mc = ncdev_mem_handle_to_mem_chunk(nd, dst_mem_handle);
 	if (!src_mc || !dst_mc)
 		return -EINVAL;
 
 	// check access is within the range.
-	if ((u64)arg.src_offset + (u64)arg.size > src_mc->size) {
+	if (src_offset + size > src_mc->size) {
 		pr_err("src offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 	// check access is within the range.
-	if ((u64)arg.dst_offset + (u64)arg.size > dst_mc->size) {
+	if (dst_offset + size > dst_mc->size) {
 		pr_err("src offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
-	ret = ndma_memcpy_mc(nd, src_mc, dst_mc, arg.src_offset, arg.dst_offset, arg.size);
+	ret = ndma_memcpy_mc(nd, src_mc, dst_mc, src_offset, dst_offset, size);
 	if (ret) {
 		pr_err("dma memcpy failed\n");
 		return ret;
@@ -723,40 +817,81 @@ static int ncdev_mem_copy(struct neuron_device *nd, void *param)
 	return 0;
 }
 
-static int ncdev_mem_copy_async(struct neuron_device *nd, void *param)
+static int ncdev_mem_copy_async(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_mem_copy_async arg;
+	static_assert(NEURON_IOCTL_MEM_COPY_ASYNC != NEURON_IOCTL_MEM_COPY_ASYNC64);
+
 	struct mem_chunk *src_mc;
 	struct mem_chunk *dst_mc;
-	int    ret;
+	u64 src_mem_handle;
+	u64 dst_mem_handle;
+	u64 src_offset;
+	u64 dst_offset;
+	u64 size;
+	u64 host_prefetch_addr;
+	u32 pwait_handle;
+	u32 *wait_handle;
+	union {
+		struct neuron_ioctl_mem_copy_async a;
+		struct neuron_ioctl_mem_copy_async64 a64;
+	} arg;
+	u32 arg_size;
+	int ret;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_copy_async *)param, sizeof(arg));
-	if (ret)
-		return ret;
-	src_mc = ncdev_mem_handle_to_mem_chunk(nd, arg.src_mem_handle);
-	dst_mc = ncdev_mem_handle_to_mem_chunk(nd, arg.dst_mem_handle);
+	if (cmd == NEURON_IOCTL_MEM_COPY_ASYNC) {
+		arg_size = sizeof(arg.a);
+		ret = neuron_copy_from_user(__func__, &arg, (void *)param, arg_size);
+		if (ret)
+			return ret;
+		src_mem_handle = arg.a.src_mem_handle;
+		dst_mem_handle = arg.a.dst_mem_handle;
+		src_offset = arg.a.src_offset;
+		dst_offset = arg.a.dst_offset;
+		size = arg.a.size;
+		host_prefetch_addr = arg.a.host_prefetch_addr;
+		pwait_handle = arg.a.pwait_handle;
+		wait_handle  = &arg.a.wait_handle;
+	} else if (cmd == NEURON_IOCTL_MEM_COPY_ASYNC64) {
+		arg_size = sizeof(arg.a64);
+		ret = neuron_copy_from_user(__func__, &arg, (void *)param, arg_size);
+		if (ret)
+			return ret;
+		src_mem_handle = arg.a64.src_mem_handle;
+		dst_mem_handle = arg.a64.dst_mem_handle;
+		src_offset = arg.a64.src_offset;
+		dst_offset = arg.a64.dst_offset;
+		size = arg.a64.size;
+		host_prefetch_addr = arg.a64.host_prefetch_addr;
+		pwait_handle = arg.a64.pwait_handle;
+		wait_handle  = &arg.a64.wait_handle;
+	} else {
+		return -EINVAL;
+	}
+
+	src_mc = ncdev_mem_handle_to_mem_chunk(nd, src_mem_handle);
+	dst_mc = ncdev_mem_handle_to_mem_chunk(nd, dst_mem_handle);
 	if (!src_mc || !dst_mc)
 		return -EINVAL;
 
 	// check access is within the range.
-	if ((u64)arg.src_offset + (u64)arg.size > src_mc->size) {
+	if (src_offset + size > src_mc->size) {
 		pr_err("src offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 	// check access is within the range.
-	if ((u64)arg.dst_offset + (u64)arg.size > dst_mc->size) {
+	if (dst_offset + size > dst_mc->size) {
 		pr_err("dst offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 
-	ret = ndma_memcpy_mc_async(nd, src_mc, dst_mc, arg.src_offset, arg.dst_offset, arg.size, arg.host_prefetch_addr, arg.pwait_handle, &arg.wait_handle);
+	ret = ndma_memcpy_mc_async(nd, src_mc, dst_mc, src_offset, dst_offset, size, host_prefetch_addr, pwait_handle, wait_handle);
 	if (ret) {
 		pr_err("dma memcpy failed: %d\n", ret);
 		return ret;
 	}
 
 	// return the new wait handle
-	ret = copy_to_user((struct neuron_ioctl_mem_copy_async *)param, &arg, sizeof(arg));
+	ret = copy_to_user((void *)param, &arg, arg_size);
 
 	trace_ioctl_mem_copy(nd, src_mc, dst_mc);
 	return ret;
@@ -843,75 +978,129 @@ error:
 	return ret;
 }
 
-static int ncdev_program_engine_nc(struct neuron_device *nd, void *param)
+static int ncdev_program_engine_nc(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_program_engine_nc arg;
-	int ret;
+	static_assert(NEURON_IOCTL_PROGRAM_ENGINE_NC != NEURON_IOCTL_PROGRAM_ENGINE_NC64);
+
 	struct mem_chunk *src_mc;
+	u32 nc_id;
+	u64 dst;
+	void * buffer;
+	u64 offset;
+	u64 size;
+	int ret;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program_engine_nc *)param, sizeof(arg));
-	if (ret)
-		return ret;
+	if (cmd == NEURON_IOCTL_PROGRAM_ENGINE_NC) {
+		struct neuron_ioctl_program_engine_nc arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program_engine_nc *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		nc_id = arg.nc_id;
+		dst = arg.dst;
+		buffer = arg.buffer;
+		offset = arg.offset;
+		size = arg.size;
+	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE_NC64) {
+		struct neuron_ioctl_program_engine_nc64 arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_program_engine_nc64 *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		nc_id = arg.nc_id;
+		dst = arg.dst;
+		buffer = arg.buffer;
+		offset = arg.offset;
+		size = arg.size;
+	} else {
+		return -EINVAL;
+	}
 
-	if (ncdev_verify_mem_region(arg.dst + arg.offset, arg.size))
+	if (ncdev_verify_mem_region(dst + offset, size))
 		return -ENOMEM;
 
-	ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, arg.size, 0, MEM_LOC_HOST, 0, 0, arg.nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
+	ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, size, 0, MEM_LOC_HOST, 0, 0, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
 	if (ret) {
-		pr_err("engine programming dma mc_alloc_align failed. nc_id: %d addr: %llu size: %u err: %d\n",arg.nc_id,  arg.dst + arg.offset, arg.size, ret);
+		pr_err("engine programming dma mc_alloc_align failed. nc_id: %d addr: %llu size: %llu err: %d\n", nc_id,  dst + offset, size, ret);
 		ret = -ENOMEM;
 		return ret;
 	}
 
-	ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + arg.offset, arg.size);
+	ret = neuron_copy_from_user(__func__, src_mc->va, buffer + offset, size);
 	if (ret)
 		goto error;
 
-	ret = ndma_memcpy(nd, arg.nc_id, virt_to_phys(src_mc->va) | ndhal->ndhal_address_map.pci_host_base, arg.dst + arg.offset, arg.size);
+	ret = ndma_memcpy(nd, nc_id, virt_to_phys(src_mc->va) | ndhal->ndhal_address_map.pci_host_base, dst + offset, size);
 
 	if (ret) {
-		pr_err("engine programming dma failed. nc_id: %d addr: %llu\n",arg.nc_id,  arg.dst + arg.offset);
+		pr_err("engine programming dma failed. nc_id: %d addr: %llu\n", nc_id,  dst + offset);
 	}
+
 error:
 	mc_free(&src_mc);
 	return ret;
 }
 
-static int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
+static int ncdev_mem_buf_copy(struct neuron_device *nd, unsigned int cmd, void *param)
 {
-	struct neuron_ioctl_mem_buf_copy arg;
+	static_assert(NEURON_IOCTL_MEM_BUF_COPY != NEURON_IOCTL_MEM_BUF_COPY64);
+
+	void *buffer;
 	struct mem_chunk *mc;
+	u64 mem_handle;
+	u32 copy_to_mem_handle;
+	u64 offset;
+	u64 size;
 	int ret;
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_buf_copy *)param, sizeof(arg));
-	if (ret)
-		return ret;
-	mc = ncdev_mem_handle_to_mem_chunk(nd, arg.mem_handle);
+	if (cmd == NEURON_IOCTL_MEM_BUF_COPY) {
+		struct neuron_ioctl_mem_buf_copy arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_buf_copy *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		mem_handle = arg.mem_handle;
+		buffer = arg.buffer;
+		copy_to_mem_handle = arg.copy_to_mem_handle;
+		offset = arg.offset;
+		size = arg.size;
+	} else if (cmd == NEURON_IOCTL_MEM_BUF_COPY64) {
+		struct neuron_ioctl_mem_buf_copy64 arg;
+		ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_buf_copy64 *)param, sizeof(arg));
+		if (ret)
+			return ret;
+		mem_handle = arg.mem_handle;
+		buffer = arg.buffer;
+		copy_to_mem_handle = arg.copy_to_mem_handle;
+		offset = arg.offset;
+		size = arg.size;
+	} else {
+		return -EINVAL;
+	}
+
+	mc = ncdev_mem_handle_to_mem_chunk(nd, mem_handle);
 	if (!mc)
 		return -EINVAL;
 	// check access is within the range.
-	if ((u64)arg.offset + (u64)arg.size > mc->size) {
+	if (offset + size > mc->size) {
 		pr_err("offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 
-	if (arg.copy_to_mem_handle)
-		trace_ioctl_mem_copyin(nd, mc, arg.buffer, arg.offset, arg.size);
+	if (copy_to_mem_handle)
+		trace_ioctl_mem_copyin(nd, mc, buffer, offset, size);
 	else
-		trace_ioctl_mem_copyout(nd, mc, arg.buffer, arg.offset, arg.size);
+		trace_ioctl_mem_copyout(nd, mc, buffer, offset, size);
 
 	if (mc->mem_location == MEM_LOC_HOST) {
-		if (arg.copy_to_mem_handle) {
-			ret = neuron_copy_from_user(__func__, mc->va + arg.offset, arg.buffer, arg.size);
+		if (copy_to_mem_handle) {
+			ret = neuron_copy_from_user(__func__, mc->va + offset, buffer, size);
 		} else {
-			ret = copy_to_user(arg.buffer, mc->va + arg.offset, arg.size);
+			ret = copy_to_user(buffer, mc->va + offset, size);
 		}
 		return ret;
 	} else {
 		// TODO - this has to be converted to mmap
 		struct mem_chunk *src_mc;
-		u32 offset = 0;
-		u32 remaining = arg.size;
+		u32 copy_offset = 0;
+		u32 remaining = size;
 		u32 copy_size = 0;
 		ret = mc_alloc_align(nd, MC_LIFESPAN_LOCAL, MAX_DMA_DESC_SIZE, 0, MEM_LOC_HOST, 0, 0,
 			       mc->nc_id, NEURON_MEMALLOC_TYPE_NCDEV_HOST, &src_mc);
@@ -921,29 +1110,29 @@ static int ncdev_mem_buf_copy(struct neuron_device *nd, void *param)
 		}
 		while (remaining) {
 			copy_size = remaining < MAX_DMA_DESC_SIZE ? remaining : MAX_DMA_DESC_SIZE;
-			if (arg.copy_to_mem_handle) {
-				ret = neuron_copy_from_user(__func__, src_mc->va, arg.buffer + offset, copy_size);
+			if (copy_to_mem_handle) {
+				ret = neuron_copy_from_user(__func__, src_mc->va, buffer + copy_offset, copy_size);
 				if (ret) {
 					break;
 				}
 				ret = ndma_memcpy_buf_to_mc(nd, src_mc->va, 0, mc,
-							    arg.offset + offset, copy_size);
+							    offset + copy_offset, copy_size);
 				if (ret) {
 					break;
 				}
 			} else {
 				ret = ndma_memcpy_buf_from_mc(nd, src_mc->va, 0, mc,
-							      arg.offset + offset, copy_size);
+							      offset + copy_offset, copy_size);
 				if (ret) {
 					break;
 				}
-				ret = copy_to_user(arg.buffer + offset, src_mc->va, copy_size);
+				ret = copy_to_user(buffer + copy_offset, src_mc->va, copy_size);
 				if (ret) {
 					break;
 				}
 			}
 			remaining -= copy_size;
-			offset += copy_size;
+			copy_offset += copy_size;
 		}
 		mc_free(&src_mc);
 
@@ -1361,7 +1550,8 @@ static long ncdev_driver_info(unsigned int cmd, void *param)
 			driver_info.size = sizeof(driver_info);
 			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA |
 										 NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT | NEURON_DRIVER_FEATURE_BIG_CORE_MAPS |
-										 NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE | NEURON_DRIVER_FEATURE_HBM_SCRUB ;
+										 NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE | NEURON_DRIVER_FEATURE_HBM_SCRUB |
+										 NEURON_DRIVER_FEATURE_MEM_ALLOC64;
 
 			return copy_to_user(param, &driver_info, sizeof(driver_info));
 		}
@@ -2313,7 +2503,10 @@ static int ncdev_pod_ctrl(unsigned int cmd, void *param)
 {
 	int ret;
 	int cret;
+	uint32_t device_index;
 	struct neuron_ioctl_pod_ctrl arg;
+	struct neuron_device *pnd[16];
+	
 
 	if (cmd != NEURON_IOCTL_POD_CTRL) {
 		return -EINVAL;
@@ -2328,7 +2521,16 @@ static int ncdev_pod_ctrl(unsigned int cmd, void *param)
 		return -EINVAL;
 	}
 
-	ret = ndhal->ndhal_npe.npe_pod_ctrl( arg.ctrl, &arg.state);
+	// collect nd structures we need to perform the election
+	//
+	for (device_index = 0; device_index < 16; device_index++) {
+		pnd[device_index]  = devnodes[device_index].ndev;
+		if (pnd[device_index] == NULL) {
+			return -EINVAL;
+		}
+	}
+		
+	ret = ndhal->ndhal_npe.npe_pod_ctrl( pnd, arg.ctrl, arg.timeout, &arg.state);
 
 	cret = copy_to_user(param, &arg, sizeof(arg));
 	if (cret != 0) {
@@ -2459,8 +2661,8 @@ static long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long para
 		return ncdev_dma_ack_completed(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_QUEUE_RELEASE) {
 		return ncdev_dma_queue_release(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_DMA_COPY_DESCRIPTORS) {
-		return ncdev_dma_copy_descriptors(nd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_DMA_COPY_DESCRIPTORS)) {
+		return ncdev_dma_copy_descriptors(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_ENG_GET_STATE) {
 		return ncdev_dma_engine_get_state(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_DMA_QUEUE_GET_STATE) {
@@ -2482,20 +2684,20 @@ static long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long para
 		return ncdev_mem_get_pa_deprecated(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_FREE) {
 		return ncdev_mem_free(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_MEM_COPY) {
-		return ncdev_mem_copy(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_MEM_COPY_ASYNC) {
-		return ncdev_mem_copy_async(nd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_COPY)) {
+		return ncdev_mem_copy(nd, cmd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_COPY_ASYNC)) {
+		return ncdev_mem_copy_async(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_MEM_COPY_ASYNC_WAIT) {
 		return ncdev_mem_copy_async_wait(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_MEM_BUF_COPY) {
-		return ncdev_mem_buf_copy(nd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_BUF_COPY)) {
+		return ncdev_mem_buf_copy(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE) {
 		return ncdev_program_engine(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE_NC) {
-		return ncdev_program_engine_nc(nd, (void *)param);
-	} else if (cmd == NEURON_IOCTL_MEMSET) {
-		return ncdev_memset(nd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_PROGRAM_ENGINE_NC)) {
+		return ncdev_program_engine_nc(nd, cmd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEMSET)) {
+		return ncdev_memset(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_SEMAPHORE_READ) {
 		return ncdev_semaphore_ioctl(nd, cmd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_SEMAPHORE_WRITE) {

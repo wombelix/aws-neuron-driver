@@ -103,6 +103,13 @@ static int udma_set_defaults(struct udma *udma)
 	/* set max packet size to maximum */
 	udma_m2s_packet_size_cfg_set(udma, &conf);
 
+	/* set packet stream cfg:
+		rd_mode: This will enable threshold mode for the stream
+		rd_th: This is threshold for number of data beats before data can be sent to the stream. Set default to 1.
+	*/
+	reg_write32(&udma->udma_regs_m2s->m2s.stream_cfg,
+		UDMA_M2S_STREAM_CFG_RD_MODE | ((1 << UDMA_M2S_STREAM_CFG_RD_TH_SHIFT) & UDMA_M2S_STREAM_CFG_RD_TH_MASK));
+
 	/* Set addr_hi selectors */
 	gen_ex_regs = (struct udma_gen_ex_regs __iomem *)udma->gen_ex_regs;
 	for (i = 0; i < DMA_MAX_Q_V4; i++)
@@ -134,13 +141,15 @@ static int udma_set_defaults(struct udma *udma)
 		(0x40 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_DATA_WR_SHIFT);
 	reg_write32(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_wr, value);
 
-	/* disable completion pointer increments if completion ring is disabled.
-	 * This register only affects behavior when S2M completion ring is disabled
-	 * (hardware ignores this register when completion-ring is enabled).
-	 * V1 requires this fix to avoid race-condition when resetting the NC instruction buffers
-	 */
 	struct udma_gen_regs_v4 __iomem *gen_regs = udma->gen_regs;
-	reg_write32(&gen_regs->spare_reg.zeroes0, 0x1);
+	// V1 requires this fix to avoid race-condition when resetting the NC instruction buffers
+	u32 val = 0x1;
+
+ 	// this enables completion head and completion ring.	
+ 	if (ndhal->arch > NEURON_ARCH_V1) {
+ 		val = 0x0;
+ 	}
+ 	reg_write32(&gen_regs->spare_reg.zeroes0, val);
 
 	return 0;
 }
@@ -192,6 +201,10 @@ static int udma_q_config_compl(struct udma_q *udma_q)
 			return -EIO;
 		val |= UDMA_M2S_Q_COMP_CFG_EN_COMP_RING_UPDATE;
 		val |= UDMA_M2S_Q_COMP_CFG_DIS_COMP_COAL;
+		if (!ndhal->ndhal_ndmar.ndmar_is_nx_ring(udma_q->eng_id, udma_q->qid)) {
+			val &= ~UDMA_S2M_DMA_RING_DISABLE;
+		}
+
 		reg_write32(reg_addr, val);
 	}
 	return 0;
@@ -419,6 +432,7 @@ static void udma_q_init_internal(struct udma *udma, u32 qid, struct udma_q_param
 	udma_q->desc_phy_base = q_params->desc_phy_base;
 	udma_q->cdesc_base_ptr = q_params->cdesc_base;
 	udma_q->cdesc_phy_base = q_params->cdesc_phy_base;
+	udma_q->eng_id = q_params->eng_id;
 	if (udma_q->cdesc_base_ptr == NULL) // completion is disabled
 		udma_q->cdesc_size = 0;
 	else

@@ -31,16 +31,18 @@ int nmap_dm_special_resource_get( enum neuron_dm_block_type block, u32 block_id,
 	return -EINVAL;
 }
 
-static int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar0_offset, bool * readonly)
+static int nmap_dm_special_resource_addr_valid( u64 offset, u64 size, u64 *bar_offset, bool * readonly, int *bar_num)
 {
 	struct neuron_dm_special_mmap_ent *ent = ndhal->ndhal_mmap.dm_mmap_special;
 
 	while (ent->block != NEURON_DM_BLOCK_INVALID) {
 		if ((ent->offset == offset) && (ent->size == size)) { 
-			if (bar0_offset != NULL)
-				*bar0_offset = ent->bar0_offset;
+			if (bar_offset != NULL)
+				*bar_offset = ent->bar_offset;
 			if (readonly != NULL)
-				*readonly = (ent->resource ==  NEURON_DM_RESOURCE_ALL);
+				*readonly = (ent->resource == NEURON_DM_RESOURCE_ALL);
+			if (bar_num != NULL)
+				*bar_num = ent->bar_num;
 			return 0;
 		}
 		ent++;
@@ -167,6 +169,12 @@ static void nmmap_delete_node(struct vm_area_struct *vma)
 	write_lock(&nd->mpset.rbmmaplock);
 	mmap = nmmap_search_va(nd, (void *)vma->vm_start);
 	if (mmap != NULL) {
+		// Check and skip partial unmap
+		if ((mmap->va != (void *)vma->vm_start) || (mmap->size != (u64)(vma->vm_end - vma->vm_start))) {
+			write_unlock(&nd->mpset.rbmmaplock);
+			return;
+		}
+
 		nmmap_remove_node_rbtree(&nd->mpset.mmap_root[slot], mmap);
 		if (mmap->free_callback != NULL) {
 			free_callback = mmap->free_callback;
@@ -237,6 +245,8 @@ static struct mem_chunk *nmmap_get_mc(struct neuron_device *nd, struct vm_area_s
 	struct mem_chunk *mc;
 	u64 offset, size;
 	phys_addr_t pa;
+	bool readonly;
+	int bar_num;
 
 	size = vma->vm_end - vma->vm_start;
 	offset = vma->vm_pgoff << PAGE_SHIFT;
@@ -248,7 +258,7 @@ static struct mem_chunk *nmmap_get_mc(struct neuron_device *nd, struct vm_area_s
 	read_unlock(&nd->mpset.rblock);
 	if (mc == NULL) {
 		// if we couldn't find mc and it's not a special resource, kick out an error
-		if (nmap_dm_special_resource_addr_valid( offset, size, NULL, NULL))
+		if (nmap_dm_special_resource_addr_valid( offset, size, NULL, &readonly, &bar_num))
 			pr_err("nd%d: mc not found for mmap()\n", nd->device_index);
 		return NULL;
 	}
@@ -346,13 +356,15 @@ static int nmap_dm_special(struct neuron_device *nd, struct vm_area_struct *vma)
 	u64 start, size, offset;
 	int ret;
 	bool readonly;
+	int bar_num;
+	phys_addr_t bar_pa;
 
 	start = vma->vm_pgoff << PAGE_SHIFT;
 	size = vma->vm_end - vma->vm_start;
 
 	// if its not in the special resource table, try mapping as root
 	//
-	if (nmap_dm_special_resource_addr_valid( start, size, &offset, &readonly))
+	if (nmap_dm_special_resource_addr_valid( start, size, &offset, &readonly, &bar_num))
 		return nmmap_dm_root(nd, vma);
 	
 	if (readonly) {
@@ -360,7 +372,16 @@ static int nmap_dm_special(struct neuron_device *nd, struct vm_area_struct *vma)
 		pgprot_val(vma->vm_page_prot) &= ~VM_WRITE;
 	}
 
-	ret = io_remap_pfn_range(vma, vma->vm_start, (offset + nd->npdev.bar0_pa) >> PAGE_SHIFT,
+	// This special device memory is always a register space, disable caching for it
+	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+
+	if (bar_num == 0) {
+		bar_pa = nd->npdev.bar0_pa;
+	} else if (bar_num == 4) {
+		bar_pa = nd->npdev.bar4_pa;
+	}
+
+	ret = io_remap_pfn_range(vma, vma->vm_start, (offset + bar_pa) >> PAGE_SHIFT,
 				  size, vma->vm_page_prot);  
 	if (ret != 0) {
 		pr_err("io remap failed on nd: %d\n", nd->device_index);
@@ -371,7 +392,7 @@ static int nmap_dm_special(struct neuron_device *nd, struct vm_area_struct *vma)
 
 	// Insert the virtual address into tree so that we can do search using VA
 	nmmap_create_node(nd, (void *)vma->vm_start, task_tgid_nr(current),
-			  		  size, (offset + nd->npdev.bar0_pa));
+					  size, (offset + bar_pa));
 
 	// set the vm ops to cleanup on unmap
 	vma->vm_private_data = (void *)nd;

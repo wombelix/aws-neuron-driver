@@ -14,6 +14,7 @@ enum neuron_driver_feature_flag {
 	NEURON_DRIVER_FEATURE_BIG_CORE_MAPS   = 1ull <<  3, 
 	NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE  = 1ull <<  4,
 	NEURON_DRIVER_FEATURE_HBM_SCRUB = 1ull << 5,
+	NEURON_DRIVER_FEATURE_MEM_ALLOC64 = 1ull << 6,
 };
 
 // FIXME  this should be more generic - like node type.
@@ -27,9 +28,15 @@ enum {
 	NEURON_POD_E_STATE_NOT_STARTED= 0,
 	NEURON_POD_E_STATE_IN_PROGRESS,
 	NEURON_POD_E_STATE_SUCCESS,
-	NEURON_POD_E_STATE_FAILED,
+	NEURON_POD_E_STATE_FAILED,				// TODO we currently don't discriminate between failed and standalone (todo for diagnostic/debug purposes)
 	NEURON_POD_E_STATE_STANDALONE,
 	NEURON_POD_E_STATE_QUIESCING
+};
+
+enum neuron_pod_ctrl_req {
+	NEURON_NPE_POD_CTRL_REQ_POD = 0,  		// request pod state to pod (on-demand election request)
+	NEURON_NPE_POD_CTRL_REQ_STANDALONE = 1,	// request pod state to standalone
+	NEURON_NPE_POD_CTRL_REQ_KILL = 2,		// request to kill the election
 };
 
 #define NEURON_NC_MAP_DEVICE (0xffffffff)
@@ -109,13 +116,15 @@ enum NQ_TYPE {
 enum neuron_dm_block_type {
    NEURON_DM_BLOCK_INVALID = -1,  // invalid - tag last entry in the table
    NEURON_DM_BLOCK_TPB     =  0,
-   NEURON_DM_BLOCK_TOPSP   =  1
+   NEURON_DM_BLOCK_TOPSP   =  1,
+   NEURON_DM_BLOCK_HBM     =  2
 };
 
 enum neuron_dm_resource_type {
    NEURON_DM_RESOURCE_SEMAPHORE = 0,  // resource to mmap is semaphore region
    NEURON_DM_RESOURCE_ALL = 1,        // resource to mmap is the entire block (read only). Only available for TOPSP
    NEURON_DM_RESOURCE_SBUF = 2,       // resource to mmap is state buffer
+   NEURON_DM_RESOURCE_DMEM = 3	      // resource to mmap is device memory
 };
 
 struct neuron_uuid {
@@ -297,13 +306,14 @@ enum {
 // Additional NC storage
 // | NDS_EXT_NC_COUNTER_COUNT | ... | NDS_EXT_NC_COUNTER_COUNT | (x NDS_MAX_NEURONCORE_COUNT) - this will only store the 'overflow' from the original counters
 // | NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT | ... (x NDS_EXT_MAX_NEURONCORE_COUNT)   - this will store complete data for additional NCs (up to a max of 16)
-#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 60
+#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 59
 // Index of NC counter extensions start at NDS_NC_COUNTER_COUNT not at 0
 enum {
 	NDS_EXT_NC_COUNTER_HW_ERR_COLLECTIVES = NDS_NC_COUNTER_COUNT,
 	NDS_EXT_NC_COUNTER_HW_ERR_HBM_UE,
 	NDS_EXT_NC_COUNTER_HW_ERR_NC_UE,
 	NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT,
+	NDS_EXT_NC_COUNTER_ERR_SW_NQ_OVERFLOW,
 	NDS_EXT_NC_COUNTER_LAST,
 	NDS_EXT_NC_COUNTER_COUNT =  NDS_EXT_NC_COUNTER_LAST - NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_ADDED_RESERVED
 };

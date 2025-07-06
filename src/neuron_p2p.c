@@ -17,6 +17,9 @@
 #include "neuron_p2p.h"
 #include "neuron_pci.h"
 
+#define NEURON_P2P_HUGE_PAGE_SZ 0x200000
+#define NEURON_P2P_HUGE_PAGE_SZ_USAGE_THRESHOLD 0x10000000
+
 /*
  * Registers the VA with the callback and also returns the PA
  */
@@ -78,7 +81,14 @@ int neuron_p2p_register_va(u64 virtual_address, u64 length, struct neuron_p2p_va
 	// TODO: First step is to use just page size as default. In the subsequent commit will try to optimize.
 	// Page size should be chosen such that we can have the largest page size possible and the
 	// smallest page count
-	page_size = PAGE_SIZE;
+	if ((length >= NEURON_P2P_HUGE_PAGE_SZ_USAGE_THRESHOLD) && 
+		(length % NEURON_P2P_HUGE_PAGE_SZ == 0) &&
+		(virtual_address % NEURON_P2P_HUGE_PAGE_SZ == 0)) {
+		page_size = NEURON_P2P_HUGE_PAGE_SZ;
+	} else {
+		page_size = PAGE_SIZE;
+	}
+
 	vainfo->size = length;
 	vainfo->page_info[0].physical_address = pa; //just set to pa, since pa is already page size aligned.
 	vainfo->page_info[0].page_count = length/page_size;

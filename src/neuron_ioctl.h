@@ -43,6 +43,24 @@ struct neuron_ioctl_mem_alloc_v2_mem_type {
 	__u64 *mem_handle; // [out] Allocated memory handle would stored here.
 };
 
+/*
+ * identical to neuron_ioctl_mem_alloc_v2_mem_type. Introduced pad to differentiate new ioctl
+ * to allow NDL to determine if the driver has >=4GB support for both allocations and copies.
+ * It allows NDL to more gracefully fail >=4GB allocations is the driver doesn't support 
+ * copy ops to MCs that are larger than 4GB
+ */
+struct neuron_ioctl_mem_alloc_v2_mem_type64 {
+	__u64 size; // [in] Allocation size
+	__u64 align; // [in] alignment
+	__u32 host_memory; // [in] If true allocates from host memory; else allocates from device memory
+	__u32 dram_channel; // [in] DRAM channel in device memory
+	__u32 dram_region; // [in] DRAM region in device memory
+	__u32 nc_id; // [in] NeuronCore id(valid only if location is device)
+	__u32 mem_type; // [in] type of allocation
+	__u64 *mem_handle; // [out] Allocated memory handle would stored here.
+	__u32 pad;  // [dummy] used to descriminate between ioctl version
+};
+
 struct neuron_ioctl_device_init {
 	/* Splits DRAM in the device into smaller regions.
 	 * This improves performance of DDR by allowing parallel DMA using different regions.
@@ -101,6 +119,13 @@ struct neuron_ioctl_mem_copy {
 	__u32 dst_offset; // [in] Offset in the destination memory handle.
 };
 
+struct neuron_ioctl_mem_copy64 {
+	__u64 src_mem_handle; // [in] Source memory handle from where data is copied.
+	__u64 dst_mem_handle; // [in] Destination memory handle to data is to be copied.
+	__u64 size; // [in] Size of the transfer.
+	__u64 src_offset; // [in] Offset in the source memory handle.
+	__u64 dst_offset; // [in] Offset in the destination memory handle.
+};
 
 struct neuron_ioctl_mem_copy_async {
 	__u64 src_mem_handle;     // [in]  Source memory handle from where data is copied.
@@ -108,6 +133,17 @@ struct neuron_ioctl_mem_copy_async {
 	__u32 size;               // [in]  Size of the transfer.
 	__u32 src_offset;         // [in]  Offset in the source memory handle where transfer should start.
 	__u32 dst_offset;         // [in]  Offset in the destination memory handle where transfer should start.
+	__u64 host_prefetch_addr; // [in]  host prefetch address (used for device to host transfers to allocate physical pages to a host buffer that RT will copy data to from the dst buffer)
+	__u32 pwait_handle;       // [in]  wait handle for a previous transfer that the caller wants to wait on after starting this transfer. -1 == no prev transfer to wait on.
+	__u32 wait_handle;        // [out] wait handle returned for this transfer.
+};
+
+struct neuron_ioctl_mem_copy_async64 {
+	__u64 src_mem_handle;     // [in]  Source memory handle from where data is copied.
+	__u64 dst_mem_handle;     // [in]  Destination memory handle to data is to be copied.
+	__u64 size;               // [in]  Size of the transfer.
+	__u64 src_offset;         // [in]  Offset in the source memory handle where transfer should start.
+	__u64 dst_offset;         // [in]  Offset in the destination memory handle where transfer should start.
 	__u64 host_prefetch_addr; // [in]  host prefetch address (used for device to host transfers to allocate physical pages to a host buffer that RT will copy data to from the dst buffer)
 	__u32 pwait_handle;       // [in]  wait handle for a previous transfer that the caller wants to wait on after starting this transfer. -1 == no prev transfer to wait on.
 	__u32 wait_handle;        // [out] wait handle returned for this transfer.
@@ -127,11 +163,26 @@ struct neuron_ioctl_memset {
 	__u32 size; // [in] Size of the transfer.
 };
 
+struct neuron_ioctl_memset64 {
+	__u64 mem_handle; // [in] Destination memory handle to data is to be copied.
+	__u64 offset; // [in] Offset in the memory handle.
+	__u32 value; // [in] value to set the memory with
+	__u64 size; // [in] Size of the transfer.
+};
+
 struct neuron_ioctl_mem_buf_copy {
 	__u64 mem_handle; // [in] Source or Destination memory handle from/to data needs to be copied.
 	void *buffer; // [in] Buffer from/to where data to be copied.
 	__u32 size; // [in] Size of the data to be copied.
 	__u32 offset; // [in] Offset in the memory handle where the data to be written/read.
+	__u32 copy_to_mem_handle; // [in] if set to True copies from buffer to memhandle else copies from memhandle to buffer.
+};
+
+struct neuron_ioctl_mem_buf_copy64 {
+	__u64 mem_handle; // [in] Source or Destination memory handle from/to data needs to be copied.
+	void *buffer; // [in] Buffer from/to where data to be copied.
+	__u64 size; // [in] Size of the data to be copied.
+	__u64 offset; // [in] Offset in the memory handle where the data to be written/read.
 	__u32 copy_to_mem_handle; // [in] if set to True copies from buffer to memhandle else copies from memhandle to buffer.
 };
 
@@ -148,6 +199,14 @@ struct neuron_ioctl_program_engine_nc {
 	void *buffer; // [in] Buffer from/to where data to be copied.
 	__u32 size; // [in] Size of the data to be copied.
 	__u32 offset; // [in] Offset in the dst address where the data to be written/read.
+};
+
+struct neuron_ioctl_program_engine_nc64 {
+	__u32 nc_id; // [in] Neuron core id
+	__u64 dst; // [in] Destination engine address
+	void *buffer; // [in] Buffer from/to where data to be copied.
+	__u64 size; // [in] Size of the data to be copied.
+	__u64 offset; // [in] Offset in the dst address where the data to be written/read.
 };
 
 struct neuron_ioctl_bar_rw {
@@ -167,6 +226,14 @@ struct neuron_ioctl_dma_copy_descriptors {
 	void *buffer; // [in] Buffer from/to where data to be copied.
 	__u32 num_descs; // [in] Number of descs to copy
 	__u32 offset; // [in] Offset in the memory handle where the data to be written/read.
+	enum neuron_dma_queue_type queue_type; // [in] specifies whether it is RX/TX queue
+};
+
+struct neuron_ioctl_dma_copy_descriptors64 {
+	__u64 mem_handle; // [in] Source or Destination memory handle from/to data needs to be copied.
+	void *buffer; // [in] Buffer from/to where data to be copied.
+	__u32 num_descs; // [in] Number of descs to copy
+	__u64 offset; // [in] Offset in the memory handle where the data to be written/read.
 	enum neuron_dma_queue_type queue_type; // [in] specifies whether it is RX/TX queue
 };
 
@@ -497,6 +564,7 @@ struct neuron_ioctl_pod_status {
 struct neuron_ioctl_pod_ctrl {
 	__u16 sz;           // [in] structure size for versioning.
 	__u32 ctrl;		    // [in] control
+	__u32 timeout;		// [in] timeout in seconds for the operation
 	__u32 state;		// [out] current pod election state
 };
 
@@ -529,13 +597,18 @@ struct neuron_ioctl_pod_ctrl {
 #define NEURON_IOCTL_MEM_ALLOC _IOR(NEURON_IOCTL_BASE, 21, struct neuron_ioctl_mem_alloc *)
 #define NEURON_IOCTL_MEM_ALLOC_V2 _IOR(NEURON_IOCTL_BASE, 102, struct neuron_ioctl_mem_alloc_v2 *) // V2 here refers to neuron 2.x, not arch type
 #define NEURON_IOCTL_MEM_ALLOC_V2MT _IOR(NEURON_IOCTL_BASE, 102, struct neuron_ioctl_mem_alloc_v2_mem_type) // just V2 with additional field mem_type
+#define NEURON_IOCTL_MEM_ALLOC_V2MT64 _IOR(NEURON_IOCTL_BASE, 102, struct neuron_ioctl_mem_alloc_v2_mem_type64) // V2 + mem_type + pad
 
 /** Free given memory_handle. */
 #define NEURON_IOCTL_MEM_FREE _IOR(NEURON_IOCTL_BASE, 22, struct neuron_ioctl_mem_free *)
 /** Copy data between two memory handles. (using DMA) */
 #define NEURON_IOCTL_MEM_COPY _IOR(NEURON_IOCTL_BASE, 23, struct neuron_ioctl_mem_copy *)
+#define NEURON_IOCTL_MEM_COPY64 _IOR(NEURON_IOCTL_BASE, 23, struct neuron_ioctl_mem_copy64)
+
 /** Copy data from/to given host buffer to/from memory_handle. (using DMA)*/
 #define NEURON_IOCTL_MEM_BUF_COPY _IOWR(NEURON_IOCTL_BASE, 24, struct neuron_ioctl_mem_buf_copy *)
+#define NEURON_IOCTL_MEM_BUF_COPY64 _IOWR(NEURON_IOCTL_BASE, 24, struct neuron_ioctl_mem_buf_copy64)
+
 /** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
 #define NEURON_IOCTL_MEM_GET_PA _IOR(NEURON_IOCTL_BASE, 25, struct neuron_ioctl_mem_get_pa *)
 /** DONT USE THIS IOCTL INSTEAD USE NEURON_IOCTL_MEM_GET_EXTENDED_INFO */
@@ -543,6 +616,8 @@ struct neuron_ioctl_pod_ctrl {
 #define NEURON_IOCTL_PROGRAM_ENGINE _IOWR(NEURON_IOCTL_BASE, 27, struct neuron_ioctl_program_engine *)
 /** Meset zeros on the hanlde */
 #define NEURON_IOCTL_MEMSET _IOR(NEURON_IOCTL_BASE, 28, struct neuron_ioctl_memset *)
+#define NEURON_IOCTL_MEMSET64 _IOR(NEURON_IOCTL_BASE, 28, struct neuron_ioctl_memset64)
+
 /** Returns information of given memory_handle such as PA and mmap offset and size.
  *  Application can use this info to generate DMA descriptors or mmap memory.
  */
@@ -571,6 +646,8 @@ struct neuron_ioctl_pod_ctrl {
 #define NEURON_IOCTL_DMA_QUEUE_GET_STATE _IOWR(NEURON_IOCTL_BASE, 37, struct neuron_ioctl_dma_queue_get_state *)
 /** Copy applications created descriptors to DMA queue */
 #define NEURON_IOCTL_DMA_COPY_DESCRIPTORS _IOR(NEURON_IOCTL_BASE, 38, struct neuron_ioctl_dma_copy_descriptors *)
+#define NEURON_IOCTL_DMA_COPY_DESCRIPTORS64 _IOR(NEURON_IOCTL_BASE, 38, struct neuron_ioctl_dma_copy_descriptors64)
+
 /** Copy descriptors in the Queue to host memory */
 #define NEURON_IOCTL_DMA_DESCRIPTOR_COPYOUT _IOWR(NEURON_IOCTL_BASE, 39, struct neuron_ioctl_dma_descriptor_copyout *)
 /** Quiesce all DMA queue used by one NC */
@@ -633,6 +710,7 @@ struct neuron_ioctl_pod_ctrl {
 
 /** Neuron-core specific versions of program_engine ioctl to target right cores/dmas */
 #define NEURON_IOCTL_PROGRAM_ENGINE_NC _IOWR(NEURON_IOCTL_BASE, 105, struct neuron_ioctl_program_engine_nc *)
+#define NEURON_IOCTL_PROGRAM_ENGINE_NC64 _IOWR(NEURON_IOCTL_BASE, 105, struct neuron_ioctl_program_engine_nc64)
 
 /** Returns pci device information for any Neuron devices (not just these opened by the calling process */
 #define NEURON_IOCTL_DEVICE_BDF_EXT _IOR(NEURON_IOCTL_BASE, 106, struct neuron_ioctl_device_bdf_ext *)
@@ -642,6 +720,7 @@ struct neuron_ioctl_pod_ctrl {
 
 /** Copy data between two memory handles asynchronously. (using DMA) */
 #define NEURON_IOCTL_MEM_COPY_ASYNC _IOWR(NEURON_IOCTL_BASE, 108, struct neuron_ioctl_mem_copy_async)
+#define NEURON_IOCTL_MEM_COPY_ASYNC64 _IOWR(NEURON_IOCTL_BASE, 108, struct neuron_ioctl_mem_copy_async64)
 
 /** wait on asynchronous data copy between two memory handles. */
 #define NEURON_IOCTL_MEM_COPY_ASYNC_WAIT _IOW(NEURON_IOCTL_BASE, 109, struct neuron_ioctl_mem_copy_async_wait)

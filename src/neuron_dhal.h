@@ -157,7 +157,7 @@ struct ndhal_ndma {
 struct ndhal_npe {
 	int (*npe_pod_info)( u8 *pod_type, u8 *pod_id, u8 *pod_sz);
 	int (*npe_pod_status)( u32 *pod_state, u8 *node_id);
-	int (*npe_pod_ctrl)( u32 pod_ctrl, u32 *pod_state);
+	int (*npe_pod_ctrl)( struct neuron_device **pnd, u32 pod_ctrl, u32 timeout, u32 *pod_state);
 };
 
 struct neuron_dhal {

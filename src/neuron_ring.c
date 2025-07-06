@@ -173,7 +173,7 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 		ndmar_ring_set_mem_chunk(eng, qid, rxc_mc, port, NEURON_DMA_QUEUE_TYPE_COMPLETION);
 	}
 
-	ret = udma_m2m_init_queue(&eng->udma, qid, tx_desc_count, rx_desc_count, allocatable, tx_mc != NULL ? &ring->tx : NULL,
+	ret = udma_m2m_init_queue(&eng->udma, qid, eng_id, tx_desc_count, rx_desc_count, allocatable, tx_mc != NULL ? &ring->tx : NULL,
 				  rx_mc != NULL ? &ring->rx : NULL, rxc_mc != NULL ? &ring->rxc : NULL);
 
 done:
@@ -357,7 +357,7 @@ int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid)
 
 	queue = &eng->queues[qid];
 	ring = &queue->ring_info;
-	ret = udma_m2m_init_queue(&eng->udma, qid, alloced_desc, alloced_desc, true, &ring->tx,
+	ret = udma_m2m_init_queue(&eng->udma, qid, eng->eng_id, alloced_desc, alloced_desc, true, &ring->tx,
 				  &ring->rx, NULL);
 	return ret;
 }
