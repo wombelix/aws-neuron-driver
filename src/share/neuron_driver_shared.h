@@ -27,16 +27,15 @@ enum {
 enum {
 	NEURON_POD_E_STATE_NOT_STARTED= 0,
 	NEURON_POD_E_STATE_IN_PROGRESS,
-	NEURON_POD_E_STATE_SUCCESS,
-	NEURON_POD_E_STATE_FAILED,				// TODO we currently don't discriminate between failed and standalone (todo for diagnostic/debug purposes)
-	NEURON_POD_E_STATE_STANDALONE,
-	NEURON_POD_E_STATE_QUIESCING
+	NEURON_POD_E_STATE_ULTRASERVER,
+	NEURON_POD_E_STATE_FAILED,				// TODO we currently don't discriminate between failed and single node (todo for diagnostic/debug purposes)
+	NEURON_POD_E_STATE_SINGLE_NODE,
 };
 
 enum neuron_pod_ctrl_req {
-	NEURON_NPE_POD_CTRL_REQ_POD = 0,  		// request pod state to pod (on-demand election request)
-	NEURON_NPE_POD_CTRL_REQ_STANDALONE = 1,	// request pod state to standalone
-	NEURON_NPE_POD_CTRL_REQ_KILL = 2,		// request to kill the election
+	NEURON_NPE_POD_CTRL_REQ_POD = 0,  		 // request pod state to pod (on-demand election request)
+	NEURON_NPE_POD_CTRL_REQ_SINGLE_NODE = 1, // request pod state to single node
+	NEURON_NPE_POD_CTRL_REQ_KILL = 2,		 // request to kill the election
 };
 
 #define NEURON_NC_MAP_DEVICE (0xffffffff)

@@ -295,7 +295,9 @@ struct udma_axi_s2m {
 	u32 ostand_cfg_rd;
 	/* [0x28] AXI outstanding write configuration */
 	u32 ostand_cfg_wr;
-	u32 reserved1[53];
+	/* [0x2c] AXI outstanding write configuration 2 */
+	u32 ostand_cfg_wr_2;
+	u32 reserved1[52];
 };
 
 struct udma_s2m {
@@ -402,6 +404,10 @@ struct udma_s2m_regs_v4 {
 #define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_REQ_SHIFT 16
 /* Maximum number of outstanding data beats for descriptor write to AXI. (AXI beats). */
 #define UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_DATA_WR_SHIFT 24
+
+/* Maximum number of outstanding data writes to the AXI */
+#define UDMA_AXI_S2M_OSTAND_CFG_WR_2_MAX_DATA_WR_OSTAND_MASK 0x000003FF
+#define UDMA_AXI_S2M_OSTAND_CFG_WR_2_MAX_DATA_WR_OSTAND_SHIFT 0
 
 /* Disables the stream interface operation.
  * Changing to 1 stops at the end of packet reception.

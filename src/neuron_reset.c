@@ -246,9 +246,13 @@ int nr_start_ncs(struct neuron_device *nd, uint32_t nc_map, uint32_t request_id)
 {
 	int nc_idx;
 	if (no_reset) {
-		// if we are in no-reset mode, just mark the device as ready, perform init, and return
-		nd->device_state = NEURON_DEVICE_STATE_READY;
+		// if we are in no-reset mode, we want to skip the device reset, 
+		// perform the driver's reset related activities, then return so
+		// that outside of not resetting HW, everything  else will look natural.
+		//
 		ndmar_init_ncs(nd, NEURON_NC_MAP_DEVICE);
+		nr_call_post_reset_config(nd, nc_map, true);
+		nd->device_state = NEURON_DEVICE_STATE_READY;
 		return 0;
 	}
 

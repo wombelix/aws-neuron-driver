@@ -4,31 +4,53 @@
 */
 
 /*
- * Pod Election framework
+ * Pod Election framework (TODO - rename to nutd - Neuron UltraServer Topology Discovery)
  *
  *   The pod election framework validates connectivity between pod nodes and performs an election to determine node ids
  *   for the nodes within the pod along with the unique id of the pod.
  *
- *   There's nothing physically or materially that changes when we perform a pod election, it's more an agreement between
+ *   There's nothing physically or materially that changes after we perform a pod election, it's more an agreement between
  *   software entities on the pod that they want to cooperate and in that spirit, assign Ids that are used to map resources
- *   and their associated connectivity within the pod.
+ *   and their associated connectivity within the pod in a particular way.
  *
- *   A pod election triggers this "resource assignement" process.  There are more details elsewhere that describe some
+ *   A pod election triggers this "node assignment" process.  There are more details elsewhere that describe some
  *   topology details. Here we'll just discuss the election process and node id assignment.
  *
- *   The election process requires resources (DMA engines) across all devices on an instance.  The DMA engines  are also used 
- *   by the runtime for model execution, so election has to occur before runtime starts executing models.  So the election
+ *   The election process requires the use of DMA engines across all devices on an instance.  The DMA engines are also used 
+ *   by the runtime for model execution, so election has to occur before runtime starts executing models.  The election
  *   software has to logically own (gather) all devices before it performs an election.  Aka you can't have a model executing
  *   on a neuron device during the election.
  *
- *   There's two ways in which we initiate an election. The first (option) is at driver load time, the second option is "on demand" when runtime
- *   attaches to the driver through nrt_init().
+ *   The election has to be prosecuted on all four nodes at the same time (at least initially) because the nodes need to
+ *   exchange information to discover topology and perform node assignment.
  *
- *   Election at driver load time is performed immediately after reset, which has the benefit of guarenteeing runtime access is blocked
- *   until the election is complete.  On demand Election (at nrt_init), requires the driver to have a means of waiting until all the 
- *   processes that have called nrt_init() own all the neuron cores, allowing the election to proceed.
+ *   There are two methods by which we can initiate an election. The first (option) is at driver load time, the second option is "on demand" 
+ *   triggered by a standalone program using pod control APIs.  Election at driver load time is performed immediately after all 
+ *   devices have successfully completed reset.  For on demand Election, the standalone program should check if all cores are free
+ *   prior to initiating the election via the pod control ioctl.
+ *
+ *   Election results are stored in miscram so that if the driver is unloaded/reloaded upgraded, the driver can reload the election
+ *   results from miscram.
+ *
+ *   There is also an pod control ioctl that allows election results to be ignored/suppressed so that if an application wants to, it
+ *   can treat the node as a standard trn2 server.  This "suppression" lasts only while the application is active (technically it 
+ *   ends when crwl mark is zero).
  *
  *   Ok, so how does the election work?
+ *
+ *   There are logically two aspects to the election process.
+ *     1. Acquistion of DMA resources (only when crwl mark = 0)
+ *     2. Prosecuting the actual election down in the driver.
+ *        checking links, determining topology, etc.
+ *
+ *   Acquiring DMA resources
+ *    - The driver uses crwl "mark" count to track ownership.  The election code uses changes in the "mark" count
+ *      to track allocation and freeing of cores to drive internal state.
+ *    - A new election is allowed to start only after core ownership has gone to zero.
+ *    - An election will abort on a timeout or (b) if an election kill request is received.
+ *    - The application can poll for election completion from user space.
+ *
+ *   Prosecuting the election:
  *
  *   - There are 16 devices on a node.  One device is designated as the primary (device 0) and is responsible for overall election duties,
  *     the other 15 are secondaries and are responsible for checking their neighbor links and reporting back to the primary.
@@ -41,59 +63,49 @@
  *   - The election process needs to be (more or less) transactional (ACID)
  * 
  *   - Election data:
- *     - election status - cleared at the start of a pod control request, set at end of a pod control request
- *     - election data   - this is data that a node has collected and wants to show to its neighbors.  It only
- *                         lives during the election process and is zeroed out after a pod control request
- *                         completes.
+ *     - election status  - cleared at the start of a pod election.
+ *     - election node_id - cleared at the start of a pod election, set at end of a pod election.
+ *     - election pod_id  - set at the end of a pod election.
+ *     - election data    - this is data that a node has collected and wants to show to its neighbors (both neighbor's serial numbers).
+ *                          this data is populated during the election and cleared if the election fails. 
  *
  *   - Election flow (primary)
  *     - primary reads it's own serial number
  *     - primary reads neighbors serial numbers and checks link connectivity is correct
  *     - If neighbor serial number reads are successful and match up on link pairs
- *       - update local copy of neighbor serial numbers so our neighbors know we successfully read their 
+ *       - update local copy of neighbor serial numbers (election data) so our neighbors know we successfully read their 
  *         serial numbers.
- *       - next check neighbor's local copy to see if they successfully configured.
+ *       - next check neighbor's local copy (election data) to see if they successfully read their neighbors serial numbers.
  *     - otherwise, fail
- *     - primary receives reports back from secondaries to ensure our node connectivity is good.  
- *     - if secondaryies report back good
- *       - update election status to success
+ *     - primary also receives count of secondaries that passed their connectivity check.
+ *     - if secondaryies report back good continue
  *     - otherwise fail
+ *     - determine node id and pod unique id.
+ *     - clear election data to prevent partial elections.
+ *        - eg, if we left election data intact, and a neighbor rebooted and ran an election, it we cruise right through
+ *          this flow and declare a successful election.  Technically there's nothing wrong with this, but it
+ *          creates a inconsistent customer experience.
  *     - read election status from neighbors 
  *     - if neighbors report success, 
- *       - determine node id and pod unique id.
- *       - set pod state to "pod"
+ *       - set pod state to "pod" and update miscram with pod serial number and our node id.
  *     - if any fail, clear our copy of data and set election status to fail
  *
  *   - Election flow (secondary)
- *     - largely the same as the primary.  Just vetting links
- *
- *   - other election notes
- *     - the primary has a timeout on it's wait for secondaries to report
- *     - all waits piggyback on the reset timeout mechanism so that in the event of a drivver unload, the 
- *       election process is notified so it can abort, allowing the driver to unload.
+ *     - Largely the same as primary in terms of connectivity checking.  They just don't do the node id and unique id step.
  *
  *   APIs - Pod Control and Status
- *   - The pod control APIs can (a) request to start an election, (b) request to make the node standalone
- *     (c) request to kill the election.  Any kill or standalone request basically stops an election.
- *     Start election requests will wait until all the cores have been claimed by processes requesting
- *     an election (see above).
+ *   - The pod control APIs can 
+ *     (a) request to start an election 
+ *     (b) request to make the node single node (suppress election results)
+ *     (c) request to kill the election.
  *
- *   General thoughts:
+ *   Other notes:
  *   - Logically we only need to run the election itself to successful completion once.  At this point
  *     we know the topology of the nodes in the Pod which is orthogonal to whether or not the software
  *     running on the pod nodes desire to be part of the cluster.
- *   - After that we just need to check if the links are alive and kicking which has similar characteristics
- *     to the election process link checks (which is almost a mini-election).  Maybe we just rely on runtime
- *     and collectives timeouts to catch these issues after a successful election.
- *   - So this all begs the question, why not just run the election once, then allow
- *     runtime to set pod vs. non-pod operating mode.  If the election is successful, you can 
- *     set pod or non-pod mode, if the election fails, you can only set non-pod mode.
+ *   - If one node reboots and prosecutes an election again, it will succeed if it's neighbor's miscram contain
+ *     successful results.
  *
- *   Opens:
- *   - do we want to do anything special for "user aborts" - driver unloads, kills, of the election, vs. hard
- *     errors like link failures and miss-wiring?  For miss-wiring and link failures, we could permanently 
- *     populate the neighbor data (vs we currently always clear it) to force neighbor failures.  This seems
- *     a bit unnecessary?
  */
 #include "share/neuron_driver_shared.h"
 #define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
@@ -124,28 +136,30 @@
  */
 #define NPE_POD_CTL_RST_SKIP_ELECTION  (1<<0)
 #define NPE_POD_CTL_SPOOF_BASE         (1<<1)
-#define NPE_POD_CTL_FAULT_SEC_RST_FAIL (1<<2)
+#define NPE_POD_CTL_VERBOSE            (1<<2)
 #define NPE_POD_CTL_FAULT_SEC_LNK_FAIL (1<<3)
 #define NPE_POD_CTL_FAULT_PRI_LNK_FAIL (1<<4)
 #define NPE_POD_CTL_SKIP_NBR_CPY_READ  (1<<5)
-#define NPE_POD_CTL_VERBOSE            (1<<6)
+#define NPE_POD_CTL_CLR_MISCRAM        (1<<6)
 
-/* Disable pod auto election.  We currently are using on demand election */
-int pod_ctl = NPE_POD_CTL_RST_SKIP_ELECTION;
-module_param(pod_ctl, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(pod_ctl, "pod election control");
+/* Disable ultraserver auto election.  We currently are using on demand election */
+int userver_ctl = 0;
+module_param(userver_ctl, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(userver_ctl, "ultraserver election control");
+
+/*TODO tmp until we do wholesale name change */
+#define pod_ctl userver_ctl
+
+/* default ultraserver election timeout 10 min */
+int userver_etimeout = 600;
+module_param(userver_etimeout, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(userver_etimeout, "ultraserver election timeout");
+
+/*TODO tmp until we do wholesale name change */
+#define pod_etimeout userver_etimeout
 
 #define NPE_RETRY_WAIT_MS 1000
 #define NPE_RETRY_WAIT_REPORTING_INTERVAL 10
-
-// max time to wait for secondaries to respond (5 min)
-//
-#define NPE_SECONDARY_REPORT_MAX_TIME (300 * 1000)
-#define NPE_SECONDARY_REPORT_WAIT_MS 1000
-
-#define NPE_NBR_DATA_READ_MAX_TOTAL_WAIT_TIME_MS (1000 * 600)
-
-#define NPE_ELECTION_DEVICE_INDEX 0
 
 /**
  * internal state of the pod election module
@@ -155,33 +169,37 @@ enum neuron_pod_state_internal {
 	NEURON_NPE_POD_ST_INIT = 0,             	// initializing - before pod formation
 	NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS = 1,	// on demand election in progress
 	NEURON_NPE_POD_ST_ELECTION_SUCCESS = 2, 	// successful pod formation
-	NEURON_NPE_POD_ST_ELECTION_FAILURE = 3, 	// failure forming pod
-	NEURON_NPE_POD_ST_WAIT_QUIESCE = 4,     	// quiescing before trying to reform pod (cleanup election data to known state)
+	NEURON_NPE_POD_ST_ELECTION_FAILURE = 3, 	// failure forming pod or pod not formed yet
 };
 
 /**
  * election status reported in miscram
  *
  */
-enum neuron_pod_election_sts {
-	NEURON_NPE_POD_ELECTION_STS_INIT = 0,		// initializing - before pod formation
-	NEURON_NPE_POD_ELECTION_STS_SUCCESS = 1, 	// successful pod formation
-	NEURON_NPE_POD_ELECTION_STS_FAILURE = 2, 	// failure forming pod
+enum neuron_pod_election_mr_sts {
+	NEURON_NPE_POD_ELECTION_MR_STS_INIT = 0,		// initializing - before pod formation
+	NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS = 1, 	// successful pod formation
+	NEURON_NPE_POD_ELECTION_MR_STS_FAILURE = 2, 	// failure forming pod
 };
 
+#define NPE_MR_STS_GET(v)  ((v) & 0xFFFF)
+#define NPE_MR_NODE_ID_GET(v)  (((v)>>16) & 0xFFFF)
+#define NPE_MR_STS_NODE_ID_SET(s,n) (((s) & 0xFFFF) | ((n)<<16))
+
+
 struct ndhal_v3ext_pelect {
-	atomic_t election_core_cnt;		// count to track cores participating in election.  Used to trigger election start
-	atomic_t sec_good_cnt;    		// count of secondary devices w/ good pod links
-	atomic_t sec_bad_cnt;     		// count of secondary devices w/ bad pod links
-	atomic_t sec_dead_cnt;    		// count of secondary devices w/ that failed to reset
 	struct mutex lock;          	// pod control api lock
-	struct neuron_device *nd; 		// link back to nd used election
+	struct task_struct *thread; 	// election thread
+	wait_queue_head_t wait_queue;	// election thread's wait queue
+	volatile bool stop; 			// if set, election thread would exit the loop
+	bool kill_election;				// if set, kill the election.
+	bool suppress_election_results;	// if set, election results are suppressed temporarily
 	int pod_state_internal;   		// state of the pod
 	int node_id;			  		// node id
 	u64  pod_serial_num;	  		// serial number of the pod (node 0's serial number)
 	ktime_t nbr_data_read_to_start; // timeout start time for neighbor data read
 	u64  nbr_data_read_timeout;		// timeout for the neighbor data read
-	wait_queue_head_t q;      		// queue to wait on for election completion
+	struct neuron_device *pnd[16]; 	// array of device pointers, populated at reset completion.
 };
 
 /**
@@ -190,18 +208,18 @@ struct ndhal_v3ext_pelect {
  *
  */
 static struct ndhal_v3ext_pelect ndhal_pelect_data = {
-	.election_core_cnt = ATOMIC_INIT(0),
- 	.sec_good_cnt = ATOMIC_INIT(0),
- 	.sec_bad_cnt = ATOMIC_INIT(0),
-	.sec_dead_cnt = ATOMIC_INIT(0),
 	.lock = __MUTEX_INITIALIZER(ndhal_pelect_data.lock),
-	.nd = NULL,
+	.thread = NULL,
+	.wait_queue = __WAIT_QUEUE_HEAD_INITIALIZER(ndhal_pelect_data.wait_queue),
+	.stop = false,
+	.kill_election = false,
+	.suppress_election_results = false,
 	.pod_state_internal = NEURON_NPE_POD_ST_INIT,
 	.node_id = -1,
 	.pod_serial_num = 0,
 	.nbr_data_read_to_start = 0,
-	.nbr_data_read_timeout = NPE_NBR_DATA_READ_MAX_TOTAL_WAIT_TIME_MS,
-	.q = __WAIT_QUEUE_HEAD_INITIALIZER(ndhal_pelect_data.q)
+	.nbr_data_read_timeout = 0,
+	.pnd = {NULL},
 };
 
 /**
@@ -221,15 +239,6 @@ typedef struct pod_neighbor_io {
 	struct mem_chunk *data_mc;
 } pod_neighbor_io_t;
 
-static inline int npe_atomic_add_return(int i, atomic_t * v)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
-	return i + atomic_fetch_add(i, v);
-#else
-	return atomic_add_return(i, v);
-#endif 
-}
-
 static bool npe_pod_ctl_is_set(int value)
 {
 	return (pod_ctl & value);
@@ -237,7 +246,17 @@ static bool npe_pod_ctl_is_set(int value)
 
 static bool npe_election_canceled(void)
 {
-	return (ndhal_pelect_data.pod_state_internal > NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS);
+	return (ndhal_pelect_data.kill_election || ndhal_pelect_data.stop);
+}
+
+static int npe_msleep_stoppable(uint32_t msec) 
+{
+	unsigned long timeout = msecs_to_jiffies(msec);
+
+	while (timeout && !npe_election_canceled())
+		timeout = schedule_timeout_interruptible(timeout);
+
+	return jiffies_to_msecs(timeout);
 }
 
 /**
@@ -447,20 +466,14 @@ static int npe_read_neighbor_serial_numbers(pod_neighbor_io_t pnio[][2],  u64 * 
 			break;
 		}
 
-		// check for driver unload
-		if (nr_msleep_stoppable(nd, NPE_RETRY_WAIT_MS)) {
+		// check for driver unload or canceled election
+		if (npe_msleep_stoppable(NPE_RETRY_WAIT_MS)) {
 			ret = -EINTR;
 			goto done;
 		}
 
 		if (++retry_cnt % NPE_RETRY_WAIT_REPORTING_INTERVAL == 0) {
 			pr_info("nd%02d: pod waiting on neigbors", nd->device_index);
-		}
-
-		// check for user cancel request
-		if (npe_election_canceled()) {
-			ret = -EINTR;
-			goto done;
 		}
 	}
 done:
@@ -507,8 +520,8 @@ static int npe_read_neighbor_election_data(pod_neighbor_io_t pnio[][2],  u64 nbr
             break;
 		}
 
-		if (nr_msleep_stoppable(nd, NPE_RETRY_WAIT_MS)) {
-            pr_info("nd%02d: user aborted pod election by unloading driver", nd->device_index);
+		// check for driver unload or canceled election
+		if (npe_msleep_stoppable(NPE_RETRY_WAIT_MS)) {
 			ret = -EINTR;
 			goto done;
 		}
@@ -517,15 +530,10 @@ static int npe_read_neighbor_election_data(pod_neighbor_io_t pnio[][2],  u64 nbr
 			pr_info("nd%02d: pod waiting on neigbor to update election data", nd->device_index);
 		}
 
-		if (npe_election_canceled()) {
-			ret = -EINTR;
-			goto done;
-		}
-
 		// check for read neighbor data timeout
 		if ((ndhal_pelect_data.nbr_data_read_to_start) && 
 			(ktime_to_ms(ktime_sub(ktime_get(), ndhal_pelect_data.nbr_data_read_to_start)) > ndhal_pelect_data.nbr_data_read_timeout)) {
-			pr_info("nd%02d: read timeout barfed %llu", nd->device_index, ndhal_pelect_data.nbr_data_read_timeout);
+			pr_info("nd%02d: neighbor election data read timeout after %llu seconds", nd->device_index, ndhal_pelect_data.nbr_data_read_timeout);
 			ret = -EINTR;
 			goto done;
 		}
@@ -560,22 +568,25 @@ static int npe_read_neighbor_read_election_status(pod_neighbor_io_t pnio[][2], u
 				goto done;
             } 
 
-			// check if data is valid
+			// extract status from status/node_id pair
+			tmp = NPE_MR_STS_GET(tmp);
+
+			// check if status is valid
 			//
             if ((tmp != prev_election_status) && (tmp != 0xdeadbeef)) {
                 election_status[i] = tmp;
 			}
         }
 
-		// got both neighbor's election status? 
+		// got both neighbor's new election status?   This has a unimportant race with prev election status explained in the header of this file. 
 		//
         if ((election_status[0] != prev_election_status) && (election_status[1] != prev_election_status)) {
             break;
 		}
 
-		if (nr_msleep_stoppable(nd, NPE_RETRY_WAIT_MS)) {
+		// check for driver unload or canceled election
+		if (npe_msleep_stoppable(NPE_RETRY_WAIT_MS)) {
 			// Note: This could possibly leave our neighbors in pod state while this node is not in pod state as it's logically an ABORT transaction.
-            pr_info("nd%02d: user aborted pod election by unloading driver", nd->device_index);
 			ret = -EINTR;
 			goto done;
 		}
@@ -583,15 +594,15 @@ static int npe_read_neighbor_read_election_status(pod_neighbor_io_t pnio[][2], u
 		if (++retry_cnt % NPE_RETRY_WAIT_REPORTING_INTERVAL == 0) {
 			pr_info("nd%02d: pod waiting on neigbor to update status", nd->device_index);
 		}
-
-		if (npe_election_canceled()) {
-			ret = -EINTR;
-			goto done;
-		}
 	}
 
 done:
 	return ret;
+}
+
+static u32 npe_miscram_read(struct neuron_device *nd, u64 offset)
+{
+	return readl(nd->npdev.bar0 + V3_MMAP_BAR0_APB_IO_0_MISC_RAM_OFFSET + offset);
 }
 
 static void npe_miscram_write(struct neuron_device *nd, u64 offset, u32 data)
@@ -613,6 +624,30 @@ static void npe_miscram_neighbor_election_data_clr(struct neuron_device *nd)
 	npe_miscram_write(nd, FW_IO_REG_RH_NEIGHBOR_SERNUM_HI, 0);
 	npe_miscram_write(nd, FW_IO_REG_LH_NEIGHBOR_SERNUM_LO, 0);
 	npe_miscram_write(nd, FW_IO_REG_LH_NEIGHBOR_SERNUM_HI, 0);
+}
+
+static void npe_miscram_sts_node_id_set(struct neuron_device *nd, enum neuron_pod_election_mr_sts sts, int node_id)
+{
+	npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NPE_MR_STS_NODE_ID_SET(sts,node_id));
+}
+
+static void npe_miscram_sts_node_id_get(struct neuron_device *nd, enum neuron_pod_election_mr_sts *sts, int *node_id)
+{
+	u32 tmp;
+	tmp = npe_miscram_read(nd, FW_IO_REG_POD_ELECTION_STS);
+	*sts = NPE_MR_STS_GET(tmp);
+	*node_id = NPE_MR_NODE_ID_GET(tmp);
+}
+
+static void npe_miscram_pod_sernum_set(struct neuron_device *nd, u64 pod_sernum)
+{
+	npe_miscram_write(nd, FW_IO_REG_POD_SERNUM_HI, (pod_sernum>>32) & 0xffffffff);
+	npe_miscram_write(nd, FW_IO_REG_POD_SERNUM_LO, pod_sernum & 0xffffffff);
+}
+
+static void npe_miscram_pod_sernum_get(struct neuron_device *nd, u64 *pod_sernum)
+{
+	*pod_sernum = ((u64)npe_miscram_read(nd, FW_IO_REG_POD_SERNUM_HI))<<32 | (u64)npe_miscram_read(nd, FW_IO_REG_POD_SERNUM_LO);
 }
 
 /** npe_get_node_id() - determine node id and return it along w/ pod serial number
@@ -647,64 +682,17 @@ static int npe_get_node_id(u64 self, u64 left, u64 right, u64 diagonal, u64 *pod
     }
     /* the lead is in the different rack. */
     *pod_serial_number = right;
-    return 2;
-}
-
-/** 
- * npe_wait_on_secondaries()
- *
- *   wait for secondary devices to report their status.  We need to know if
- *   all the devices have happy links.
- *
- */
-static int npe_wait_on_secondaries(struct neuron_device *nd)
-{
-	int ret = 0;
-	ktime_t start_time;
-
-	start_time = ktime_get();
-
-	do {
-		if (atomic_read(&ndhal_pelect_data.sec_good_cnt) + atomic_read(&ndhal_pelect_data.sec_bad_cnt) + atomic_read(&ndhal_pelect_data.sec_dead_cnt) == 15) {
-			if (atomic_read(&ndhal_pelect_data.sec_good_cnt) == 15) {
-				goto done;
-			}
-			ret = -ENODEV;
-			break;
-		}
-		if (nr_msleep_stoppable(nd, NPE_SECONDARY_REPORT_WAIT_MS)) {
-			//driver unload
-			ret = -EINTR;
-			goto done;
-		}
-
-		if (npe_election_canceled()) {
-			ret = -EINTR;
-			goto done;
-		}
-		
-	} while (ktime_to_ms(ktime_sub(ktime_get(), start_time)) < NPE_SECONDARY_REPORT_MAX_TIME);
-
-	pr_err("nd%02d: not all secondaries reported good link status: link good %02d link bad %02d, reset failed %02d", nd->device_index,
-		    atomic_read(&ndhal_pelect_data.sec_good_cnt), atomic_read(&ndhal_pelect_data.sec_bad_cnt), atomic_read(&ndhal_pelect_data.sec_dead_cnt));
-
-done:
-	// clear the counts
-	//
-	atomic_set(&ndhal_pelect_data.sec_good_cnt, 0);
-	atomic_set(&ndhal_pelect_data.sec_bad_cnt, 0);
-	atomic_set(&ndhal_pelect_data.sec_dead_cnt, 0);
-	return ret;
+	return 2;
 }
 
 /** 
  * npe_primary_device_do_election() - exec election on primary node
  *
- *   @nd               - device the election is being prosecuted on
- *   @reset_successful - flag indicating if device reset successfull
+ *   @nd                 - device the election is being prosecuted on
+ *   @secondary_good_cnt - count of secondary devices that passed link checks
  *
  */
-static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_successful)
+static int npe_primary_device_do_election(struct neuron_device *nd, int secondary_good_cnt)
 {
 	int ret;
 	int i;
@@ -718,17 +706,9 @@ static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_s
 	u32 nbr_election_status[2] = {0};
 	pod_neighbor_io_t pnio[2][2] = {0};
 
-	ndhal_pelect_data.nd = nd;
-
 	pr_info("nd%02d: pod election starting", nd->device_index);
 
-	if (!reset_successful) {
-		pr_info("nd%02d: election primary node failed to reset", nd->device_index);
-		ret = -ENODEV;
-		goto done;
-	}
-
-    // Read local routing id and serial number
+	// Read local routing id and serial number
 	//
 	ret = fw_io_device_id_read(nd->npdev.bar0, &routing_id);
 	if (ret) {
@@ -744,10 +724,10 @@ static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_s
 	pr_info("nd%02d: Routing id: %02d SerialNumber %016llx", nd->device_index, routing_id, serial_number);
 
 	// Initialize neighbor io structures
-    // Left
+	// Left
 	ret = npe_pod_neighbor_io_init(&(pnio[0][0]), nd, 36);
 	ret |= npe_pod_neighbor_io_init(&(pnio[0][1]), nd, 68);
-    // Right
+	// Right
 	ret |= npe_pod_neighbor_io_init(&(pnio[1][0]), nd, 4);
 	ret |= npe_pod_neighbor_io_init(&(pnio[1][1]), nd, 100);
 	if (ret) {
@@ -757,10 +737,10 @@ static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_s
 
 	// clear election status before we start
 	//
-    npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_STS_INIT);
+	npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_INIT, -1);
 	
-    // read neighbors serial numbers
-    // 
+	// read neighbors serial numbers
+	// 
 	ret = npe_read_neighbor_serial_numbers(pnio,  nbr_serial_number);
 	if (ret || npe_pod_ctl_is_set(NPE_POD_CTL_FAULT_PRI_LNK_FAIL)) {
 		goto done;
@@ -768,8 +748,8 @@ static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_s
 
 	pr_info("nd%02d: acquired pod neighbor serial numbers L: %016llx  R:  %016llx", nd->device_index, nbr_serial_number[0], nbr_serial_number[1]);
 
-    // update LH/RH neighbor unique values in our local miscram copy 
-    //
+	// update LH/RH neighbor unique values in our local miscram copy 
+	//
 	npe_miscram_neighbor_election_data_set(nd, nbr_serial_number[0], nbr_serial_number[1]);
 
 	if (npe_pod_ctl_is_set(NPE_POD_CTL_SKIP_NBR_CPY_READ)) {
@@ -778,16 +758,16 @@ static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_s
 
 	// read neighbor's LH/RH copy of serial numbers to determine if neighbors successfully picked up both neighbors serial numbers
 	// indicating we have a ring on the primary
-    // 
+	// 
 	ret = npe_read_neighbor_election_data(pnio, nbr_serial_number_copy);
 	if (ret) {
 		goto done;
 	}
 
-    //  check cabling
-    // 
+	//  check cabling
+	// 
 	for (i=0; i<2; i++) {
-    	if (nbr_serial_number_copy[i][0] <= 15) {
+		if (nbr_serial_number_copy[i][0] <= 15) {
 			u32 dev_id = (u32)(nbr_serial_number_copy[i][0]);
 			pr_err("nd%02d: %c pod link is miss-wired to nd%02d (%016llx)", 
 					nd->device_index, (i==0) ? 'L':'R', (dev_id > 15) ? 0 : dev_id, nbr_serial_number[i]);
@@ -800,36 +780,41 @@ static int npe_primary_device_do_election(struct neuron_device *nd, bool reset_s
 
 	diagonal = nbr_serial_number_copy[0][1];
 
-    //  secondaries all good?
-    // 
-	ret = npe_wait_on_secondaries(nd);
-    if (ret) {
+	//  secondaries all good?
+	// 
+	if (secondary_good_cnt != 15) {
+		pr_err("Only %d out of 15 secondary nodes reported good links", secondary_good_cnt);
+		ret = -EPIPE;
 		goto done;
 	}
 	
 	pr_info("nd%02d: pod election - all secondary links good", nd->device_index);
 
-	// set election status and read neighbor's election status
+	// determine our node id and pod serial number
 	//
-	npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_STS_SUCCESS);
-	
-	ret = npe_read_neighbor_read_election_status(pnio, nbr_election_status, NEURON_NPE_POD_ELECTION_STS_INIT);
+	node_id = npe_get_node_id(serial_number, nbr_serial_number[0], nbr_serial_number[1], diagonal, &pod_serial_number);
+	ret = 0;
+
+	// set election status, with bad node id
+	//
+	npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS, -1);
+
+	// read neighbor's election status
+	//	
+	ret = npe_read_neighbor_read_election_status(pnio, nbr_election_status, NEURON_NPE_POD_ELECTION_MR_STS_INIT);
 	if (ret) {
 		goto done;
 	}
 
-	if ((nbr_election_status[0] != NEURON_NPE_POD_ELECTION_STS_SUCCESS) || (nbr_election_status[1] != NEURON_NPE_POD_ELECTION_STS_SUCCESS)) {
+	// check neighbor's election status
+	//
+	if ((nbr_election_status[0] != NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) || (nbr_election_status[1] != NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS)) {
 		pr_err("nd%02d: election failed neighbor election status L: %s R: %s", nd->device_index,
-				(nbr_election_status[0] == NEURON_NPE_POD_ELECTION_STS_SUCCESS) ? "success" : "failure",
-				(nbr_election_status[1] == NEURON_NPE_POD_ELECTION_STS_SUCCESS) ? "success" : "failure");
+				(nbr_election_status[0] == NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) ? "success" : "failure",
+				(nbr_election_status[1] == NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) ? "success" : "failure");
 		ret = -ENODEV;
 		goto done;
 	}
-
-	// determine our node id
-	//
-    node_id = npe_get_node_id(serial_number, nbr_serial_number[0], nbr_serial_number[1], diagonal, &pod_serial_number);
-	ret = 0;
 
 done:
 	npe_pod_neighbor_io_destroy(&(pnio[0][0]));
@@ -837,45 +822,37 @@ done:
 	npe_pod_neighbor_io_destroy(&(pnio[1][0]));
 	npe_pod_neighbor_io_destroy(&(pnio[1][1]));
 
+	// clear neighbor election data to prevent partial elections
+	//
 	npe_miscram_neighbor_election_data_clr(nd);
 
-	// if election was successful, we set node_id, pod_serial_number, and flag pod
-	// if unsuccessful, we set state to not a pod
+	// update node_id and pod_serial_number, even in the failed case.
 	//
 	if (ret) {
-		npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_STS_FAILURE);
-		ndhal_pelect_data.node_id = node_id;
-		ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
-		pr_info("nd%02d: pod election failed", nd->device_index);
+		npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_FAILURE, -1);
+		npe_miscram_pod_sernum_set(nd, 0);
+		ndhal_pelect_data.node_id = -1;
+		ndhal_pelect_data.pod_serial_num = 0;
 	} else {
+		npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS, node_id);
+		npe_miscram_pod_sernum_set(nd, pod_serial_number);
 		ndhal_pelect_data.node_id = node_id;
 		ndhal_pelect_data.pod_serial_num = pod_serial_number;
-		ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_SUCCESS;
-
-		pr_info("nd%02d: pod election complete.  node id: %d Pod Unique id: %016llx", nd->device_index, 
-				ndhal_pelect_data.node_id, ndhal_pelect_data.pod_serial_num);
 	}
-
-    // notify secondary devices that election is complete
-    // 
-	wake_up_all(&ndhal_pelect_data.q);
 
 	return ret;
 }
 
 /** 
- * npe_secondary_device_vet_n_wait()
+ * npe_secondary_device_vet()
  *
  *   Check the secondary's neighbors to see that they have the same device id
  *   and report success or failure.
- *   Wait for the primary device to complete the election process if we are
- *   multi-threaded.
  *
- *   @nd               - device the election is being prosecuted on
- *   @reset_successful - flag indicating if device reset successfull
+ *   @nd - device the election is being prosecuted on
  *
  */
-static int npe_secondary_device_vet_n_wait(struct neuron_device *nd, bool reset_successful)
+static int npe_secondary_device_vet(struct neuron_device *nd)
 {
 	int ret;
 	int i;
@@ -883,11 +860,6 @@ static int npe_secondary_device_vet_n_wait(struct neuron_device *nd, bool reset_
 	u64 nbr_serial_number_copy[2][2] = {0};
 	u32 nbr_election_status[2] = {0};
 	pod_neighbor_io_t pnio[2][2] = {0};
-
-	if (!reset_successful || npe_pod_ctl_is_set(NPE_POD_CTL_FAULT_SEC_RST_FAIL)) {
-		npe_atomic_add_return(1, &ndhal_pelect_data.sec_dead_cnt);
-		return -1;
-	}
 
 	// Initialize neighbor io structures
 	// Left
@@ -903,7 +875,7 @@ static int npe_secondary_device_vet_n_wait(struct neuron_device *nd, bool reset_
 
 	// clear election status before we start
 	//
-	npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_STS_INIT);
+	npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_MR_STS_INIT);
 
 	// if neighbor reads are good the link is good (or at least wired in pairs)
 	//
@@ -938,26 +910,24 @@ static int npe_secondary_device_vet_n_wait(struct neuron_device *nd, bool reset_
 
 	// set election status and read neighbor's election status
 	//
-	npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_STS_SUCCESS);
+	npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS, 0);
 	
-	ret = npe_read_neighbor_read_election_status(pnio, nbr_election_status, NEURON_NPE_POD_ELECTION_STS_INIT);
+	ret = npe_read_neighbor_read_election_status(pnio, nbr_election_status, NEURON_NPE_POD_ELECTION_MR_STS_INIT);
 	if (ret) {
 		goto done;
 	}
 
-	if ((nbr_election_status[0] != NEURON_NPE_POD_ELECTION_STS_SUCCESS) || (nbr_election_status[1] != NEURON_NPE_POD_ELECTION_STS_SUCCESS)) {
+	if ((nbr_election_status[0] != NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) || (nbr_election_status[1] != NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS)) {
 		pr_err("nd%02d: election failed neighbor election status L: %s R: %s", nd->device_index,
-				(nbr_election_status[0] == NEURON_NPE_POD_ELECTION_STS_SUCCESS) ? "success" : "failure",
-				(nbr_election_status[1] == NEURON_NPE_POD_ELECTION_STS_SUCCESS) ? "success" : "failure");
+				(nbr_election_status[0] == NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) ? "success" : "failure",
+				(nbr_election_status[1] == NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) ? "success" : "failure");
 		ret = -ENODEV;
 		goto done;
 	}
 
 done:
-	if (ret || npe_pod_ctl_is_set(NPE_POD_CTL_FAULT_SEC_LNK_FAIL)) {
-		npe_atomic_add_return(1, &ndhal_pelect_data.sec_bad_cnt);
-	} else {
-		npe_atomic_add_return(1, &ndhal_pelect_data.sec_good_cnt);
+	if (!ret && npe_pod_ctl_is_set(NPE_POD_CTL_FAULT_SEC_LNK_FAIL)) {
+		ret = -EPIPE;
 	}
 
 	npe_pod_neighbor_io_destroy(&(pnio[0][0]));
@@ -965,68 +935,151 @@ done:
 	npe_pod_neighbor_io_destroy(&(pnio[1][0]));
 	npe_pod_neighbor_io_destroy(&(pnio[1][1]));
 
-	// clear miscram election data
-	//
-	npe_miscram_neighbor_election_data_clr(nd);
-	
-	if (!ret) {	
-		// wait for the primary to wake us up if links are good - when we are running election from reset
+	if (ret) {	
+		// on failure clear miscram even on secondaries
 		//
-		wait_event_interruptible(ndhal_pelect_data.q, ndhal_pelect_data.pod_state_internal >= NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS);
-	} else {
-		// on failure set miscram status, even on secondaries
-		//
-		npe_miscram_write(nd, FW_IO_REG_POD_ELECTION_STS, NEURON_NPE_POD_ELECTION_STS_FAILURE);
+		npe_miscram_neighbor_election_data_clr(nd);
+		npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_FAILURE, 0);
 	}
-	
 	return ret;
+}
+
+/**
+ * npe_initiate_election()
+ *
+ *   change election state to in progress and kick the election thread unless election is 
+ *   already in progress.
+ *   This must be called with the lock held
+ */
+static void npe_initiate_election(u64  nbr_data_read_timeout)
+{
+	if (ndhal_pelect_data.pod_state_internal != NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS) {
+		pr_info("initiating pod election.  State: %d", ndhal_pelect_data.pod_state_internal);
+		ndhal_pelect_data.kill_election = false;
+		ndhal_pelect_data.nbr_data_read_to_start = ktime_get();
+		ndhal_pelect_data.nbr_data_read_timeout = nbr_data_read_timeout;
+		ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS;
+		wake_up(&ndhal_pelect_data.wait_queue);
+	}
+}
+
+/**
+ * npe_all_rst_complete()
+ *
+ *   returns true if all devices have been successfully reset
+ *   indicated by the npe module having a cached copy of all
+ *   neuron device pointers.
+ */
+static bool npe_all_rst_complete(void)
+{
+	int i;
+	for (i=0; i < 16; i++) {
+		if (ndhal_pelect_data.pnd[i] == NULL) {
+			return false;
+		}
+	}
+	return true;
 }
 
 /** 
  * npe_election_exec_on_rst() 
  *
- *   If we are in pod state init (first reset at dirver load), perform an election.
+ *   Populdate the pod code's neuron device table.  Then if we are in the 
+ *   initial state and election post reset was request, star the election process.
+ *
  *
  */
 int npe_election_exec_on_rst(struct neuron_device *nd, bool reset_successful)
 {
-	if (npe_pod_ctl_is_set(NPE_POD_CTL_RST_SKIP_ELECTION)) {
-		if (ndhal_pelect_data.pod_state_internal == NEURON_NPE_POD_ST_INIT) {
-			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE; // not pod formation
+	enum neuron_pod_election_mr_sts sts; 
+	int node_id;
+	u64 pod_serial_number;
+	
+	if (!reset_successful) {
+		return 0;
+	}
+
+	mutex_lock(&ndhal_pelect_data.lock);
+
+	// populate the device
+	//
+	ndhal_pelect_data.pnd[nd->device_index] = nd;
+
+	// Device 0 is the primary actor in the election/topology discovery process, so 
+	// when we process Device 0 reset completions, we need to do some bookkeeping.
+	//
+	if (nd->device_index == 0) {
+		// Prior election results are cached in miscram, for testing purposes, 
+		// we can clear the results through a module parameter, allowing us
+		// to ignore the cached results.
+		//
+		if (npe_pod_ctl_is_set(NPE_POD_CTL_CLR_MISCRAM)) {
+			pr_info("clearing miscram election results");
+			npe_miscram_neighbor_election_data_clr(nd);
+			npe_miscram_sts_node_id_set(nd, NEURON_NPE_POD_ELECTION_MR_STS_INIT, 0);
+			npe_miscram_pod_sernum_set(nd, 0);
 		}
-		return 0;
-	}
-	if (ndhal_pelect_data.pod_state_internal != NEURON_NPE_POD_ST_INIT) {
-		return 0;
+
+		// If there are cached election results, use them in lieu of running a new election.
+		//
+		npe_miscram_sts_node_id_get(nd, &sts, &node_id);
+		npe_miscram_pod_sernum_get(nd, &pod_serial_number);
+
+		if (sts == NEURON_NPE_POD_ELECTION_MR_STS_SUCCESS) {
+			ndhal_pelect_data.node_id = node_id;
+			ndhal_pelect_data.pod_serial_num = pod_serial_number;
+			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_SUCCESS;
+			goto done;
+		}
+
+		// Check if module parameter has been set to skip election at driver load (post device reset). 
+		// Primarily used for testing.
+		//
+		if (npe_pod_ctl_is_set(NPE_POD_CTL_RST_SKIP_ELECTION)) {
+			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;  
+			goto done;
+		}
 	}
 	
-	npe_miscram_neighbor_election_data_clr(nd);
-
-	
-	if (nd->device_index == NPE_ELECTION_DEVICE_INDEX) {
-		ndhal_pelect_data.nbr_data_read_to_start = ktime_get();
-		return npe_primary_device_do_election(nd, reset_successful);
+	// if we aren't kicking off election on first driver reset (testing) or 
+	// if we aren't in init state then we've already made an election decision.
+	//
+	if ((ndhal_pelect_data.pod_state_internal != NEURON_NPE_POD_ST_INIT) || npe_pod_ctl_is_set(NPE_POD_CTL_RST_SKIP_ELECTION)) {
+		goto done;
 	}
-	return npe_secondary_device_vet_n_wait(nd, reset_successful);
-}
 
-void npe_cleanup(void)
-{
-	if (ndhal_pelect_data.nd != NULL) {
-		npe_miscram_neighbor_election_data_clr(ndhal_pelect_data.nd);
-		ndhal_pelect_data.nd = NULL;
+	// if all devices are done with reset, start the election.
+	//
+	if (!npe_all_rst_complete()) {
+			goto done;
 	}
+
+	npe_initiate_election(ndhal_pelect_data.nbr_data_read_timeout);
+
+done:
+	mutex_unlock(&ndhal_pelect_data.lock);
+	return 0;
 }
 
 /**
- * npe_handle_no_reset_param()
+ * npe_notify_mark
  *
- *   If no reset param is in play, force pod election to known state that we would have if we 
- *   skipped the initial election.
+ *   crwl mark/unmark operations represent a change in core ownership
+ *   which is tracked in the crwl mark table.  This function is called
+ *   every time there is an ownership change.
+ *
+ *   The election code currently uses mark notifications to clear
+ *   "SINGLE_NODE" behavior which asks the election code to
+ *   temporarily suppresses election results until all cores
+ *   have been released (unmarked).
  */
-void npe_handle_no_reset_param(void)
+void npe_notify_mark(int mark_cnt, bool mark)
 {
-	ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
+	mutex_lock(&ndhal_pelect_data.lock);
+	if (!mark && (mark_cnt == 0)) {
+		ndhal_pelect_data.suppress_election_results = false;
+	}
+	mutex_unlock(&ndhal_pelect_data.lock);
 }
 
 /**
@@ -1042,33 +1095,38 @@ int npe_get_pod_id(u8 *pod_id)
 }
 
 /**
- * npe_get_pod_status()
+ * _npe_get_pod_status()
  *
  *    return state of the pod along w/ node id.
  */
-int npe_get_pod_status(u32 *state, u8 *node_id)
+static int _npe_get_pod_status(u32 *state, u8 *node_id)
 {
 	int ret = 0;
 
 	switch (ndhal_pelect_data.pod_state_internal) {
-		case NEURON_NPE_POD_ST_INIT:
 		case NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS:
 			*state = NEURON_POD_E_STATE_IN_PROGRESS;
 			ret = -EBUSY;
 			break;
 
 		case NEURON_NPE_POD_ST_ELECTION_SUCCESS:
-			*state = NEURON_POD_E_STATE_SUCCESS;
+			*state = NEURON_POD_E_STATE_ULTRASERVER;
+			if (ndhal_pelect_data.suppress_election_results) {
+				*state = NEURON_POD_E_STATE_SINGLE_NODE;
+				*node_id = -1;
+				return 0;
+			}
+			break;
+
+		case NEURON_NPE_POD_ST_INIT:
+			*state = NEURON_POD_E_STATE_IN_PROGRESS;
+			ret = -EBUSY;
 			break;
 
 		case NEURON_NPE_POD_ST_ELECTION_FAILURE:
-			//*state = NEURON_POD_E_STATE_FAILED;
-			*state = NEURON_POD_E_STATE_STANDALONE;
+			*state = NEURON_POD_E_STATE_SINGLE_NODE;
 			break;
 
-		case NEURON_NPE_POD_ST_WAIT_QUIESCE:
-			*state = NEURON_POD_E_STATE_QUIESCING;
-			break;
 		default: 
 			ret = -EINVAL;
 			break;
@@ -1076,6 +1134,15 @@ int npe_get_pod_status(u32 *state, u8 *node_id)
 
 	*node_id = ndhal_pelect_data.node_id;
 	return ret;	
+}
+
+int npe_get_pod_status(u32 *state, u8 *node_id)
+{
+	int ret;
+	mutex_lock(&ndhal_pelect_data.lock);
+	ret = _npe_get_pod_status(state, node_id);
+	mutex_unlock(&ndhal_pelect_data.lock);
+	return ret;
 }
 
 /**
@@ -1092,117 +1159,149 @@ int npe_get_pod_status(u32 *state, u8 *node_id)
  *
  *
  */
-int npe_pod_ctrl(struct neuron_device **pnd, u32 ctrl, u32 timeout, u32 *state)
+int npe_pod_ctrl(struct neuron_device *nd, u32 ctrl, u32 timeout, u32 *state)
 {
 	int ret = 0;
 	u8 node_id;
-	int process_cores;
-	int total_cores;
-
-	// we use cwrl mark as a form of predicate lock on the cores
-	//
-    process_cores = ncrwl_current_process_range_mark_cnt();
-
-	// kill request - requires no core ownership (as in you can't kill if you own a core)
-	// This is racy by nature, so we just read count of cores trying to run election and kill the election
-	// if we see any active participants...
-	//
-	if (ctrl == NEURON_NPE_POD_CTRL_REQ_KILL) {
-		if ((process_cores == 0) && (atomic_read(&ndhal_pelect_data.election_core_cnt) != 0)) {
-			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
-			wake_up_all(&ndhal_pelect_data.q);
-		}
-		npe_get_pod_status(state, &node_id);
-		return 0;
-	}
-
-	// if you don't own a core, you don't get a vote.
-	//
-	if (!process_cores) {
-		return -ESRCH;
-	}
 
 	mutex_lock(&ndhal_pelect_data.lock);
 
-	if (ctrl == NEURON_NPE_POD_CTRL_REQ_STANDALONE) {
-		// we have at least some cores so force state to non-pod
-		//
-		ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
-
-		if (atomic_read(&ndhal_pelect_data.election_core_cnt) != 0) {
-			wake_up_all(&ndhal_pelect_data.q);
+	if (ctrl == NEURON_NPE_POD_CTRL_REQ_KILL) {
+		if (ndhal_pelect_data.pod_state_internal == NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS) {
+			ndhal_pelect_data.kill_election = true;
+		} else if (ndhal_pelect_data.pod_state_internal == NEURON_NPE_POD_ST_INIT) {
+			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
 		}
-		mutex_unlock(&ndhal_pelect_data.lock);
-		ret = 0;
-
+	} else if (ctrl == NEURON_NPE_POD_CTRL_REQ_SINGLE_NODE) {
+		ndhal_pelect_data.suppress_election_results = true;
 	} else if (ctrl == NEURON_NPE_POD_CTRL_REQ_POD) {
-    	total_cores = npe_atomic_add_return(process_cores, &ndhal_pelect_data.election_core_cnt);
+		int mark_cnt = ncrwl_range_mark_cnt_get();
 
-		//  If the call is the first trying to kick off the election, set election in process
-		//
-		if (total_cores == process_cores) {
-			// now it's possible that we are trying to form a pod while it's in no-pod state...
-			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS;
-			pr_info("recieved initial pod election request");
-		}
-
-		// run election process if we've grabbed all the cores.
-		//
-    	if (total_cores == V3_NC_PER_DEVICE * 16) {
-			int i;
-
-			pr_info("initiating pod election.  State: %d", ndhal_pelect_data.pod_state_internal );
-
-			ndhal_pelect_data.nbr_data_read_timeout = timeout * 1000;
-			ndhal_pelect_data.nbr_data_read_to_start = ktime_get();
-
-       		for (i = 0; i < 16; i++) {
-				ret = nr_wait(pnd[i], NEURON_RESET_REQUEST_ALL, true);
-				if (ret) {
-					pr_info("reset wait failed for nd%02d", pnd[i]->device_index);
-					ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
-					goto reset_failed;
-				}
-			}
-
-			if (npe_pod_ctl_is_set(NPE_POD_CTL_VERBOSE)) {
-				pr_info("vetting secondaries. Internal state: %d", ndhal_pelect_data.pod_state_internal);
-			}
-
-			// vet secondaries
-			//
-       		for (i = 1; i < 16; i++) {
-				npe_secondary_device_vet_n_wait(pnd[i], true);
-			}
-
-			// run election on primary.
-			//
-			ret = npe_primary_device_do_election(pnd[0], true);
-reset_failed:
-			wake_up_all(&ndhal_pelect_data.q);
-    		npe_atomic_add_return(-process_cores, &ndhal_pelect_data.election_core_cnt);
-			mutex_unlock(&ndhal_pelect_data.lock);
-    	} else {
-			mutex_unlock(&ndhal_pelect_data.lock);
-			ret = wait_event_interruptible(ndhal_pelect_data.q, ndhal_pelect_data.pod_state_internal != NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS);
-			
-    		npe_atomic_add_return(-process_cores, &ndhal_pelect_data.election_core_cnt);
-		}
-		
-		// return a consistent error value on failure (TODO improve this)
-		//
-		if (ndhal_pelect_data.pod_state_internal != NEURON_NPE_POD_ST_ELECTION_SUCCESS) {
-			pr_info("pod election failed");
-			ret = -ENODEV;
+		if ((mark_cnt == 0) && npe_all_rst_complete()) {
+			npe_initiate_election(timeout * 1000);
+			ret = 0;
 		} else {
-			pr_info("pod election successful");
+			pr_info("Pod Election request failed. %d Neuron cores are still in use or not all devices are reset. Election can only be initiated when all cores are free and all devices are reset", 
+					mark_cnt);
+			ret = -EAGAIN;
 		}
 	} else {
-		mutex_unlock(&ndhal_pelect_data.lock);
-		pr_err("invalid pod control request value %d", ctrl);
+		pr_err("Invalid pod control request value %d", ctrl);
 		ret = -EINVAL;
 	}
 
-	npe_get_pod_status(state, &node_id);
+	_npe_get_pod_status(state, &node_id);
+	mutex_unlock(&ndhal_pelect_data.lock);
 	return ret;
+}
+
+static int npe_election_thread_fn(void *arg)
+{
+	int ret;
+	int i;
+	int secondary_good_cnt = 0;
+
+	while (!kthread_should_stop() && !ndhal_pelect_data.stop) {
+		
+retry:
+		wait_event_interruptible(ndhal_pelect_data.wait_queue, ndhal_pelect_data.pod_state_internal == NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS || ndhal_pelect_data.stop);
+		if (kthread_should_stop() || ndhal_pelect_data.stop)
+			break;
+
+		// Cheap sanity check to make sure we don't allow a election to commence unless all devices have been reset.
+		// There are checks in pod_ctrl logic to prevent this, but no harm in having a sanity check.
+		//
+		if (!npe_all_rst_complete()) {
+			WARN_ONCE(1, "Pod election attempted while some devices have not completed reset");
+			mutex_lock(&ndhal_pelect_data.lock);
+			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
+			mutex_unlock(&ndhal_pelect_data.lock);
+			goto retry;
+		}
+
+		pr_info("pod election in progress.  State: %d", ndhal_pelect_data.pod_state_internal);
+
+		// prosecute the election
+		//
+		if (npe_pod_ctl_is_set(NPE_POD_CTL_VERBOSE)) {
+			pr_info("vetting secondaries. Internal state: %d", ndhal_pelect_data.pod_state_internal);
+		}
+
+		// vet secondaries
+		//
+		for (i = 1; i < 16; i++) {
+			ret = npe_secondary_device_vet(ndhal_pelect_data.pnd[i]);
+			if (!ret) {
+				secondary_good_cnt++;
+			}
+		}
+
+		// run election on primary
+		//
+		ret = npe_primary_device_do_election(ndhal_pelect_data.pnd[0], secondary_good_cnt);
+
+		secondary_good_cnt = 0;
+	
+		mutex_lock(&ndhal_pelect_data.lock);
+		if (ret) {
+			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
+			pr_info("nd%02d: pod election failed", ndhal_pelect_data.pnd[0]->device_index);
+		} else {
+			ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_SUCCESS;
+			pr_info("nd%02d: pod election complete.  node id: %d Pod Unique id: %016llx", ndhal_pelect_data.pnd[0]->device_index, 
+					ndhal_pelect_data.node_id, ndhal_pelect_data.pod_serial_num);
+		}
+		mutex_unlock(&ndhal_pelect_data.lock);
+	}
+
+	ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_FAILURE;
+	return 0;
+}
+
+static int npe_create_thread(void)
+{
+	ndhal_pelect_data.thread = kthread_run(npe_election_thread_fn, NULL, "neuron election");
+	if (IS_ERR_OR_NULL(ndhal_pelect_data.thread)) {
+		pr_err("election thread creation failed\n");
+		return -1;
+	}
+	return 0;
+}
+
+static void npe_stop_thread(void)
+{
+	if (ndhal_pelect_data.thread == NULL)
+		return;
+
+	ndhal_pelect_data.stop = true;
+	wake_up(&ndhal_pelect_data.wait_queue);
+	kthread_stop(ndhal_pelect_data.thread); //blocks till the thread exits
+	ndhal_pelect_data.thread = NULL;
+}
+
+ssize_t npe_class_node_id_show_data(char *buf)
+{
+	if (ndhal_pelect_data.pod_state_internal == NEURON_NPE_POD_ST_ELECTION_IN_PROGRESS) {
+		return dhal_sysfs_emit(buf, "busy\n");
+	}
+	return dhal_sysfs_emit(buf, "%d\n",ndhal_pelect_data.node_id);
+}
+
+ssize_t npe_class_server_id_show_data(char *buf)
+{
+	return dhal_sysfs_emit(buf, "%016llx\n",ndhal_pelect_data.pod_serial_num);
+}
+
+int npe_init(void)
+{
+	ndhal_pelect_data.nbr_data_read_timeout = pod_etimeout * 1000;
+	return npe_create_thread();
+}
+
+void npe_cleanup(void)
+{
+	npe_stop_thread();
+	if (ndhal_pelect_data.pnd[0] != NULL) {
+		ndhal_pelect_data.pnd[0] = NULL;
+	}
 }

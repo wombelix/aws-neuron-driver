@@ -573,11 +573,24 @@ static void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *dev
 	device_dram_addr[3] = V3_HBM_3_BASE;
 
 	if (narch_is_qemu()) {
+		// Allow qemu setups to dynamically allocate their HBM sizes
 		const u64 msize = ndhal->ndhal_pci.dram_bar_size / 4;
 		device_dram_size[0] = msize;
 		device_dram_size[1] = msize;
 		device_dram_size[2] = msize;
 		device_dram_size[3] = msize;
+
+		u32 mem_regions = sizeof(dm_mmap_special_v3) / sizeof(dm_mmap_special_v3[0]);
+		int i = 0;
+		for (; i < mem_regions; ++i) {
+			if ((dm_mmap_special_v3[i].offset == V3_HBM_0_BASE) ||
+				(dm_mmap_special_v3[i].offset == V3_HBM_1_BASE) ||
+				(dm_mmap_special_v3[i].offset == V3_HBM_2_BASE) ||
+				(dm_mmap_special_v3[i].offset == V3_HBM_3_BASE)) {
+				dm_mmap_special_v3[i].size = msize;
+			}
+		}
+		pr_info("overriding hbm size to %llu bytes", msize);
 	} else {
 		device_dram_size[0] = V3_HBM_ACTIVE_SIZE;
 		device_dram_size[1] = V3_HBM_ACTIVE_SIZE;
@@ -629,7 +642,7 @@ static int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct memp
 			u32 nc_id = channel;
 			ret = mc_alloc_align(nd, MC_LIFESPAN_DEVICE, MEMPOOL_CARVEOUT_SIZE, 0, MEM_LOC_DEVICE, channel, region, nc_id, NEURON_MEMALLOC_TYPE_NCDEV_DEVICE, &mc);
 			if (ret) {
-				pr_err("failed to allocate hbm carevout region: ret=%d\n", ret);
+				pr_err("failed to allocate hbm carveout region: ret=%d\n", ret);
 				return -ENOMEM;
 			}
 			if (mc->pa != start_addr) {
@@ -1695,7 +1708,7 @@ static bool ndhal_die_flipped(void)
 	}
 
 	npe_get_pod_status(&state, &node_id);
-	if ((state == NEURON_POD_E_STATE_SUCCESS) && ((node_id == 1) || (node_id == 2))) {
+	if ((state == NEURON_POD_E_STATE_ULTRASERVER) && ((node_id == 1) || (node_id == 2))) {
 		return true;
 	}
 	return false;
@@ -1750,6 +1763,20 @@ static void ndma_get_engines_with_host_connectivity_v3(u32 hbm_index, u32 engine
 
 /* POD Functions */
 /**
+ * npe_notify_mark() - api for crwl to notify range marking (core claiming) activities
+ *
+ * @param mark_cnt - marked core count (for mark, count before, for unmark, count after)
+ * @param mark     - true if calling operation was a mark vs unmark
+ *
+ */
+static void npe_notify_mark_v3(int mark_cnt, bool mark)
+{
+	if (ndhal_instance_type_pod()) {
+		npe_notify_mark(mark_cnt, mark);
+	}
+}
+
+/**
  * npe_pod_info() - return information about the pod the instance belongs to
  *
  * @param pod_type - type of pod the instance belongs to or NONE if not part of a pod
@@ -1780,7 +1807,7 @@ static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
 static int npe_pod_status_v3(u32 *pod_state, u8 *node_id)
 {
 	if (!ndhal_instance_type_pod()) {
-		*pod_state = NEURON_POD_E_STATE_STANDALONE;
+		*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
 		*node_id = -1;
 		return 0;
 	}
@@ -1790,15 +1817,40 @@ static int npe_pod_status_v3(u32 *pod_state, u8 *node_id)
 /**
  * npe_pod_ctrl() - control the state of the pod
  *
- * @pnd:    array of neuron devices
+ * @nd:    neuron device
  * @param pod_ctrl  - control operation to perform
  * @param timeout - timeout for the control operation
  * @param pod_state - state/outcome of the pod's election process
  *
  */
-static int npe_pod_ctrl_v3(struct neuron_device **pnd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
+static int npe_pod_ctrl_v3(struct neuron_device *nd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
 {
-	return npe_pod_ctrl(pnd, pod_ctrl, timeout, pod_state);
+	if (!ndhal_instance_type_pod()) {
+		return 0;
+	}
+	return npe_pod_ctrl(nd, pod_ctrl, timeout, pod_state);
+}
+
+/**
+ * npe_class_node_id_show_data() - return sysfs class node_id
+ *
+ * @buf - sysfs buffer
+ *
+ */
+static ssize_t npe_class_node_id_show_data_v3(char *buf)
+{
+	return npe_class_node_id_show_data(buf);
+}
+
+/**
+ * npe_class_server_id_show_data() - return sysfs class node_id
+ *
+ * @buf - sysfs buffer
+ *
+ */
+static 	ssize_t npe_class_server_id_show_data_v3(char *buf)
+{
+	return npe_class_server_id_show_data(buf);
 }
 
 /**
@@ -1908,14 +1960,17 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_ndma.ndma_is_bar0_write_blocked = ndma_is_bar0_write_blocked_v3;
 	ndhal->ndhal_ndma.ndma_get_m2m_barrier_type = ndma_get_m2m_barrier_type_v3;
 	ndhal->ndhal_ndma.ndma_get_engines_with_host_connectivity = ndma_get_engines_with_host_connectivity_v3;
-    ndhal->ndhal_npe.npe_pod_info = npe_pod_info_v3;
-    ndhal->ndhal_npe.npe_pod_status = npe_pod_status_v3;
-    ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v3;
-    ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v3;
+	ndhal->ndhal_npe.npe_notify_mark = npe_notify_mark_v3;
+	ndhal->ndhal_npe.npe_pod_info = npe_pod_info_v3;
+	ndhal->ndhal_npe.npe_pod_status = npe_pod_status_v3;
+	ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v3;
+	ndhal->ndhal_npe.npe_class_node_id_show_data = npe_class_node_id_show_data_v3;
+	ndhal->ndhal_npe.npe_class_server_id_show_data = npe_class_server_id_show_data_v3;
+	ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v3;
 
 	extern unsigned int nmetric_log_posts;
 	if (narch_is_qemu()) {
-        ndhal->ndhal_reset.retry_count *= 1000; // wait longer on qemu
+		ndhal->ndhal_reset.retry_count *= 1000; // wait longer on qemu
 		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v3_qemu;
 		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3_qemu;
 		ndhal->ndhal_address_map.dma_eng_per_nd = V3_NC_PER_DEVICE * V3_DMA_ENG_PER_NC;
@@ -1947,8 +2002,8 @@ int ndhal_register_funcs_v3(void) {
 		ndhal->ndhal_pci.apb_bar = 0;
 	}
 
-	if (no_reset) {
-		npe_handle_no_reset_param();
+	if (ndhal_instance_type_pod()) {
+		ret = npe_init();
 	}
 
 	switch (ndhal->pci_device_id) {

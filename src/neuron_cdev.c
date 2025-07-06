@@ -2499,16 +2499,24 @@ static int ncdev_pod_status(unsigned int cmd, void *param)
 	return ret;
 }
 
-static int ncdev_pod_ctrl(unsigned int cmd, void *param)
+static int ncdev_pod_ctrl(struct file *filep, unsigned int cmd, void *param)
 {
 	int ret;
 	int cret;
-	uint32_t device_index;
+	struct ncdev *ncd;
+	struct neuron_device *nd;
 	struct neuron_ioctl_pod_ctrl arg;
-	struct neuron_device *pnd[16];
 	
-
 	if (cmd != NEURON_IOCTL_POD_CTRL) {
+		return -EINVAL;
+	}
+
+	ncd = filep->private_data;
+	if (ncd == NULL) {
+		return -EINVAL;
+	}
+	nd = ncd->ndev;
+	if (nd == NULL) {
 		return -EINVAL;
 	}
 
@@ -2521,16 +2529,7 @@ static int ncdev_pod_ctrl(unsigned int cmd, void *param)
 		return -EINVAL;
 	}
 
-	// collect nd structures we need to perform the election
-	//
-	for (device_index = 0; device_index < 16; device_index++) {
-		pnd[device_index]  = devnodes[device_index].ndev;
-		if (pnd[device_index] == NULL) {
-			return -EINVAL;
-		}
-	}
-		
-	ret = ndhal->ndhal_npe.npe_pod_ctrl( pnd, arg.ctrl, arg.timeout, &arg.state);
+	ret = ndhal->ndhal_npe.npe_pod_ctrl(nd, arg.ctrl, arg.timeout, &arg.state);
 
 	cret = copy_to_user(param, &arg, sizeof(arg));
 	if (cret != 0) {
@@ -2570,7 +2569,7 @@ inline static long ncdev_misc_ioctl(struct file *filep, unsigned int cmd, unsign
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_POD_STATUS)) {
 		return ncdev_pod_status(cmd, (void *)param);
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_POD_CTRL)) {
-		return ncdev_pod_ctrl(cmd, (void *)param);
+		return ncdev_pod_ctrl(filep, cmd, (void *)param);
 	}
 
 	pr_err("invalid misc IOCTL %d (dir=%d, type=%d, nr=%d, size=%d)\n", cmd, _IOC_DIR(cmd),
@@ -3088,6 +3087,50 @@ int ncdev_delete_device_node(struct neuron_device *ndev)
 	return ncdev_remove_device_node(&devnodes[ndev->device_index]);
 }
 
+/*
+ * neuron_device class sysfs nodes
+ *   node_id
+ *   server_id
+ *
+ */
+#if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)))
+static ssize_t ncdev_class_node_id_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
+static ssize_t ncdev_class_node_id_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
+{
+	// protect against ndhal initialization race
+	if (ndhal == NULL) {
+		return 0;
+	}
+	if (ndhal->ndhal_npe.npe_class_node_id_show_data == NULL) {
+		return 0;
+	}
+	return ndhal->ndhal_npe.npe_class_node_id_show_data(buf);
+}
+
+#if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)))
+static ssize_t ncdev_class_server_id_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
+static ssize_t ncdev_class_server_id_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
+{
+	// protect against ndhal initialization race
+	if (ndhal == NULL) {
+		return 0;
+	}
+	if (ndhal->ndhal_npe.npe_class_server_id_show_data == NULL) {
+		return 0;
+	}
+	return ndhal->ndhal_npe.npe_class_server_id_show_data(buf);
+}
+
+static const struct class_attribute class_attr_node_id =
+	__ATTR(node_id, S_IRUGO, ncdev_class_node_id_show, NULL);
+
+static const struct class_attribute class_attr_server_id =
+	__ATTR(server_id, S_IRUGO, ncdev_class_server_id_show, NULL);
+
 static void ncdev_cleanup(void)
 {
 	int i;
@@ -3097,6 +3140,8 @@ static void ncdev_cleanup(void)
 	}
 
 	if (neuron_dev_class) {
+		class_remove_file(neuron_dev_class, &class_attr_node_id);
+		class_remove_file(neuron_dev_class, &class_attr_server_id);
 		class_destroy(neuron_dev_class);
 	}
 
@@ -3128,7 +3173,17 @@ int ncdev_module_init(void)
 		ret = PTR_ERR(neuron_dev_class);
 		goto fail;
 	}
-
+	
+	ret  = class_create_file(neuron_dev_class, &class_attr_node_id);
+	if (ret) {
+		pr_err("create class/node_id failed");
+		goto fail;
+	}
+	ret  = class_create_file(neuron_dev_class, &class_attr_server_id);
+	if (ret) {
+		pr_err("create class/server_id failed");
+		goto fail;
+	}
 	return ret;
 
 fail:

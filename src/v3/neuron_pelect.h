@@ -20,18 +20,22 @@ struct neuron_device;
 int npe_election_exec_on_rst(struct neuron_device *nd, bool reset_successful);
 
 /**
- * npe_handle_no_reset_param()
+ * npe_init() - initialize pod election code.
  *
- *   If no reset param is in play, force pod election to known state that we would have if we 
- *   skipped the initial election.
  */
-void npe_handle_no_reset_param(void);
+int npe_init(void);
 
 /**
  * npe_cleanup() - cleanup and pod state left around (miscram)
  *
  */
 void npe_cleanup(void);
+
+/**
+ * npe_notify_mark() - notify election code of a change in the crwl mark count
+ *
+ */
+void npe_notify_mark(int mark_cnt, bool mark);
 
 /**
  * npe_get_pod_id() - return pod id
@@ -51,10 +55,24 @@ int npe_get_pod_status(u32 *state, u8 *node_id);
 /**
  * npe_pod_ctrl() - request a change to pod state
  *
- * @pnd:		array of neuron devices
+ * @nd:		    neuron device
  * @ctrl:    	control change request
  * @timeout: 	timeout for the control operation
  * @state:   	state of the election
  */
-int npe_pod_ctrl(struct neuron_device **pnd, u32 ctrl, u32 timeout, u32 *state);
+int npe_pod_ctrl(struct neuron_device *nd, u32 ctrl, u32 timeout, u32 *state);
+
+/**
+ * npe_class_node_id_show_data() - return sysfs class node_id
+ *
+ * @buf:		    sysfs buffer
+ */
+ssize_t npe_class_node_id_show_data(char *buf);
+
+/**
+ * npe_class_server_id_show_data() - return sysfs class server_id
+ *
+ * @buf:		    sysfs buffer
+ */
+ssize_t npe_class_server_id_show_data(char *buf);
 #endif

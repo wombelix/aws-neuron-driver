@@ -10,6 +10,7 @@
 #include <linux/delay.h>
 
 #include "neuron_device.h"
+#include "neuron_dhal.h"
 
 // Sleep range when waiting for lock state to be changed
 #define NEURON_CRWL_SLEEP_MIN 10
@@ -182,6 +183,7 @@ done:
 
 // Each entry points to NC and value points to PID acquired that NC.
 static pid_t ncrwl_range_pids[MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE] = {0};
+static int ncrwl_range_mark_cnt = 0;
 DEFINE_MUTEX(ncrwl_range_lock); // lock to protect ncrwl_range_pids
 int ncrwl_nc_range_mark(u32 nc_count, u32 start_nc_index, u32 end_nc_index,
 			u32 *max_range, volatile long unsigned int *result_map)
@@ -208,9 +210,13 @@ int ncrwl_nc_range_mark(u32 nc_count, u32 start_nc_index, u32 end_nc_index,
 
 		// if required number of NCs are free, mark them as acquired and update the result map
 		if (range_len >= nc_count) {
+			// notify election code of mark and provide prev range mark count
+			ndhal->ndhal_npe.npe_notify_mark(ncrwl_range_mark_cnt, true);
+
 			for (j = i; j <= end_nc_index && j < (i + nc_count); j++) {
 				ncrwl_range_pids[j] = task_tgid_nr(current);
 				set_bit(j, result_map);
+				ncrwl_range_mark_cnt++;
 			}
 			mutex_unlock(&ncrwl_range_lock);
 			return 0;
@@ -230,7 +236,10 @@ void ncrwl_nc_range_unmark(volatile long unsigned int *free_map)
 	for (i = 0; i < MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE; i++) {
 		if (test_bit(i, free_map) && ncrwl_range_pids[i] == task_tgid_nr(current)) {
 			ncrwl_range_pids[i] = 0;
+			ncrwl_range_mark_cnt--;
 		}
+		// notify election code of  decremented range mark count
+		ndhal->ndhal_npe.npe_notify_mark(ncrwl_range_mark_cnt, false);
 	}
 	mutex_unlock(&ncrwl_range_lock);
 }
@@ -246,16 +255,11 @@ int ncrwl_nc_range_pid_get( uint32_t nc_index, pid_t *pid)
 	return 0;
 }
 
-int ncrwl_current_process_range_mark_cnt(void)
+int ncrwl_range_mark_cnt_get(void)
 {
-	int i;
 	int cnt = 0;
 	mutex_lock(&ncrwl_range_lock);
-	for (i = 0; i < MAX_NEURON_DEVICE_COUNT * MAX_NC_PER_DEVICE; i++) {
-		if (ncrwl_range_pids[i] == task_tgid_nr(current)) {
-			cnt++;
-		}
-	}
+	cnt = ncrwl_range_mark_cnt;
 	mutex_unlock(&ncrwl_range_lock);
 	return cnt;
 }

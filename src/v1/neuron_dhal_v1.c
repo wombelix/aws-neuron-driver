@@ -1105,6 +1105,17 @@ static void ndma_get_engines_with_host_connectivity_v1(u32 hbm_index, u32 engine
 
 /* POD Functions */
 /**
+ * npe_notify_mark() - api for crwl to notify range marking (core claiming) activities
+ *
+ * @param mark_cnt - marked core count (for mark, count before, for unmark, count after)
+ * @param mark     - true if calling operation was a mark vs unmark
+ *
+ */
+static void npe_notify_mark_v1(int mark_cnt, bool mark)
+{
+}
+
+/**
  * npe_pod_info() - return information about the pod the instance belongs to
  *
  * @param pod_type - type of pod the instance belongs to or NONE if not part of a pod
@@ -1128,7 +1139,7 @@ static int npe_pod_info_v1(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
  */ 
 static int npe_pod_status_v1(u32 *pod_state, u8 *node_id)
 {
-	*pod_state = NEURON_POD_E_STATE_STANDALONE;
+	*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
 	*node_id = -1;
 	return 0;
 }
@@ -1136,17 +1147,38 @@ static int npe_pod_status_v1(u32 *pod_state, u8 *node_id)
 /**
  * npe_pod_ctrl() - control the state of the pode
  *
- * @pnd:    array of neuron devices
+ * @nd:    neuron device
  * @param pod_ctrl  - control operation to perform
  * @param timeout - timeout for the control operation
  * @param pod_state - state/outcome of the pod's election process
  *
  */
-
-static int npe_pod_ctrl_v1(struct neuron_device **pnd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
+static int npe_pod_ctrl_v1(struct neuron_device *nd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
 {
-	*pod_state = NEURON_POD_E_STATE_STANDALONE;
+	*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
 	return 0;
+}
+
+/**
+ * npe_class_node_id_show_data() - return sysfs class node_id
+ *
+ * @buf - sysfs buffer
+ *
+ */
+static ssize_t npe_class_node_id_show_data_v1(char *buf)
+{
+    return dhal_sysfs_emit(buf, "-1\n");
+}
+
+/**
+ * npe_class_server_id_show_data() - return sysfs class node_id
+ *
+ * @buf - sysfs buffer
+ *
+ */
+static 	ssize_t npe_class_server_id_show_data_v1(char *buf)
+{
+    return dhal_sysfs_emit(buf, "0000000000000000\n");
 }
 
 /**
@@ -1255,10 +1287,13 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_ndma.ndma_is_bar0_write_blocked = ndma_is_bar0_write_blocked_v1;
 	ndhal->ndhal_ndma.ndma_get_m2m_barrier_type = ndma_get_m2m_barrier_type_v1;
 	ndhal->ndhal_ndma.ndma_get_engines_with_host_connectivity = ndma_get_engines_with_host_connectivity_v1;
-    ndhal->ndhal_npe.npe_pod_info = npe_pod_info_v1;
-    ndhal->ndhal_npe.npe_pod_status = npe_pod_status_v1;
-    ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v1;
-    ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v1;
+	ndhal->ndhal_npe.npe_notify_mark = npe_notify_mark_v1;
+	ndhal->ndhal_npe.npe_pod_info = npe_pod_info_v1;
+	ndhal->ndhal_npe.npe_pod_status = npe_pod_status_v1;
+	ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v1;
+	ndhal->ndhal_npe.npe_class_node_id_show_data = npe_class_node_id_show_data_v1;
+	ndhal->ndhal_npe.npe_class_server_id_show_data = npe_class_server_id_show_data_v1;
+	ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v1;
 
 	if (narch_is_qemu()) {
 		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v1_qemu;

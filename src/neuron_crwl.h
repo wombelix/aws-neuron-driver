@@ -53,10 +53,10 @@ void ncrwl_nc_range_unmark(volatile long unsigned int *bitmap);
 int ncrwl_nc_range_pid_get(uint32_t nc_index, pid_t *pid);
 
 /**
- * ncrwl_current_process_range_mark_cnt() - return the count of cores the current process has marked
+ * ncrwl_range_mark_cnt_get() - return the count of cores that have been marked
  *
  */
-int ncrwl_current_process_range_mark_cnt(void);
+int ncrwl_range_mark_cnt_get(void);
 
 /**
  * ncrwl_reader_enter() - Takes reader lock of given neuron core.

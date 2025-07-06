@@ -337,6 +337,8 @@ static void neuron_pci_remove(struct pci_dev *dev)
 
 	nmetric_stop_thread(nd);
 
+    ndhal->ndhal_ext_cleanup();
+
 	ndhal->ndhal_pci.neuron_pci_release_bar(dev, ndhal->ndhal_pci.apb_bar);
 
 	ndhal->ndhal_pci.neuron_pci_release_bar(dev, ndhal->ndhal_pci.axi_bar);

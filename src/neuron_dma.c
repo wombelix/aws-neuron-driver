@@ -221,7 +221,7 @@ error:
 	return ret;
 }
 
-int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_d2d)
+int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_intra_device_dma)
 {
 	int ret = 0;
 	volatile u32 *dst;
@@ -230,9 +230,9 @@ int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring
 	u64 first_wait_time, wait;
 
 	ndhal->ndhal_ndma.ndma_get_wait_for_completion_time(count, async, &first_wait_time, &wait);
-	if (is_d2d && !async) {
+	if (is_intra_device_dma && !async) {
 		first_wait_time = 10; // device-to-device DMA is much faster, just choose a small value independent of number of descriptors
-		wait = wait/20; // can probably be set even lower if required
+		wait = wait/200; // can probably be set even lower if required
 	}
 
 	unsigned long one_loop_sleep = 1; // poll every 1 usecs

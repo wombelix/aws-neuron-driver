@@ -6,6 +6,12 @@
 #include "neuron_mmap.h"
 #include "neuron_sysfs_metrics.h"
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+#define dhal_sysfs_emit(buf, ...) scnprintf((buf), PAGE_SIZE, __VA_ARGS__)
+#else
+#define dhal_sysfs_emit(buf, ...) sysfs_emit((buf), __VA_ARGS__)
+#endif
+
 extern int force_die_flip;
 
 struct ndhal_address_map {
@@ -156,9 +162,12 @@ struct ndhal_ndma {
 };
 
 struct ndhal_npe {
+	void (*npe_notify_mark)(int mark_cnt, bool mark);
 	int (*npe_pod_info)( u8 *pod_type, u8 *pod_id, u8 *pod_sz);
 	int (*npe_pod_status)( u32 *pod_state, u8 *node_id);
-	int (*npe_pod_ctrl)( struct neuron_device **pnd, u32 pod_ctrl, u32 timeout, u32 *pod_state);
+	int (*npe_pod_ctrl)( struct neuron_device *nd, u32 pod_ctrl, u32 timeout, u32 *pod_state);
+	ssize_t (*npe_class_node_id_show_data)(char *buf);
+	ssize_t (*npe_class_server_id_show_data)(char *buf);
 };
 
 struct neuron_dhal {

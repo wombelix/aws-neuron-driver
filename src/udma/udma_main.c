@@ -141,15 +141,17 @@ static int udma_set_defaults(struct udma *udma)
 		(0x40 << UDMA_AXI_S2M_OSTAND_CFG_WR_MAX_COMP_DATA_WR_SHIFT);
 	reg_write32(&udma->udma_regs_s2m->axi_s2m.ostand_cfg_wr, value);
 
+	// Enable the completion ring head reporting by disabling bit0
 	struct udma_gen_regs_v4 __iomem *gen_regs = udma->gen_regs;
-	// V1 requires this fix to avoid race-condition when resetting the NC instruction buffers
-	u32 val = 0x1;
-
- 	// this enables completion head and completion ring.	
- 	if (ndhal->arch > NEURON_ARCH_V1) {
- 		val = 0x0;
+	if (ndhal->arch == NEURON_ARCH_V1) {
+		// Keep completion disabled for V1
+		// V1 requires this fix to avoid race-condition when resetting the NC instruction buffers
+		value = 0x1ul;
+	} else {
+		reg_read32(&gen_regs->spare_reg.zeroes0, &value);
+		value &= (~0x1ul);
  	}
- 	reg_write32(&gen_regs->spare_reg.zeroes0, val);
+	reg_write32(&gen_regs->spare_reg.zeroes0, value);
 
 	return 0;
 }
