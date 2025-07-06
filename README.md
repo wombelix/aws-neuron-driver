@@ -26,6 +26,7 @@ It is basically a mirror of the source code as it is released by AWS.
 
 * [Why?](#why)
 * [How?](#how)
+* [When?](#when)
 * [Usage](#usage)
 * [Source](#source)
 * [Contribute](#contribute)
@@ -119,6 +120,29 @@ Date:   Wed Feb 5 08:48:09 PM UTC 2025 +0000
     - M: src/preinstall
     -----
 ```
+
+## When
+
+Source code updates are published automatically through two mechanisms:
+
+### GitHub Actions Workflow
+
+A [GitHub Actions workflow](.github/workflows/check-neuron-driver.yml)
+runs every Sunday at 3:17 AM UTC and can be triggered manually. The
+workflow compares the latest AWS Neuron Driver release notes with
+the local copy. If changes are detected, it triggers an sr.ht build
+to publish new source code.
+
+### sr.ht Build Manifest
+
+The [sr.ht build manifest](.build.yaml) contains a `publish` task that
+downloads and compares release notes from the official AWS repository.
+It only proceeds if new releases are detected. The task builds and runs
+the [aws-neuron-driver-publish-source](https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source)
+tool, commits and pushes new driver source code with metadata. It uses
+the `skip-ci` option to prevent infinite build loops.
+
+This ensures the repository stays current with official AWS releases automatically.
 
 ## Usage
 
