@@ -25,6 +25,7 @@
 #include "neuron_metrics.h"
 #include "neuron_sysfs_metrics.h"
 #include "neuron_log.h"
+#include "neuron_power.h"
 
 #ifndef static_assert
 #define static_assert(expr, ...)
@@ -103,6 +104,8 @@ struct neuron_device {
 	struct neuron_datastore datastore; // neuron datastore
 
 	struct neuron_metrics metrics; // aggregated metrics
+
+	struct neuron_power power; // stats about device power utilization
 
 	struct neuron_crwl crwl[MAX_NC_PER_DEVICE]; // cooperative rw lock per NC.
 

@@ -22,6 +22,10 @@ int nc_per_dev_param = 1;
 module_param(nc_per_dev_param, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(nc_per_dev_param, "Number of neuron cores");
 
+int dev_nc_map = 1;
+module_param(dev_nc_map, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(dev_nc_map, "Map of active neuron cores");
+
 struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id)
 {
 	if (eng_id >= NUM_DMA_ENG_PER_DEVICE)
@@ -555,6 +559,9 @@ int ndmar_init_ncs(struct neuron_device *nd, uint32_t nc_map) {
 	int nc_idx;
 
 	for (nc_idx = 0; nc_idx < ndhal->ndhal_address_map.nc_per_device; nc_idx++) {
+		if (((1 << nc_idx) & ndhal->ndhal_address_map.dev_nc_map) == 0) {
+			continue;
+		}
 		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
 			bool init_h2t_eng = ndhal->ndhal_ndmar.nr_init_h2t_eng( nc_idx, nc_map);
 			ret = ndmar_init_nc(nd, nc_idx, init_h2t_eng);
@@ -606,6 +613,9 @@ void ndmar_close_ncs(struct neuron_device *nd, uint32_t nc_map)
 {
 	int nc_idx;
 	for (nc_idx = 0; nc_idx < ndhal->ndhal_address_map.nc_per_device; nc_idx++) {
+		if (((1 << nc_idx) & ndhal->ndhal_address_map.dev_nc_map) == 0) {
+			continue;
+		}
 		if (nc_map == NEURON_NC_MAP_DEVICE || ((1 << nc_idx) & nc_map)) {
 			ndmar_close_nc(nd, nc_idx);
 		}

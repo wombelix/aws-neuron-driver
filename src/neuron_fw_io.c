@@ -84,6 +84,32 @@ int fw_io_serial_number_read(void *bar0, uint64_t *serial_number)
 	return ret;
 }
 
+int fw_io_device_power_read(void *bar0, u32 *power)
+{
+	int ret;
+
+	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_POWER_UTIL_OFFSET;
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, power, 1, false);
+	if (ret) {
+		pr_err("failed to get device power from the device, ret = %d\n", ret);
+	}
+
+	return ret;
+}
+
+int fw_io_api_version_read(void * bar0, u32 *version)
+{
+	int ret;
+
+	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_API_VERSION_OFFSET;
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, version, 1, false);
+	if (ret) {
+		pr_err("failed to get api version from the device, ret = %d\n", ret);
+	}
+
+	return ret;
+}
+
 int fw_io_device_id_read(void *bar0, u32 *device_id)
 {
 	void * addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_DEVICE_ID_OFFSET;

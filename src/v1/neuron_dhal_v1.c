@@ -996,12 +996,12 @@ static int ndma_validate_pa_v1(struct neuron_device *nd, phys_addr_t pa, struct 
 	return 0;
 }
 
-const static u64 teng_udma_base[] = {
+static const u64 teng_udma_base[] = {
 	P_0_APB_TENG_0_UDMA_0_RELBASE,
 	P_0_APB_TENG_1_UDMA_0_RELBASE,
 	P_0_APB_TENG_2_UDMA_0_RELBASE,
 	P_0_APB_TENG_3_UDMA_0_RELBASE };
-const static u64 teng_tdma_base[] = {
+static const u64 teng_tdma_base[] = {
 	P_0_APB_TENG_0_TDMA_0_RELBASE,
 	P_0_APB_TENG_1_TDMA_0_RELBASE,
 	P_0_APB_TENG_2_TDMA_0_RELBASE,
@@ -1192,6 +1192,7 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_address_map.port_1_base = P_1_BASE;
 	ndhal->ndhal_address_map.mmap_nc_size = V1_MMAP_NC_SIZE;
 	ndhal->ndhal_address_map.nc_per_device = V1_NC_PER_DEVICE;
+	ndhal->ndhal_address_map.dev_nc_map = (1 << V1_NC_PER_DEVICE) - 1;
 	ndhal->ndhal_address_map.semaphore_count = V1_SEMAPHORE_COUNT;
 	ndhal->ndhal_address_map.event_count = V1_EVENTS_COUNT;
 	ndhal->ndhal_address_map.ts_per_device = 0;

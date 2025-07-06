@@ -25,6 +25,7 @@ struct ndhal_address_map {
 
 	// counts
 	int nc_per_device;
+	uint32_t dev_nc_map;
 	uint64_t semaphore_count;
 	uint64_t event_count;
 	uint32_t ts_per_device;

@@ -105,9 +105,9 @@ static int udma_set_max_descs_and_prefetch(struct udma *udma, u8 max_descs)
 	// Min burst must equal Max burst, which is 8
 
 	u32 pref_thr = max_descs;
-	const static u32 min_burst_above_thr = 8;
-	const static u32 max_burst = 8;
-	const static u32 always_break_on_max_boundary = 1;
+	static const u32 min_burst_above_thr = 8;
+	static const u32 max_burst = 8;
+	static const u32 always_break_on_max_boundary = 1;
 	u32 value;
 	// max_descs is a large number (currently >= 64) make sure it's so
 	// and configure min/max prefetch to always be 8

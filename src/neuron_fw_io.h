@@ -45,6 +45,11 @@ enum {
 enum {
 	FW_IO_REG_DEVICE_ID_OFFSET = 0x24,
 
+	// MISC RAM register for API version
+	//   - This register is used to determine the API version of the firmware.
+	//   - The value of this register is used to determine the offset of other registers.
+	FW_IO_REG_API_VERSION_OFFSET = 0x00,
+
 	// MISC RAM slots for serial number for V2
 	//   - The lower 32 bits and the upper 32 bits together represent the 64-bit serial number.
 	FW_IO_REG_SERIAL_NUMBER_LO_OFFSET = 0x38, // 14 * 4 bytes
@@ -59,7 +64,15 @@ enum {
 	FW_IO_REG_HBM2_ECC_OFFSET = 0x4c, // 19 * 4 bytes
 	FW_IO_REG_HBM3_ECC_OFFSET = 0x50, // 20 * 4 bytes
 
-	FW_IO_REG_RUNTIME_RESERVED0  = 0xC0, // 0xC0 to 0xF0
+	// MISC RAM slots for power utilization.
+	//   - The lower 16 bits contain power utilization as a percentage of max with baseline backed out
+	//   - The upper 16 bits contain a counter indicating the sample number, used to detect cases in
+	//     which we are sampling faster than the firmware is providing new data
+	// Note that this is expressed as a single offset, as we would prefer to read it all in one go for both
+	// performance and atomicity.
+	FW_IO_REG_POWER_UTIL_OFFSET = 0x54, // 21 * 4 bytes
+
+	FW_IO_REG_RUNTIME_RESERVED0 = 0xC0, // 0xC0 to 0xF0
 
 	FW_IO_REG_METRIC_OFFSET = 0x100, // 0x100 to 0x17F, 128 bytes
     FW_IO_REG_LH_NEIGHBOR_SERNUM_HI = 0x180, // LH/RH neighbors
@@ -236,6 +249,22 @@ int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_
  * @return  0 on success.
  */
 int fw_io_device_id_read(void *bar0, u32 *device_id);
+
+/**
+ * fw_io_device_power_read() - Read power utilization from firmware
+ * @param bar - from bar
+ * @param power  - output power, expressed as a percentage of maximum, in basis points (e.g. 0 - 10000)
+ * @return  0 on success.
+ */
+int fw_io_device_power_read(void *bar0, u32 *power);
+
+/**
+ * fw_io_api_version_read() - Read the API version that the firmware is running
+ * @param bar - from bar
+ * @param version  - output API version
+ * @return  0 on success.
+ */
+int fw_io_api_version_read(void * bar0, u32 *version);
 
 /**
  * fw_io_device_id_write() - Read device id

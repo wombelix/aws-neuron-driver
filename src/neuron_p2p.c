@@ -83,7 +83,8 @@ int neuron_p2p_register_va(u64 virtual_address, u64 length, struct neuron_p2p_va
 	// smallest page count
 	if ((length >= NEURON_P2P_HUGE_PAGE_SZ_USAGE_THRESHOLD) && 
 		(length % NEURON_P2P_HUGE_PAGE_SZ == 0) &&
-		(virtual_address % NEURON_P2P_HUGE_PAGE_SZ == 0)) {
+		(virtual_address % NEURON_P2P_HUGE_PAGE_SZ == 0) &&
+		(pa % NEURON_P2P_HUGE_PAGE_SZ == 0)) {
 		page_size = NEURON_P2P_HUGE_PAGE_SZ;
 	} else {
 		page_size = PAGE_SIZE;

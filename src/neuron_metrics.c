@@ -18,8 +18,10 @@
 #include "neuron_metrics.h"
 #include "neuron_device.h"
 #include "neuron_dhal.h"
+#include "neuron_power.h"
 
 unsigned int nmetric_metric_post_delay = 150000; // milliseconds
+unsigned int nmetric_metric_sample_delay = 50; // milliseconds.
 unsigned int nmetric_log_posts = 1;
 
 module_param(nmetric_metric_post_delay, uint, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
@@ -86,6 +88,10 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_NERR_HW_ERR_HBM_UE = 222,
 	NMETRIC_CW_ID_NERR_HW_ERR_NC_UE = 223,
 	NMETRIC_CW_ID_NERR_HW_ERR_DMA_ABORT = 224,
+	NMETRIC_CW_ID_NERR_SW_SEMAPHORE_ERROR = 225,
+	NMETRIC_CW_ID_NERR_SW_EVENT_ERROR = 226,
+	NMETRIC_CW_ID_NERR_SW_PSUM_COLLISION = 227,
+	NMETRIC_CW_ID_NERR_SW_SEQUENCER_FATAL = 228,
 	NMETRIC_CW_ID_FEATURE_BITMAP = 250,
 	NMETRIC_CW_ID_SYSFS_METRIC_BITMAP = 251,
 
@@ -135,6 +141,11 @@ static const nmetric_def_t nmetric_defs[] = {
 	NMETRIC_COUNTER_DEF(22, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_HW_ERR_DMA_ABORT, NDS_EXT_NC_COUNTER_HW_ERR_DMA_ABORT),
 
 	NMETRIC_COUNTER_DEF(23, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_SW_NQ_OVERFLOW, NDS_EXT_NC_COUNTER_ERR_SW_NQ_OVERFLOW),
+
+	NMETRIC_COUNTER_DEF(24, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_SW_SEMAPHORE_ERROR, NDS_EXT_NC_COUNTER_ERR_SW_SEMAPHORE_ERROR),
+	NMETRIC_COUNTER_DEF(25, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_SW_EVENT_ERROR, NDS_EXT_NC_COUNTER_ERR_SW_EVENT_ERROR),
+	NMETRIC_COUNTER_DEF(26, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_SW_PSUM_COLLISION, NDS_EXT_NC_COUNTER_ERR_SW_PSUM_COLLISION),
+	NMETRIC_COUNTER_DEF(27, POST_TIME_TICK_1, NMETRIC_CW_ID_NERR_SW_SEQUENCER_FATAL, NDS_EXT_NC_COUNTER_ERR_SW_SEQUENCER_FATAL),
 
 	// bitmap metrics
 	NMETRIC_BITMAP_DEF(0, POST_TIME_TICK_1, NMETRIC_CW_ID_FEATURE_BITMAP, NDS_ND_COUNTER_FEATURE_BITMAP),
@@ -266,6 +277,9 @@ static void nmetric_aggregate_nd_counter_entry(struct neuron_device *nd, struct 
 		break;
 		case NMETRIC_TYPE_COUNTER:
 			for (nc_id = 0; nc_id < ndhal->ndhal_address_map.nc_per_device; nc_id++) {
+				if (((1 << nc_id) & ndhal->ndhal_address_map.dev_nc_map) == 0) {
+					continue;
+				}
 				dest_buf[curr_metric->index] += get_neuroncore_counter_value(entry, nc_id, curr_metric->ds_id);
 			}
 		break;
@@ -703,6 +717,14 @@ static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metric
 }
 
 /**
+ * nmetric_sample_high_freq() - sample metrics that operate at a higher frequency than most
+ */
+static void nmetric_sample_high_freq(struct neuron_device *nd)
+{
+	npower_sample_utilization(nd);
+}
+
+/**
  * nmetric_thread_fn() - periodically aggregates and posts metric at rate specified by module parameter
  *
  * @arg: expected to be a pointer to neuron device
@@ -717,6 +739,12 @@ static int nmetric_thread_fn(void *arg)
 	u64 const_u64_metrics[NMETRIC_CONSTANT_U64_COUNT];
 	u64 freed_const_u64_metrics[NMETRIC_CONSTANT_U64_COUNT];
 	u8 tick = 0;
+	u64 sample_delay_in_jiffies;
+	u64 post_delay_in_jiffies;
+	u64 last_metric_post_time;
+	u64 start_jiffies = jiffies;
+	u64 last_logged_slow_tick = 0;
+	u64 current_slow_tick;
 
 	// initialize all aggregation buffers
 	memset(nd->metrics.neuron_aggregation.prev, 0, nmetric_counters_buf_size);
@@ -728,22 +756,54 @@ static int nmetric_thread_fn(void *arg)
 	memset(const_u64_metrics, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
 	memset(freed_const_u64_metrics, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
 
+	sample_delay_in_jiffies = msecs_to_jiffies(nmetric_metric_sample_delay);
+	post_delay_in_jiffies = msecs_to_jiffies(nmetric_metric_post_delay);
+	last_metric_post_time = jiffies;
+
+	pr_info("Starting metrics thread, sample_delay_in_jiffies is %llu, post delay in ms is %u, timer rate = %d, \n",
+		sample_delay_in_jiffies, nmetric_metric_post_delay, HZ);
+
 	// metrics are only sent once at rate specified by module param, new metric data may be saved without being immediately sent
 	while (!kthread_should_stop() && nd->metrics.neuron_aggregation.running) {
-		wait_event_interruptible_timeout(nd->metrics.neuron_aggregation.wait_queue, !nd->metrics.neuron_aggregation.running, msecs_to_jiffies(nmetric_metric_post_delay));
+		wait_event_interruptible_timeout(nd->metrics.neuron_aggregation.wait_queue, !nd->metrics.neuron_aggregation.running,sample_delay_in_jiffies);
 		if (kthread_should_stop() || !nd->metrics.neuron_aggregation.running)
 			break;
 
-		// aggregate and post metrics
-		neuron_ds_acquire_lock(&nd->datastore);
-		nmetric_full_aggregate(nd, nd->metrics.neuron_aggregation.curr, &curr_feature_bitmap, const_u64_metrics, tick);
-		nmetric_cache_shared_bufs(nd, nd->metrics.neuron_aggregation.freed, component_versions, &freed_feature_bitmap, freed_const_u64_metrics, tick);
-		neuron_ds_release_lock(&nd->datastore);
+		// There are some metrics that we sample at a relatively higher frequency.  Do that here.
+		nmetric_sample_high_freq(nd);
 
-		nmetric_post_metrics(nd, nd->metrics.neuron_aggregation.curr, nd->metrics.neuron_aggregation.prev, nd->metrics.neuron_aggregation.freed, component_versions, curr_feature_bitmap, freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick);
-		nmetric_start_new_session(nd, nd->metrics.neuron_aggregation.curr, nd->metrics.neuron_aggregation.prev, nd->metrics.neuron_aggregation.freed, &curr_feature_bitmap, &freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick); // reset all current metrics for this tick
-		tick = (tick + 1) % POST_TICK_COUNT;
+		// For the slower metrics, we want to log once every post_delay_in_jiffies jiffies.
+		// We track this by keeping track of the number of intervals since this thread started
+		// up so that we don't introduce drift due to the latency of other loop operations.
+		current_slow_tick = (jiffies - start_jiffies)/post_delay_in_jiffies;
+		if (current_slow_tick != last_logged_slow_tick) {
+			last_logged_slow_tick = current_slow_tick;
+
+			// aggregate and post metrics
+			neuron_ds_acquire_lock(&nd->datastore);
+			nmetric_full_aggregate(nd, nd->metrics.neuron_aggregation.curr,
+					       &curr_feature_bitmap, const_u64_metrics, tick);
+			nmetric_cache_shared_bufs(nd, nd->metrics.neuron_aggregation.freed,
+						  component_versions, &freed_feature_bitmap,
+						  freed_const_u64_metrics, tick);
+			neuron_ds_release_lock(&nd->datastore);
+
+			nmetric_post_metrics(nd, nd->metrics.neuron_aggregation.curr,
+					     nd->metrics.neuron_aggregation.prev,
+					     nd->metrics.neuron_aggregation.freed,
+					     component_versions, curr_feature_bitmap,
+					     freed_feature_bitmap, const_u64_metrics,
+					     freed_const_u64_metrics, tick);
+			nmetric_start_new_session(nd, nd->metrics.neuron_aggregation.curr,
+						  nd->metrics.neuron_aggregation.prev,
+						  nd->metrics.neuron_aggregation.freed,
+						  &curr_feature_bitmap, &freed_feature_bitmap,
+						  const_u64_metrics, freed_const_u64_metrics,
+						  tick); // reset all current metrics for this tick
+			tick = (tick + 1) % POST_TICK_COUNT;
+		}
 	}
+
 	return 0;
 }
 
@@ -775,6 +835,7 @@ int nmetric_init(struct neuron_device *nd)
 
 	memset(nd->metrics.ds_freed_metrics_buf, 0, nmetric_counters_buf_size);
 	memset(nd->metrics.ds_freed_const_u64_buf, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
+	npower_init_stats(nd);
 
 	// initiate metric aggregator thread
 	ret = nmetric_create_thread(nd);

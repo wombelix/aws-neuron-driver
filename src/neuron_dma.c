@@ -851,7 +851,7 @@ int ndmar_queue_get_state(struct neuron_device *nd, int eng_id, int qid,
 	return ret;
 }
 
-const static u64 udma_blocked[] = { offsetof(struct udma_rings_regs, drbp_low), offsetof(struct udma_rings_regs, drbp_high),
+static const u64 udma_blocked[] = { offsetof(struct udma_rings_regs, drbp_low), offsetof(struct udma_rings_regs, drbp_high),
 									offsetof(struct udma_rings_regs, crbp_low), offsetof(struct udma_rings_regs, crbp_high),
 									offsetof(struct udma_rings_regs, drtp_inc) };
 int ndma_bar0_blocked_one_engine(u64 base, u64 off)

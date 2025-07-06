@@ -26,6 +26,8 @@
 #include "../neuron_mempool.h"
 #include "neuron_pelect.h"
 
+extern int dev_nc_map;
+
 #define NR_RESET_RETRY_SLEEP_MS 100
 #define V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 480)
 
@@ -1846,6 +1848,7 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_address_map.port_1_base = 0ull;
 	ndhal->ndhal_address_map.mmap_nc_size = V3_MMAP_NC_SIZE;
 	ndhal->ndhal_address_map.nc_per_device = V3_NC_PER_DEVICE;
+	ndhal->ndhal_address_map.dev_nc_map = (1 << V3_NC_PER_DEVICE) - 1;
 	ndhal->ndhal_address_map.semaphore_count = V3_SEMAPHORE_COUNT;
 	ndhal->ndhal_address_map.event_count = V3_EVENTS_COUNT;
 	ndhal->ndhal_address_map.ts_per_device = V3_TS_PER_DEVICE;
@@ -1867,8 +1870,8 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v3;
 	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v3;
 	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v3;
-    ndhal->ndhal_ndmar.ndmar_get_h2t_qid = ndmar_get_h2t_qid_v3;
-    ndhal->ndhal_ndmar.ndmar_is_h2t_q = ndmar_is_h2t_q_v3;
+	ndhal->ndhal_ndmar.ndmar_get_h2t_qid = ndmar_get_h2t_qid_v3;
+	ndhal->ndhal_ndmar.ndmar_is_h2t_q = ndmar_is_h2t_q_v3;
 	ndhal->ndhal_ndmar.nr_init_h2t_eng = nr_init_h2t_eng_v3;
 	ndhal->ndhal_ndmar.ndmar_is_nx_ring = ndmar_is_nx_ring_v3;
 	ndhal->ndhal_ndmar.ndmar_quiesce_queues = ndmar_quiesce_queues_v3;
@@ -1928,6 +1931,7 @@ int ndhal_register_funcs_v3(void) {
 		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3_emu;
 		ndhal->ndhal_address_map.dma_eng_per_nd = nc_per_dev_param * V3_DMA_ENG_PER_NC;
 		ndhal->ndhal_address_map.nc_per_device = nc_per_dev_param;
+		ndhal->ndhal_address_map.dev_nc_map = dev_nc_map;
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
 		ndhal->ndhal_pci.apb_bar = 0;
 		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_emu;
@@ -1958,6 +1962,11 @@ int ndhal_register_funcs_v3(void) {
 		default:
 			pr_err("Unknown HW architecture. Can't init neuron_dhal.\n");
 			return -EINVAL;
+	}
+
+	if (ndhal->ndhal_address_map.dev_nc_map >= (1 << ndhal->ndhal_address_map.nc_per_device)) {
+		pr_err("Invalid nc map for device");
+		return -EINVAL;
 	}
 
 	return ret;

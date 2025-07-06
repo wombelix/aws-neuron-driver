@@ -22,6 +22,8 @@
 #include "../neuron_ring.h"
 #include "../neuron_mempool.h"
 
+extern int dev_nc_map;
+
 #define NR_RESET_RETRY_SLEEP_MS 100
 #define V2_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 120)
 
@@ -1290,7 +1292,7 @@ static int ndma_validate_pa_v2(struct neuron_device *nd, phys_addr_t pa, struct 
 	return 0;
 }
 
-const static uint64_t seng_udma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
+static const uint64_t seng_udma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
 	{ V2_APB_SENG_0_UDMA_0_BASE, V2_APB_SENG_0_UDMA_1_BASE, V2_APB_SENG_0_UDMA_2_BASE,
 	  V2_APB_SENG_0_UDMA_3_BASE, V2_APB_SENG_0_UDMA_4_BASE, V2_APB_SENG_0_UDMA_5_BASE,
 	  V2_APB_SENG_0_UDMA_6_BASE, V2_APB_SENG_0_UDMA_7_BASE, V2_APB_SENG_0_UDMA_8_BASE,
@@ -1304,7 +1306,7 @@ const static uint64_t seng_udma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_T
 	  V2_APB_SENG_1_UDMA_12_BASE, V2_APB_SENG_1_UDMA_13_BASE,
 	  V2_APB_SENG_1_UDMA_14_BASE, V2_APB_SENG_1_UDMA_15_BASE }
 };
-const static uint64_t seng_sdma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
+static const uint64_t seng_sdma_base[V2_MMAP_TPB_COUNT][V2_NUM_DMA_ENGINES_PER_TPB] = {
 	{ V2_APB_SENG_0_SDMA_0_BASE, V2_APB_SENG_0_SDMA_1_BASE, V2_APB_SENG_0_SDMA_2_BASE,
 	  V2_APB_SENG_0_SDMA_3_BASE, V2_APB_SENG_0_SDMA_4_BASE, V2_APB_SENG_0_SDMA_5_BASE,
 	  V2_APB_SENG_0_SDMA_6_BASE, V2_APB_SENG_0_SDMA_7_BASE, V2_APB_SENG_0_SDMA_8_BASE,
@@ -1556,6 +1558,7 @@ int ndhal_register_funcs_v2(void) {
 	ndhal->ndhal_address_map.port_1_base = 0ull;
 	ndhal->ndhal_address_map.mmap_nc_size = V2_MMAP_NC_SIZE;
 	ndhal->ndhal_address_map.nc_per_device = V2_NC_PER_DEVICE;
+	ndhal->ndhal_address_map.dev_nc_map = (1 << V2_NC_PER_DEVICE) - 1;
 	ndhal->ndhal_address_map.semaphore_count = V2_SEMAPHORE_COUNT;
 	ndhal->ndhal_address_map.event_count = V2_EVENTS_COUNT;
 	ndhal->ndhal_address_map.ts_per_device = V2_TS_PER_DEVICE;
@@ -1633,6 +1636,7 @@ int ndhal_register_funcs_v2(void) {
 		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v2_emu;
 		ndhal->ndhal_address_map.dma_eng_per_nd = nc_per_dev_param * V2_DMA_ENG_PER_NC;
 		ndhal->ndhal_address_map.nc_per_device = nc_per_dev_param;
+		ndhal->ndhal_address_map.dev_nc_map = dev_nc_map;
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v2_qemu_emu;
 		ndhal->ndhal_pci.apb_bar = 0;
 		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v2_emu;
@@ -1662,6 +1666,11 @@ int ndhal_register_funcs_v2(void) {
 		default:
 			pr_err("Unknown HW architecture. Can't init neuron_dhal.\n");
 			return -EINVAL;
+	}
+
+	if (ndhal->ndhal_address_map.dev_nc_map >= (1 << ndhal->ndhal_address_map.nc_per_device)) {
+		pr_err("Invalid nc map for device");
+		return -EINVAL;
 	}
 
 	return ret;
