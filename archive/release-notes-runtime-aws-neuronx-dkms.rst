@@ -15,6 +15,55 @@ Updated : 04/29/2022
 
 - In rare cases of multi-process applications running under heavy stress a model load failure my occur. This may require reloading of the Neuron Driver as a workaround.
 
+Neuron Driver release [2.22.2.0]
+--------------------------------
+Date: 06/24/2025
+
+Bug Fixes
+^^^^^^^^^
+* Added workaround for HW DGE descriptor fetching bug
+* Fixed typos in certain error log messages
+
+Upcoming Neuron driver 2.21 support changes for Inf1 instance users
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+* Starting with Neuron Release 2.26, Neuron driver versions above 2.21 will only support non-Inf1 instances (such as ``Trn1``, ``Inf2``, or other instance types). 
+* ``Inf1`` instance users, Neuron driver 2.21 and below will remain supported with regular security patches. 
+* ``Inf1`` instance users are advised to pin the Neuron driver version to ``2.21.*`` in their installation script using following command:
+
+.. code-block:: bash
+
+    sudo apt-get install aws-neuronx-dkms=2.21.* -y
+
+Neuron Driver release [2.21.37.0]
+--------------------------------
+Date: 05/19/2025
+
+New in this release
+^^^^^^^^^^^^^^^^^^^
+* Added the ability for users to read power utilization for each neuron device via a sysfs interface. This interface shows the minimum, maximum and average power consumed by the device over the past minute, expressed as a percentage of the device's maximum power. (:ref:`reference <neuron-sysfs-ug>`)
+* Added the ability for users to read the device utilization. This shows up as the microseconds between the start and end of the current execution on hardware. (:ref:`reference <neuron-sysfs-ug>`)
+
+Neuron Driver release [2.20.74.0]
+--------------------------------
+Date: 05/12/2025
+
+New in this release
+^^^^^^^^^^^^^^^^^^^
+* Fixes DMA abort errors on Trainium2 that could occur in Neuron Runtime during specific workloads.
+
+
+Neuron Driver release [2.20.28.0]
+--------------------------------
+Date: 04/03/2025
+
+New in this release
+^^^^^^^^^^^^^^^^^^^
+* This driver is required to run with Neuron Runtime 2.24 or later on Trainium2 machines. Included in the release is a bug fix to avoid device memory corruption issues leading to undefined Neuron Device behavior.
+
+Improvements
+^^^^^^^^^^^^
+* Improved interface between ``libnrt`` and the Driver resulting in stability improvements.
+
 Neuron Driver release [2.19.64.0]
 --------------------------------
 Date: 12/20/2024
