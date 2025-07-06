@@ -5,7 +5,7 @@
 image: debian/stable
 
 sources:
-  - git@git.sr.ht:~wombelix/aws-neuron-driver
+  - https://git.sr.ht/~wombelix/aws-neuron-driver
   - https://git.sr.ht/~wombelix/build-helper-scripts
 
 secrets:
@@ -44,6 +44,11 @@ tasks:
         ./aws-neuron-driver-publish-source -repopath ../aws-neuron-driver
 
         cd ../aws-neuron-driver
+
+        # Workaround, git@ (ssh) in sources seem to get ignored when triggered by git.sr.ht
+        git remote remove origin
+        git remote add origin git@git.sr.ht:~wombelix/aws-neuron-driver
+
         git push -o skip-ci origin main
         git push -o skip-ci origin --tags
       fi
