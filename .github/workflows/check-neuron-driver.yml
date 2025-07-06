@@ -45,11 +45,13 @@ jobs:
 
     - name: Configure hut
       if: steps.compare.outputs.files_differ == 'true'
+      env:
+        HUT_CONFIG: ${{ secrets.HUT_CLI_CONFIG }}
       run: |
         mkdir -p ~/.config/hut
-        echo "${{ secrets.HUT_CONFIG_BASE64 }}" | base64 -d > ~/.config/hut/config
+        echo "$HUT_CONFIG" | base64 -d > ~/.config/hut/config
 
     - name: Trigger sr.ht build
       if: steps.compare.outputs.files_differ == 'true'
       run: |
-        /tmp/hut builds submit .build.yaml -f -n "GitHub Action triggered sr.ht build to publish aws-neuron-driver source" -t "aws-neuron-driver/publish-source" -v public
+        /tmp/hut/hut builds submit .build.yaml -f -n "GitHub Action triggered sr.ht build to publish aws-neuron-driver source" -t "aws-neuron-driver/publish-source" -v public
