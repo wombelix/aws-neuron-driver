@@ -12,10 +12,16 @@
 #include <linux/types.h>
 
 struct udma_axi_m2s {
-	uint32_t reserved0[6];
+	u32 comp_wr_cfg_1;
+	u32 comp_wr_cfg_2;
+	u32 data_rd_cfg_1;
+	u32 data_rd_cfg_2;
+	u32 desc_rd_cfg_1;
+	u32 desc_rd_cfg_2;
 	/* [0x18] Data read master configuration */
-	uint32_t data_rd_cfg;
-	uint32_t reserved1[2];
+	u32 data_rd_cfg;
+	u32 desc_rd_cfg_3;
+	u32 desc_wr_cfg_1;
 	/* [0x24] AXI outstanding configuration */
 	u32 ostand_cfg;
 	u32 reserved2[54];
@@ -167,12 +173,21 @@ struct udma_m2s_regs_v4 {
 /* Maximum number of descriptors per packet */
 #define UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_SHIFT 0
 
+/* Maximum descriptor burst size axi_m2s/s2m->desc_rd_cfg_3
+*/
+#define UDMA_AXI_M2S_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT 0  // confusingly named, actually number of descs
+#define UDMA_AXI_M2S_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT 16
+#define UDMA_AXI_S2M_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT 0  // confusingly named, actually number of descs
+#define UDMA_AXI_S2M_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT 16
+
 /* Minimum descriptor burst size when prefetch FIFO level is above the descriptor prefetch threshold
  */
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_MASK 0x000000F0
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT 4
+#define UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT 4
 
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT 0
+#define UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT 0
 
 /* Descriptor fetch threshold.
  * Used as a threshold to determine the allowed minimum descriptor burst size.
@@ -180,6 +195,7 @@ struct udma_m2s_regs_v4 {
  */
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_PREF_THR_MASK 0x0000FF00
 #define UDMA_M2S_RD_DESC_PREF_CFG_3_PREF_THR_SHIFT 8
+#define UDMA_S2M_RD_DESC_PREF_CFG_3_PREF_THR_SHIFT 8
 
 /* Maximum number of data beats in the data read FIFO.
  * Defined based on data FIFO size. (default FIFO size 16KB - 512 beats) (V4)
@@ -266,7 +282,15 @@ struct udma_m2s_regs_v4 {
 #define UDMA_M2S_Q_SW_CTRL_RST_Q (1 << 8)
 
 struct udma_axi_s2m {
-	u32 reserved0[9];
+	u32 data_wr_cfg_1;
+	u32 data_wr_cfg_2;
+	u32 desc_rd_cfg_4;
+	u32 desc_rd_cfg_5;
+	u32 comp_wr_cfg_1;
+	u32 comp_wr_cfg_2;
+	u32 data_wr_cfg;
+	u32 desc_rd_cfg_3;
+	u32 desc_wr_cfg_1;	
 	/* [0x24] AXI outstanding read configuration */
 	u32 ostand_cfg_rd;
 	/* [0x28] AXI outstanding write configuration */

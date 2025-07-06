@@ -8,6 +8,7 @@
 #include <linux/string.h>
 
 #include "udma.h"
+#include "../neuron_arch.h"
 
 /* Note on terminology:
  * for historical reasons the code uses both m2s/s2m and Tx/Rx terminology
@@ -98,23 +99,22 @@ static void sdma_m2s_set_write_barrier(uint32_t *meta_ctrl)
 }
 
 /* set maximum number descriptors per one DMA packet */
-static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
+static int udma_set_max_descs_and_prefetch(struct udma *udma, u8 max_descs)
 {
+	// Due to DGE bug on V3 (https://tiny.amazon.com/tfw2hept)
+	// Min burst must equal Max burst, which is 8
+
 	u32 pref_thr = max_descs;
-	u32 min_burst_above_thr = 4;
+	const static u32 min_burst_above_thr = 8;
+	const static u32 max_burst = 8;
+	const static u32 always_break_on_max_boundary = 1;
 	u32 value;
-	if (max_descs == 0 || max_descs > UDMA_M2S_MAX_ALLOWED_DESCS_PER_PACKET_V4) {
+	// max_descs is a large number (currently >= 64) make sure it's so
+	// and configure min/max prefetch to always be 8
+	if (max_descs < 8 || max_descs > UDMA_M2S_MAX_ALLOWED_DESCS_PER_PACKET_V4) {
 		pr_err("invalid number of descriptors %d(max %d)\n", max_descs,
 		       UDMA_M2S_MAX_ALLOWED_DESCS_PER_PACKET_V4);
 		return -1;
-	}
-
-	/* increase min_burst_above_thr so larger burst can be used to fetch descriptors */
-	if (pref_thr >= 8) {
-		min_burst_above_thr = 8;
-	} else {
-		/* don't set prefetch threshold too low so we can have the min_burst_above_thr >= 4 */
-		pref_thr = 4;
 	}
 
 	value = (max_descs << UDMA_M2S_RD_DESC_PREF_CFG_2_MAX_DESC_PER_PKT_SHIFT) |
@@ -126,6 +126,22 @@ static int udma_m2s_max_descs_set(struct udma *udma, u8 max_descs)
 		(1 << UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT);
 	reg_write32(&udma->udma_regs_m2s->m2s_rd.desc_pref_cfg_3, value);
 
+	// likely harmless, but just in case, keep the old V1 behavior where 
+	// we did not change default for s2m.  V1 support is on the way out,
+	// once it's deprecated just remove this comment and the "if"
+	if (narch_get_arch() != NEURON_ARCH_V1) {
+		value = (pref_thr << UDMA_S2M_RD_DESC_PREF_CFG_3_PREF_THR_SHIFT) |
+			(min_burst_above_thr << UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT) |
+			(1 << UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT);
+		reg_write32(&udma->udma_regs_s2m->s2m_rd.desc_pref_cfg_3, value);
+		// configure max_burst for both m2s and s2m
+		value = (max_burst << UDMA_AXI_M2S_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT) |
+			(always_break_on_max_boundary << UDMA_AXI_M2S_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT);
+		reg_write32(&udma->udma_regs_m2s->axi_m2s.desc_rd_cfg_3, value);
+		value = (max_burst << UDMA_AXI_S2M_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT) |
+			(always_break_on_max_boundary << UDMA_AXI_S2M_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT);
+		reg_write32(&udma->udma_regs_s2m->axi_s2m.desc_rd_cfg_3, value);
+	}
 	return 0;
 }
 
@@ -242,7 +258,7 @@ int udma_m2m_init_engine(struct udma *udma, void __iomem *regs_base, int num_que
 	}
 
 	/* set packet size to defined MAX. */
-	return udma_m2s_max_descs_set(udma, max_desc_per_packet);
+	return udma_set_max_descs_and_prefetch(udma, max_desc_per_packet);
 }
 
 /* build one m2s (TX) descriptor */

@@ -1265,9 +1265,10 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
  *           - Version 8 of the runtime needs Neuron Core remapping support.
  *           - Version 9 of the runtime requres seng swap support and dieflip.
  *           - Version 10 of the runtime requres split miscram region for model stop data
+ *           - Version 11 - fix for hwdge caused DMA abort
  */
 #define V3_RT_MIN_COMPATIBLE_VERSION 10
-#define V3_RT_MAX_COMPATIBLE_VERSION 10
+#define V3_RT_MAX_COMPATIBLE_VERSION 11
 /**
  * ncdev_compatible_version() - fill in the compatible version of the RT with the current driver version
  * 
