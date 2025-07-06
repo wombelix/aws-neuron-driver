@@ -31,7 +31,6 @@ tasks:
         go version
         go env
 
-        export GIT_SSH_COMMAND="ssh -i ${SRHT_GIT_SSH_KEY}"
         git clone https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source
 
         cd aws-neuron-driver-publish-source
@@ -48,6 +47,25 @@ tasks:
         # Workaround, git@ (ssh) in sources seem to get ignored when triggered by git.sr.ht
         git remote remove origin
         git remote add origin git@git.sr.ht:~wombelix/aws-neuron-driver
+
+        # Setup known SSH host keys for git.sr.ht
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        cat >> ~/.ssh/known_hosts << 'EOF'
+        # sr.ht SSH host keys
+        # https://man.sr.ht/git.sr.ht/#ssh-host-keys
+        #
+        # 2025-07-06 (match)
+        # ssh-keygen -lf <(ssh-keyscan git.sr.ht 2>/dev/null)
+        #   2048 SHA256:rvz/I0S1T/9If9+/CU0HDTF8AV4MPu5Gkkxsb7vUTH4 git.sr.ht (RSA)
+        #   256 SHA256:1nUUjsHH0qwfjI3dYFWlXTjPUP/Un1oo6wfu9YL8tCQ git.sr.ht (ECDSA)
+        #   256 SHA256:WXXNZu0YyoE3KBl5qh4GsnF1vR0NeEPYJAiPME+P09g git.sr.ht (ED25519)
+        git.sr.ht ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDZ+l/lvYmaeOAPeijHL8d4794Am0MOvmXPyvHTtrqvgmvCJB8pen/qkQX2S1fgl9VkMGSNxbp7NF7HmKgs5ajTGV9mB5A5zq+161lcp5+f1qmn3Dp1MWKp/AzejWXKW+dwPBd3kkudDBA1fa3uK6g1gK5nLw3qcuv/V4emX9zv3P2ZNlq9XRvBxGY2KzaCyCXVkL48RVTTJJnYbVdRuq8/jQkDRA8lHvGvKI+jqnljmZi2aIrK9OGT2gkCtfyTw2GvNDV6aZ0bEza7nDLU/I+xmByAOO79R1Uk4EYCvSc1WXDZqhiuO2sZRmVxa0pQSBDn1DB3rpvqPYW+UvKB3SOz
+        git.sr.ht ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBCj6y+cJlqK3BHZRLZuM+KP2zGPrh4H66DacfliU1E2DHAd1GGwF4g1jwu3L8gOZUTIvUptqWTkmglpYhFp4Iy4=
+        git.sr.ht ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMZvRd4EtM7R+IHVMWmDkVU3VLQTSwQDSAvW0t2Tkj60
+        EOF
+
+        export GIT_SSH_COMMAND="ssh -i ${SRHT_GIT_SSH_KEY}"
 
         git push -o skip-ci origin main
         git push -o skip-ci origin --tags
