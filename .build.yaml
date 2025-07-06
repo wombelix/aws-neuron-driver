@@ -5,7 +5,7 @@
 image: debian/stable
 
 sources:
-  - https://git.sr.ht/~wombelix/aws-neuron-driver
+  - git@git.sr.ht:~wombelix/aws-neuron-driver
   - https://git.sr.ht/~wombelix/build-helper-scripts
 
 secrets:
