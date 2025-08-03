@@ -194,6 +194,8 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		pci_info(dev, "Can't allocate memory for neuron_device\n");
 		goto fail_alloc_nd_mem;
 	}
+
+    nmetric_init_driver_metrics(nd);
 	
 	if (neuron_log_init(nd)) {
 		pci_warn(dev, "Warning: Can't allocate memory for neuron log\n");

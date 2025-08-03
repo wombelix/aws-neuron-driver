@@ -31,7 +31,7 @@ int neuron_dhal_init(unsigned int pci_device_id) {
 
     ndhal->arch = narch_get_arch();
     ndhal->pci_device_id = pci_device_id;
-
+    ret = ndhal_register_funcs_vc();
     switch (ndhal->arch) {
         case NEURON_ARCH_V1:
             ret = ndhal_register_funcs_v1();

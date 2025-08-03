@@ -36,6 +36,15 @@ enum neuron_pod_ctrl_req {
 	NEURON_NPE_POD_CTRL_REQ_POD = 0,  		 // request pod state to pod (on-demand election request)
 	NEURON_NPE_POD_CTRL_REQ_SINGLE_NODE = 1, // request pod state to single node
 	NEURON_NPE_POD_CTRL_REQ_KILL = 2,		 // request to kill the election
+	NEURON_NPE_POD_CTRL_SET_MODE = 3,		 // request to ultraserver mode
+};
+
+enum neuron_ultraserver_mode {
+	NEURON_ULTRASERVER_MODE_UNSET = 0,  	 // no configuration set
+	NEURON_ULTRASERVER_MODE_X4 = 1,  		 // 4 node US configuration
+	NEURON_ULTRASERVER_MODE_X2H = 2,  		 // 2 node US configuration using horizontal links 
+	NEURON_ULTRASERVER_MODE_X2V = 3,  		 // 2 node US configuration using vertical links 
+	NEURON_ULTRASERVER_MODE_X1 = 4,  		 // 1 node US configuration (standalone)
 };
 
 #define NEURON_NC_MAP_DEVICE (0xffffffff)
@@ -305,7 +314,7 @@ enum {
 // Additional NC storage
 // | NDS_EXT_NC_COUNTER_COUNT | ... | NDS_EXT_NC_COUNTER_COUNT | (x NDS_MAX_NEURONCORE_COUNT) - this will only store the 'overflow' from the original counters
 // | NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_COUNT | ... (x NDS_EXT_MAX_NEURONCORE_COUNT)   - this will store complete data for additional NCs (up to a max of 16)
-#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 55
+#define NDS_EXT_NC_COUNTER_ADDED_RESERVED 54
 // Index of NC counter extensions start at NDS_NC_COUNTER_COUNT not at 0
 enum {
 	NDS_EXT_NC_COUNTER_HW_ERR_COLLECTIVES = NDS_NC_COUNTER_COUNT,
@@ -317,6 +326,7 @@ enum {
 	NDS_EXT_NC_COUNTER_ERR_SW_EVENT_ERROR,
 	NDS_EXT_NC_COUNTER_ERR_SW_PSUM_COLLISION,
 	NDS_EXT_NC_COUNTER_ERR_SW_SEQUENCER_FATAL,
+	NDS_EXT_NC_COUNTER_HW_ERR_REPAIRABLE_HBM_UE,
 	NDS_EXT_NC_COUNTER_LAST,
 	NDS_EXT_NC_COUNTER_COUNT =  NDS_EXT_NC_COUNTER_LAST - NDS_NC_COUNTER_COUNT + NDS_EXT_NC_COUNTER_ADDED_RESERVED
 };

@@ -31,16 +31,20 @@ struct ndhal_address_map {
 
 	// counts
 	int nc_per_device;
+	unsigned dice_per_device;
 	uint32_t dev_nc_map;
 	uint64_t semaphore_count;
 	uint64_t event_count;
 	uint32_t ts_per_device;
 	int dma_eng_per_nc;
 	int dma_eng_per_nd;
-	int dram_channels; 
+	int dram_channels;
 };
 
 struct ndhal_reset {
+    uint64_t reset_poll_interval;
+    uint64_t reset_tpb_initial_poll_delay;
+    uint64_t reset_device_initial_poll_delay;
 	uint64_t initiate_max_wait_time;
     uint32_t retry_count;
     int (*nr_initiate_reset) (struct neuron_device *nd, uint32_t nc_map);
@@ -113,6 +117,16 @@ struct ndhal_sysfs_metrics {
                                        struct nsysfsmetric_node *stats_node,
                                        int ecc_attrs_info_tbl_cnt,
                                        const nsysfsmetric_attr_info_t *attr_info_tbl);
+
+    void (*nsysfsmetric_get_hbm_error_count) (struct neuron_device *nd,
+                                                 bool repairable,
+                                                 uint32_t *err_count);
+
+    int (*nsysfsmetric_add_tensor_engine_node) (struct nsysfsmetric_metrics *metrics,
+                                                struct nsysfsmetric_node *stats_node,
+                                                int nc_id,
+                                                int tensor_engine_attrs_info_tbl_cnt,
+                                                const nsysfsmetric_attr_info_t *tensor_engine_attr_info_tbl);
 };
 
 struct ndhal_pci {
@@ -163,11 +177,28 @@ struct ndhal_ndma {
 
 struct ndhal_npe {
 	void (*npe_notify_mark)(int mark_cnt, bool mark);
-	int (*npe_pod_info)( u8 *pod_type, u8 *pod_id, u8 *pod_sz);
-	int (*npe_pod_status)( u32 *pod_state, u8 *node_id);
-	int (*npe_pod_ctrl)( struct neuron_device *nd, u32 pod_ctrl, u32 timeout, u32 *pod_state);
-	ssize_t (*npe_class_node_id_show_data)(char *buf);
-	ssize_t (*npe_class_server_id_show_data)(char *buf);
+	int (*npe_pod_info)( u8 *pod_type, u8 *pod_id, u8 *pod_sz, enum neuron_ultraserver_mode *mode, u32 *modes_supported);
+	int (*npe_pod_status)( u32 *pod_state, s8 *node_id);
+	int (*npe_pod_ctrl)( struct neuron_device *nd, u32 pod_ctrl, enum neuron_ultraserver_mode mode, u32 timeout, u32 *pod_state);
+	ssize_t (*npe_class_node_id_show_data)(char *buf, u32 sz);
+	ssize_t (*npe_class_server_id_show_data)(char *buf, u32 sz);
+	ssize_t (*npe_class_ultraserver_mode_show_data)(char *buf);
+};
+
+struct ndhal_tpb {
+    int pe_xbus_count;
+    int pe_row_grp_count;
+    int pe_col_grp_count;
+    u64 pe_perf_reg_grp_size;
+    u64 *pe_mm_cntr_offsets;
+    u64 *pe_wl_cntr_offsets;
+    u64 *pe_fast_wl_cntr_offsets;
+    u64 *pe_idle_cntr_offsets;
+    u64 (*pe_get_row_grp_activity_counter_offset)(u64 base, int row_grp_id);
+    int (*pe_get_counter_val)(void __iomem *bar0, u64 lsb_offset, u64 *val);
+    int (*pe_get_fast_wl_cycle_cnt)(struct neuron_device *nd, int nc_id, int row_grp_id, u64 *val);
+    int (*pe_get_aggregated_wl_cycle_cnt)(struct neuron_device *nd, int nc_id, int row_grp_id, u64 *val);
+    int (*pe_format_activity_stats)(struct neuron_device *nd, int nc_id, char buffer[], unsigned int bufflen);
 };
 
 struct neuron_dhal {
@@ -190,6 +221,7 @@ struct neuron_dhal {
     struct ndhal_udma ndhal_udma;
     struct ndhal_ndma ndhal_ndma;
 	struct ndhal_npe ndhal_npe;
+    struct ndhal_tpb ndhal_tpb;
     void (*ndhal_ext_cleanup) (void);
 };
 
@@ -225,6 +257,7 @@ void neuron_dhal_free(void);
  * 
  * @return int 0 on success, negative for failures
  */
+int ndhal_register_funcs_vc(void);
 int ndhal_register_funcs_v1(void);
 int ndhal_register_funcs_v2(void);
 int ndhal_register_funcs_v3(void);

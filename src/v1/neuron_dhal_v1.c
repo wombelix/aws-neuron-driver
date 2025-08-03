@@ -18,7 +18,11 @@
 #include "putils.h"
 #include "tdma.h"
 
-#define V1_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 120)
+#define V1_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS         (1000 * 120)
+#define V1_NR_RESET_POLL_INTERVAL                       500
+#define V1_NR_DEVICE_RESET_INITIAL_POLL_DELAY           7000
+#define V1_NR_TPB_RESET_INITIAL_POLL_DELAY              3000
+
 
 struct neuron_dm_special_mmap_ent dm_mmap_special_v1[] = {
 	{NEURON_DM_BLOCK_TPB,   0, NEURON_DM_RESOURCE_SEMAPHORE, 0, 0, 0},
@@ -664,6 +668,38 @@ static int nsysfsmetric_add_ecc_nodes_v1(struct nsysfsmetric_metrics *metrics,
 	return 0;
 }
 
+/**
+ * nsysfsmetric_get_hbm_error_count_v1() - check hbm repairable/unrepairable error count
+ *
+ * @param nd - neuron device
+ * @param repairable - indicates checking for repairable/unrepairable error counts
+ * @param err_count - error count returns
+ */
+static void nsysfsmetric_get_hbm_error_count_v1(struct neuron_device *nd,
+                                                 bool repairable,
+                                                 uint32_t *err_count)
+{
+    *err_count = 0;
+}
+
+/**
+ * nsysfsmetric_add_tensor_engine_node() - add neuron{0, 1, ...}/neuron_core{0,1, ...}/stats/tensor_engine node to sysfs directory
+ *
+ * @param metrics: the sysfs metrics structure
+ * @param stats_node: the sysfs node structure of the nc stats directory
+ * @param ecc_attrs_info_tbl_cnt: number of the teng attributes
+ * @param attr_info_tbl: the teng attributes as an array
+ * @return int 0 on success; otherwise on failure
+ */
+static int nsysfsmetric_add_tensor_engine_node_v1(struct nsysfsmetric_metrics *metrics,
+				struct nsysfsmetric_node *stats_node,
+				int nc_id,
+				int tensor_engine_attrs_info_tbl_cnt,
+				const nsysfsmetric_attr_info_t *tensor_engine_attrs_info_tbl)
+{
+	// teng pe array stats are not supported by sysfs for V1.
+	return 0;
+}
 
 /* PCI Functions */
 /**
@@ -1118,15 +1154,19 @@ static void npe_notify_mark_v1(int mark_cnt, bool mark)
 /**
  * npe_pod_info() - return information about the pod the instance belongs to
  *
- * @param pod_type - type of pod the instance belongs to or NONE if not part of a pod
- * @param pod_id   - unique id of the pod
- * @param pod_sz   - size of the pod.  0 if not a pod
+ * @param pod_type 			- type of pod the instance belongs to or NONE if not part of a pod
+ * @param pod_id   			- unique id of the pod
+ * @param pod_sz   			- size of the pod.  0 if not a pod
+ * @param mode     			- current operating mode
+ * @param modes_supported	- supported operating modes
  *
  */
-static int npe_pod_info_v1(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
+static int npe_pod_info_v1(u8 *pod_type, u8 *pod_id, u8 *pod_sz, enum neuron_ultraserver_mode *mode, u32 *modes_supported)
 {
 	*pod_type = NEURON_POD_TYPE_NONE;
 	*pod_sz = 0;
+	*mode = NEURON_ULTRASERVER_MODE_UNSET; 
+	*modes_supported = 0;
 	return 0;
 }
 
@@ -1137,7 +1177,7 @@ static int npe_pod_info_v1(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
  * @param node_id   - node id within the pod
  *
  */ 
-static int npe_pod_status_v1(u32 *pod_state, u8 *node_id)
+static int npe_pod_status_v1(u32 *pod_state, s8 *node_id)
 {
 	*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
 	*node_id = -1;
@@ -1149,11 +1189,12 @@ static int npe_pod_status_v1(u32 *pod_state, u8 *node_id)
  *
  * @nd:    neuron device
  * @param pod_ctrl  - control operation to perform
+ * @param mode - requested operating mode for mode control
  * @param timeout - timeout for the control operation
  * @param pod_state - state/outcome of the pod's election process
  *
  */
-static int npe_pod_ctrl_v1(struct neuron_device *nd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
+static int npe_pod_ctrl_v1(struct neuron_device *nd, u32 pod_ctrl, enum neuron_ultraserver_mode mode, u32 timeout, u32 *pod_state)
 {
 	*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
 	return 0;
@@ -1163,22 +1204,35 @@ static int npe_pod_ctrl_v1(struct neuron_device *nd, u32 pod_ctrl, u32 timeout, 
  * npe_class_node_id_show_data() - return sysfs class node_id
  *
  * @buf - sysfs buffer
+ * @sz - size of ultraserver config to show data for 
  *
  */
-static ssize_t npe_class_node_id_show_data_v1(char *buf)
+static ssize_t npe_class_node_id_show_data_v1(char *buf, u32 sz)
 {
-    return dhal_sysfs_emit(buf, "-1\n");
+   return dhal_sysfs_emit(buf, "-1\n");
 }
 
 /**
  * npe_class_server_id_show_data() - return sysfs class node_id
  *
  * @buf - sysfs buffer
+ * @sz - size of ultraserver config to show data for 
  *
  */
-static 	ssize_t npe_class_server_id_show_data_v1(char *buf)
+static ssize_t npe_class_server_id_show_data_v1(char *buf, u32 sz)
 {
     return dhal_sysfs_emit(buf, "0000000000000000\n");
+}
+
+/**
+ * npe_class_ultraserver_mode_show_data() - return sysfs class ultraserver_mode
+ *
+ * @buf - sysfs buffer
+ *
+ */
+static ssize_t npe_class_ultraserver_mode_show_data_v1(char *buf)
+{
+    return dhal_sysfs_emit(buf, "\n");
 }
 
 /**
@@ -1225,12 +1279,16 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_address_map.mmap_nc_size = V1_MMAP_NC_SIZE;
 	ndhal->ndhal_address_map.nc_per_device = V1_NC_PER_DEVICE;
 	ndhal->ndhal_address_map.dev_nc_map = (1 << V1_NC_PER_DEVICE) - 1;
+	ndhal->ndhal_address_map.dice_per_device = V1_NUM_DIE_PER_DEVICE;
 	ndhal->ndhal_address_map.semaphore_count = V1_SEMAPHORE_COUNT;
 	ndhal->ndhal_address_map.event_count = V1_EVENTS_COUNT;
 	ndhal->ndhal_address_map.ts_per_device = 0;
 	ndhal->ndhal_address_map.dma_eng_per_nd = V1_NUM_DMA_ENG_PER_DEVICE;
 	ndhal->ndhal_address_map.dma_eng_per_nc = V1_DMA_ENG_PER_NC;
 	ndhal->ndhal_address_map.dram_channels = V1_MAX_DRAM_CHANNELS;
+	ndhal->ndhal_reset.reset_poll_interval = V1_NR_RESET_POLL_INTERVAL;
+	ndhal->ndhal_reset.reset_device_initial_poll_delay = V1_NR_DEVICE_RESET_INITIAL_POLL_DELAY;
+	ndhal->ndhal_reset.reset_tpb_initial_poll_delay = V1_NR_TPB_RESET_INITIAL_POLL_DELAY;
 	ndhal->ndhal_reset.initiate_max_wait_time = V1_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
 	ndhal->ndhal_reset.nr_post_reset_config = nr_post_reset_config_v1;
@@ -1262,6 +1320,8 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt = root_info_node_attrs_info_tbl_cnt_v1;
 	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl = root_info_node_attrs_info_tbl_v1;
 	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_ecc_nodes = nsysfsmetric_add_ecc_nodes_v1;
+	ndhal->ndhal_sysfs_metrics.nsysfsmetric_get_hbm_error_count = nsysfsmetric_get_hbm_error_count_v1;
+	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_tensor_engine_node = nsysfsmetric_add_tensor_engine_node_v1;
 	ndhal->ndhal_pci.apb_bar = 0;
 	ndhal->ndhal_pci.axi_bar = 2;
 	ndhal->ndhal_pci.dram_bar = 4;
@@ -1293,6 +1353,7 @@ int ndhal_register_funcs_v1(void) {
 	ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v1;
 	ndhal->ndhal_npe.npe_class_node_id_show_data = npe_class_node_id_show_data_v1;
 	ndhal->ndhal_npe.npe_class_server_id_show_data = npe_class_server_id_show_data_v1;
+	ndhal->ndhal_npe.npe_class_ultraserver_mode_show_data = npe_class_ultraserver_mode_show_data_v1;
 	ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v1;
 
 	if (narch_is_qemu()) {

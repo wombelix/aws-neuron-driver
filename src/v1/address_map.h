@@ -70,6 +70,9 @@
 
 #define V1_MMAP_NC_SIZE 0x00000004000000ull
 
+// Number of dice per chip
+#define V1_NUM_DIE_PER_DEVICE 1
+
 // Number of Neuron Core per device
 #define V1_NC_PER_DEVICE 4
 // Number of DMA engines per NC

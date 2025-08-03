@@ -23,11 +23,18 @@
 #define NMETRIC_TYPE_FW_IO_ERR    0x3
 #define NMETRIC_TYPE_BITMAP       0x4
 #define NMETRIC_TYPE_CONSTANT_U64 0x5
+#define NMETRIC_TYPE_DRIVER       0x6
 
 #define NMETRIC_FLAG_VERS_ALLOW_TYPE	(1)
 
 #define NMETRIC_CONST_U64_FLAG_SKIP_ZERO (0x1ull << 0)
 #define NMETRIC_CONST_U64_FLAG_PREFER_FREED (0x1ull << 1)
+
+enum driver_metrics_idx {
+	NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS = 0,
+	NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS = 1,
+	NMETRIC_DRIVER_METRICS_IDX_COUNT = 2,
+};
 
 // Sadly, the 3 #defines below need to be updated when adding new metrics to nmetric_defs
 // Number of metrics of type NMETRIC_TYPE_VERSION
@@ -37,13 +44,16 @@
 #define NMETRIC_CONSTANTS_COUNT	2
 
 // Number of metrics of type NMETRIC_TYPE_COUNTER + the special case (type NMETRIC_TYPE_FW_IO_ERR)
-#define NMETRIC_COUNTER_COUNT	28
+#define NMETRIC_COUNTER_COUNT	29
 
 // Number of metrics of type NMETRIC_TYPE_BITMAP
 #define NMETRIC_BITMAP_COUNT 1
 
 // Number of metrics of type NMETRIC_CONSTANT_U64
 #define NMETRIC_CONSTANT_U64_COUNT 1
+
+// Number of metrics of type NMETRIC_DRIVER
+#define NMETRIC_DRIVER_METRICS_COUNT NMETRIC_DRIVER_METRICS_IDX_COUNT
 
 typedef struct {
 	u8 index;	// metric specific index
@@ -63,6 +73,7 @@ typedef struct {
 #define NMETRIC_COUNTER_DEF(idx, tick, cw_id, ds_id)         NMETRIC_DEF(idx, NMETRIC_TYPE_COUNTER, 1, tick, cw_id, ds_id, 0)
 #define NMETRIC_BITMAP_DEF(idx, tick, cw_id, ds_id)          NMETRIC_DEF(idx, NMETRIC_TYPE_BITMAP, 1, tick, cw_id, ds_id, 0)
 #define NMETRIC_CONSTANT_U64(idx, tick, cw_id, ds_id, flags) NMETRIC_DEF(idx, NMETRIC_TYPE_CONSTANT_U64, 1, tick, cw_id, ds_id, flags)
+#define NMETRIC_DRIVER_DEF(idx, tick, cw_id)                 NMETRIC_DEF(idx, NMETRIC_TYPE_DRIVER, 1, tick, cw_id, 0xFF, 0)
 
 struct nmetric_versions {
 	u32 version_usage_count[NEURON_METRICS_VERSION_MAX_CAPACITY];
@@ -80,11 +91,12 @@ struct nmetric_aggregation_thread {
 
 struct neuron_metrics {
 	struct nmetric_versions component_versions[NMETRIC_VERSION_COUNT];
-	u64 ds_freed_feature_bitmap_buf; // stores unsent feature bitmap metrics about to be freed from datastore
-	u64 ds_freed_metrics_buf[NMETRIC_COUNTER_COUNT]; // stores unsent metrics about to be freed from datastore
-	u64 ds_freed_const_u64_buf[NMETRIC_CONSTANT_U64_COUNT]; // stores unsent constant u64 values about to be freed from datastore
-	struct nmetric_aggregation_thread neuron_aggregation; // aggregation thread that periodically aggregates and posts metrics
+	u64 ds_freed_feature_bitmap_buf;						// stores unsent feature bitmap metrics about to be freed from datastore
+	u64 ds_freed_metrics_buf[NMETRIC_COUNTER_COUNT];		// stores unsent metrics about to be freed from datastore
+	u64 ds_freed_const_u64_buf[NMETRIC_CONSTANT_U64_COUNT];	// stores unsent constant u64 values about to be freed from datastore
+	struct nmetric_aggregation_thread neuron_aggregation;	// aggregation thread that periodically aggregates and posts metrics
 	u8 posting_buffer[NEURON_METRICS_MAX_POSTING_BUF_SIZE + 1];
+    u64 driver_metrics[NMETRIC_DRIVER_METRICS_COUNT];		// stores driver internal metrics that is not in datastore
 };
 
 /**
@@ -112,6 +124,13 @@ void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore
  */
 void nmetric_stop_thread(struct neuron_device *nd);
 
+/**
+ * nmetric_init_driver_metrics() - Initializes the driver metrics to 0
+ * 
+ * @param nd - the neuron device
+ */
+void nmetric_init_driver_metrics(struct neuron_device *nd);
+
 /** nmetric_init() - Initializes neuron metric aggregation for the driver
  *
  * @nd: neuron device 
@@ -119,5 +138,13 @@ void nmetric_stop_thread(struct neuron_device *nd);
  * Return: 0 on success, < 0 error code on failure
  */
 int nmetric_init(struct neuron_device *nd);
+
+/**
+ * nmetric_set_max_reset_time_ms() - Set the max TPB or device reset time seen so far.
+ * 
+ * @param cur_reset_time_ms: the current TPB or device reset time in milliseconds.
+ * @param is_device_reset: whether it is TPB or device reset.
+ */
+void nmetric_set_max_reset_time_ms(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset);
 
 #endif

@@ -17,6 +17,7 @@
 
 #include "neuron_power.h"
 #include "neuron_device.h"
+#include "neuron_dhal.h"
 #include "neuron_fw_io.h"
 
 #define NEURON_FW_POWER_MIN_API_VERSION 3 // The minimum API version number in firmware that publishes power utilization
@@ -28,15 +29,19 @@ static bool power_enabled_in_fw = false;
  * npower_init_samples() - initializes the current set of power utilization samples for a device
  *
  * @nd - the neuron device whose stats we are initializing
- * @last_count - the counter value associated with the last power sample read from firmware.
+ * @last_count - the counter value associated with the last power sample read from firmware for each die
  */
-static void npower_init_samples(struct neuron_power_samples *samples, u16 last_count)
+static void npower_init_samples(struct neuron_power_samples *samples, u16 last_count[])
 {
+    unsigned die;
+
 	samples->num_data_points = 0;
 	samples->total_power_util_bips = 0;
 	samples->min_power_bips = NEURON_MAX_POWER_UTIL_BIPS;
 	samples->max_power_bips = NEURON_MIN_POWER_UTIL_BIPS;
-	samples->last_counter = last_count;
+	for (die = 0; die < ndhal->ndhal_address_map.dice_per_device; die++) {
+		samples->last_counter[die] = last_count[die];
+	}
 }
 
 bool npower_enabled_in_fw(struct neuron_device *nd)
@@ -91,10 +96,12 @@ static inline u16 npower_get_sample_num(u32 power_sample)
  *
  * @return: 0 on success, nonzero on failure
  */
-static int npower_store_utilization(struct neuron_device *nd, u16 utilization, u16 current_counter)
+static int npower_store_utilization(struct neuron_device *nd, u16 utilization, u16 current_counter[NEURON_POWER_MAX_DIE])
 {
 	static u64 last_logging_jiffies = 0;
 	static unsigned missed_logging_messages = 0;
+	unsigned die;
+
 	if (utilization > NEURON_MAX_POWER_UTIL_BIPS) {
 		// Bogus power values should never happen.  But if they do, don't spam the logs
 		if (jiffies > last_logging_jiffies + 10 * HZ) {
@@ -116,7 +123,12 @@ static int npower_store_utilization(struct neuron_device *nd, u16 utilization, u
 	if (utilization > nd->power.current_samples.max_power_bips) {
 		nd->power.current_samples.max_power_bips = utilization;
 	}
-	nd->power.current_samples.last_counter = current_counter;
+
+    // Save the set of counters associated with
+	for (die = 0; die < ndhal->ndhal_address_map.dice_per_device; die++) {
+        nd->power.current_samples.last_counter[die] = current_counter[die];
+	}
+
 
 	return 0;
 }
@@ -194,18 +206,29 @@ static void npower_calculate_stats(struct neuron_power_samples *current_samples,
 		new_stats->max_power_bips = NEURON_MIN_POWER_UTIL_BIPS;
 		new_stats->avg_power_bips = NEURON_MIN_POWER_UTIL_BIPS;
 	}
-	memcpy(&new_stats->time_of_sample, curr_time, sizeof(struct timespec64));
+	new_stats->time_of_sample.tv_sec = curr_time->tv_sec;
+	new_stats->time_of_sample.tv_nsec = curr_time->tv_nsec;
 }
 
+/**
+ * npower_copy_stats() - Copy the stats from one location to another.
+ *
+ * @src - the source stats
+ * @dst - the destination stats
+ */
+static void npower_copy_stats(struct neuron_power_stats *src, struct neuron_power_stats *dst)
+{
+    *dst = *src;
+}
 /**
  * npower_aggregate_stats() - take the current set of samples for a period and use them to generate per-period stats
  *l
  * @nd: pointer to the neuron device whose power utilization is to be aggregated into stats
- * curre
+ * @current_fw_counter: the counter value associated with the last power sample read from firmware for each die
  *
  */
 static void npower_aggregate_stats(struct neuron_device *nd, struct timespec64 *curr_time,
-                                   u16 current_fw_counter)
+                                   u16 current_fw_counter[])
 {
         // Calculate new stats based on the current set of samples.  Note that we do all calculation
         // before we take the lock around the stats in order to minimize contention.
@@ -220,7 +243,7 @@ static void npower_aggregate_stats(struct neuron_device *nd, struct timespec64 *
 
         // Write the new stats into the set that's stored in the neuron_device, then free the lock
         // and be done.
-        memcpy(&nd->power.current_stats, &new_stats, sizeof(new_stats));
+        npower_copy_stats(&new_stats, &nd->power.current_stats);
         npower_release_lock(nd);
 }
 
@@ -235,23 +258,49 @@ static bool npower_in_simulated_env(void)
         return narch_is_qemu() || narch_is_emu();
 }
 
+static void npower_select_power(struct neuron_device *nd, u32 power_samples[NEURON_POWER_MAX_DIE])
+{
+        bool duplicate_read = false;
+        u16 largest_power = 0;
+        u16 current_counters[NEURON_POWER_MAX_DIE] = { 0 };
+        u16 current_power = 0;
+        unsigned die;
+
+	    for (die = 0; die < ndhal->ndhal_address_map.dice_per_device; die++) {
+		        current_power = npower_get_utilization(power_samples[die]);
+		        current_counters[die] = npower_get_sample_num(power_samples[die]);
+
+		        if (current_counters[die] == nd->power.current_samples.last_counter[die]) {
+			             duplicate_read = true;
+		        } else if (current_power > largest_power) {
+			            largest_power = current_power;
+		        }
+	    }
+
+	     // If we've seen a new reading for all dice, store the largest power value we've seen.
+	    if (!duplicate_read) {
+		    npower_store_utilization(nd, largest_power, current_counters);
+	    }
+}
+
 /**
  * npower_sample_utilization() - read power utilization from firmware and, if there is new
  *                                      data found, store it.
  *
- * @nd: pointer to the neuron device whose power utilization is to be sampled
+ * @dev: pointer to the neuron device whose power utilization is to be sampled
  *
   * @return: 0 on success, nonzero on failure
  */
 int npower_sample_utilization(void *dev)
 {
-        uint32_t power_sample = 0;
-        u16 current_counter = 0;
-        u16 current_power = 0;
+        uint32_t power_samples[NEURON_POWER_MAX_DIE] = { 0 };
+
         static unsigned long long last_log_time = 0ULL;
         static unsigned skipped_log_msgs = 0;
         struct timespec64 curr_time = { 0 };
-        int ret = -1;
+        int ret[NEURON_POWER_MAX_DIE] = { -1 };
+        unsigned die;
+        bool failed_read = false;
 
         struct neuron_device *nd = (struct neuron_device *)dev;
 
@@ -259,7 +308,7 @@ int npower_sample_utilization(void *dev)
         // to the firmware at this point, even just to read the firmware API version.  So there's not much that we
         // can do.  Similarly, just quit if we're running in emulation/simulation rather than on real silicon.
         if ((nd->device_state != NEURON_DEVICE_STATE_READY) || npower_in_simulated_env()) {
-            return ret;
+            return -1;
         }
 
         // Only attempt to read power utilization if we have a firmware version that supports it.
@@ -268,29 +317,25 @@ int npower_sample_utilization(void *dev)
         if (npower_enabled_in_fw(nd)) {
                 // Read power utilization from MISC RAM.  If we succeed, break it up into its
                 // component parts so we can do calculations on the power.
-                ret = fw_io_device_power_read(nd->npdev.bar0, &power_sample);
-                if (ret) {
-                        // Log an error here, but don't spam if it's a continuous condition
-                        unsigned long long deltat = jiffies - last_log_time;
+                for (die = 0; die <  ndhal->ndhal_address_map.dice_per_device; die++) {
+                    ret[die] = fw_io_device_power_read(nd->npdev.bar0, &power_samples[die], die);
 
-                        if (deltat >= 60 * HZ) {
-                                pr_err("sysfs failed to read power utilization data from FWIO, skipped %u log messages",
-                                       skipped_log_msgs);
-                                last_log_time = jiffies;
-                                skipped_log_msgs = 0;
-                        } else {
-                                skipped_log_msgs++;
-                        }
-                } else {
-                        // Break sample up into power utilization value and counter
-                        current_power = npower_get_utilization(power_sample);
-                        current_counter = npower_get_sample_num(power_sample);
-                        // If counter has changed since last read, store the new data point.  If not, that's normal,
-                        // we just don't have new data to store.
-                        if (nd->power.current_samples.last_counter != current_counter) {
-                                npower_store_utilization(nd, current_power, current_counter);
-                        }
+                    if (ret[die]) {
+                            failed_read = true; // Note for later when we determine whether we have data to store
+
+                            // Log an error here, but don't spam if it's a continuous condition
+                            unsigned long long deltat = jiffies - last_log_time;
+                            if (deltat >= 60 * HZ) {
+                                    pr_err("sysfs failed to read power utilization data from FWIO, skipped %u log messages",
+                                           skipped_log_msgs);
+                                    last_log_time = jiffies;
+                                    skipped_log_msgs = 0;
+                            } else {
+                                    skipped_log_msgs++;
+                            }
+                    }
                 }
+
         } else {
                 static u64 last_log_jiffies = 0;
                 // Log at most once per <n> minutes if we have firmware that doesn't support power measurement
@@ -300,15 +345,21 @@ int npower_sample_utilization(void *dev)
                 }
         }
 
+        // If we were able to read the power data from all dice on the neuron device, select the current power
+        // utilization value from the values we read and store it
+        if (!failed_read) {
+                npower_select_power(nd, power_samples);
+        }
+
         // If we've passed over a minute boundary since we last aggregated stats, do so now.
         // Note that we do this whether or not there was an error reading stats - we need to update
         // the stats to indicate that there was an error.
         ktime_get_real_ts64(&curr_time);
         if (npower_passed_minute_boundary(nd, &curr_time)) {
-                npower_aggregate_stats(nd, &curr_time, current_counter);
+                npower_aggregate_stats(nd, &curr_time, nd->power.current_samples.last_counter);
         }
 
-        return ret;
+        return (failed_read == true);
 }
 
 /**
@@ -325,7 +376,7 @@ static void npower_get_stats(void *dev, struct neuron_power_stats *stats)
         struct neuron_device *nd = (struct neuron_device *)dev;
 
         npower_acquire_lock(nd);
-        memcpy(stats, &nd->power.current_stats, sizeof(struct neuron_power_stats));
+        npower_copy_stats(&nd->power.current_stats, stats);
         npower_release_lock(nd);
 }
 
@@ -368,6 +419,8 @@ int npower_format_stats(void *dev, char buffer[], unsigned bufflen)
 
 int npower_init_stats(struct neuron_device *nd)
 {
+        u16 zero_counter_array[NEURON_POWER_MAX_DIE] = { 0 };
+
         if (!nd) {
                 pr_err("npower_init_power_stats: nd is NULL\n");
                 return -1;
@@ -376,7 +429,7 @@ int npower_init_stats(struct neuron_device *nd)
         // Initialize the samples to base value, then set the stats' status to "no data".  This will prevent
         // us from serving up any stats if an application reads from sysfs before we have gotten
         // enough data points to aggregate some.
-        npower_init_samples(&nd->power.current_samples, 0);
+        npower_init_samples(&nd->power.current_samples, zero_counter_array);
 
         npower_acquire_lock(nd);
         memset(&nd->power.current_stats, 0, sizeof(struct neuron_power_stats));

@@ -63,6 +63,7 @@ static int udma_m2s_packet_size_cfg_set(struct udma *udma, struct udma_m2s_pkt_l
 /* set default configuration of one DMA engine */
 static int udma_set_defaults(struct udma *udma)
 {
+	int ret = 0;
 	struct udma_gen_ex_regs __iomem *gen_ex_regs;
 	unsigned int i;
 	u32 value;
@@ -148,7 +149,10 @@ static int udma_set_defaults(struct udma *udma)
 		// V1 requires this fix to avoid race-condition when resetting the NC instruction buffers
 		value = 0x1ul;
 	} else {
-		reg_read32(&gen_regs->spare_reg.zeroes0, &value);
+		ret = reg_read32(&gen_regs->spare_reg.zeroes0, &value);
+		if (ret) {
+			return ret;
+		}
 		value &= (~0x1ul);
  	}
 	reg_write32(&gen_regs->spare_reg.zeroes0, value);

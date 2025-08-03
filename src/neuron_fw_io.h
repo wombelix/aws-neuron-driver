@@ -7,8 +7,6 @@
 
 #include <linux/types.h>
 
-extern int use_rr;
-
 struct fw_io_request {
 	u8 sequence_number; // sequence number to be copied in the next response.
 	u8 command_id; // command to hw.
@@ -70,7 +68,12 @@ enum {
 	//     which we are sampling faster than the firmware is providing new data
 	// Note that this is expressed as a single offset, as we would prefer to read it all in one go for both
 	// performance and atomicity.
-	FW_IO_REG_POWER_UTIL_OFFSET = 0x54, // 21 * 4 bytes
+	//
+	// All devices will have the D0 offset.  Devices with two dice will also have the D1 offset.
+	FW_IO_REG_POWER_UTIL_D0_OFFSET = 0x54, // 21 * 4 bytes
+	FW_IO_REG_POWER_UTIL_D1_OFFSET = 0x58, // 22 * 4 bytes
+
+	FW_IO_REG_HBM_REPAIR_STATE_OFFSET = 0x64, // 25 * 4 bytes
 
 	FW_IO_REG_RUNTIME_RESERVED0 = 0xC0, // 0xC0 to 0xF0
 
@@ -257,7 +260,7 @@ int fw_io_device_id_read(void *bar0, u32 *device_id);
  * @param power  - output power, expressed as a percentage of maximum, in basis points (e.g. 0 - 10000)
  * @return  0 on success.
  */
-int fw_io_device_power_read(void *bar0, u32 *power);
+int fw_io_device_power_read(void *bar0, u32 *power, unsigned die);
 
 /**
  * fw_io_api_version_read() - Read the API version that the firmware is running
@@ -306,4 +309,16 @@ int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count);
  */
 int fw_io_serial_number_read(void *bar0, uint64_t *serial_number);
 
+/**
+ * fw_io_get_total_uecc_err_count() - Get UE ecc error count
+ * @param bar0: from bar
+ * @return err count
+ */
+uint32_t fw_io_get_total_uecc_err_count(void *bar0);
+
+/**
+ * fw_io_hbm_uecc_repair_state_read() - Get HBM UE ecc repair state
+ * @param bar0: from bar
+ */
+int fw_io_hbm_uecc_repair_state_read(void *bar0, uint32_t *hbm_repair_state);
 #endif

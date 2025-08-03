@@ -45,6 +45,27 @@ void npe_notify_mark(int mark_cnt, bool mark);
 int npe_get_pod_id(u8 *pod_id);
 
 /**
+ * npe_get_pod_sz() - return pod size
+ *
+ * @pod_sz: 
+ */
+int npe_get_pod_sz(u8 *pod_sz);
+
+/**
+ * npe_get_pod_mode() - return pod mode
+ *
+ * @mode: 
+ */
+int npe_get_pod_mode(enum neuron_ultraserver_mode *mode);
+
+/**
+ * npe_get_pod_modes_supported() - return pod modes supported
+ *
+ * @modes_supported: 
+ */
+int npe_get_pod_modes_supported(u32 *modes_supported);
+
+/**
  * npe_get_pod_status() - return pod status information
  *
  * @state:   state of the election
@@ -57,22 +78,33 @@ int npe_get_pod_status(u32 *state, u8 *node_id);
  *
  * @nd:		    neuron device
  * @ctrl:    	control change request
+ * @mode:       operating mode setting 
  * @timeout: 	timeout for the control operation
  * @state:   	state of the election
  */
-int npe_pod_ctrl(struct neuron_device *nd, u32 ctrl, u32 timeout, u32 *state);
+int npe_pod_ctrl(struct neuron_device *nd, u32 ctrl, enum neuron_ultraserver_mode mode, u32 timeout, u32 *state);
 
 /**
  * npe_class_node_id_show_data() - return sysfs class node_id
  *
  * @buf:		    sysfs buffer
+ * @sz: 		    size of ultraserver config to show data for 
  */
-ssize_t npe_class_node_id_show_data(char *buf);
+ssize_t npe_class_node_id_show_data(char *buf, u32 sz);
 
 /**
  * npe_class_server_id_show_data() - return sysfs class server_id
  *
  * @buf:		    sysfs buffer
+ * @sz: 		    size of ultraserver config to show data for 
  */
-ssize_t npe_class_server_id_show_data(char *buf);
+ssize_t npe_class_server_id_show_data(char *buf, u32 sz);
+
+/**
+ * npe_class_ultraserver_mode_show_data() - return sysfs class ultraserver_mode
+ *
+ * @buf:		    sysfs buffer
+ */
+ssize_t npe_class_ultraserver_mode_show_data(char *buf);
+
 #endif

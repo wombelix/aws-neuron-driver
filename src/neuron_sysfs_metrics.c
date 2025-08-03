@@ -96,6 +96,7 @@ static const nsysfsmetric_counter_node_info_t status_counter_nodes_info_tbl[] = 
     COUNTER_NODE_INFO("execute_sw_event_error",      NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_ERR_SW_EVENT_ERROR)),
     COUNTER_NODE_INFO("execute_sw_psum_collision",   NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_ERR_SW_PSUM_COLLISION)),
     COUNTER_NODE_INFO("execute_sw_sequencer_fatal",  NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_ERR_SW_SEQUENCER_FATAL)),
+    COUNTER_NODE_INFO("hw_repairable_hbm_ue_error",  NDS_NC_COUNTER_ID_TO_SYSFS_METRIC_ID(NDS_EXT_NC_COUNTER_HW_ERR_REPAIRABLE_HBM_UE)),
 };
 static const int status_counter_nodes_info_tbl_cnt = sizeof(status_counter_nodes_info_tbl) / sizeof(nsysfsmetric_counter_node_info_t);
 
@@ -145,6 +146,7 @@ static const int arch_info_attrs_info_tbl_cnt = sizeof(arch_info_attrs_info_tbl)
 static const nsysfsmetric_attr_info_t ecc_attrs_info_tbl[] = {
     ATTR_INFO("sram_ecc_uncorrected", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_SRAM_UNCORRECTED), OTHER),
     ATTR_INFO("mem_ecc_uncorrected",  NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_HBM_UNCORRECTED),  OTHER),
+    ATTR_INFO("mem_ecc_repairable_uncorrected",  NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_REPAIRABLE_HBM_UNCORRECTED),  OTHER),
 };
 static const int ecc_attrs_info_tbl_cnt = sizeof(ecc_attrs_info_tbl) / sizeof(nsysfsmetric_attr_info_t);
 
@@ -159,6 +161,11 @@ static const nsysfsmetric_attr_info_t power_utilization_attrs_info_tbl[] = {
 	ATTR_INFO("utilization", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_POWER_UTILIZATION), OTHER),
 };
 static const int power_utilization_attrs_info_tbl_cnt = sizeof(power_utilization_attrs_info_tbl) / sizeof(nsysfsmetric_attr_info_t);
+
+static const nsysfsmetric_attr_info_t tensor_engine_attrs_info_tbl[] = {
+    ATTR_INFO("pe_cntrs", NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_PE_ARRAY_ACTIVITY), OTHER),
+};
+static const int tensor_engine_attrs_info_tbl_cnt = sizeof(tensor_engine_attrs_info_tbl) / sizeof(nsysfsmetric_attr_info_t);
 
 static void nsysfsmetric_node_release(struct kobject *kobj)
 {
@@ -347,25 +354,13 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
             ecc_err_count = 0;
         }
         len = nsysfsmetric_sysfs_emit(buf, "%u\n", ecc_err_count & 0x0000ffff);
-    } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_HBM_UNCORRECTED)) {
+    } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_HBM_UNCORRECTED)
+        || attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_REPAIRABLE_HBM_UNCORRECTED)) {
         struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
-
-        uint64_t ecc_offset = 0;
-        uint32_t total_uncorrected_ecc_err_count = 0;
-        uint32_t ecc_err_count = 0;
-        uint32_t channel = 0;
-        for (channel = 0; channel < ndhal->ndhal_address_map.dram_channels; channel++) {
-            ecc_offset = FW_IO_REG_HBM0_ECC_OFFSET + channel * sizeof(uint32_t);
-            ecc_err_count = 0;
-            int ret = fw_io_ecc_read(nd->npdev.bar0, ecc_offset, &ecc_err_count);
-            if (ret) {
-                pr_err("sysfs failed to read ECC HBM%u error from FWIO\n", channel);
-            } else if (ecc_err_count != 0xdeadbeef) {
-                total_uncorrected_ecc_err_count += (ecc_err_count & 0x0000ffff);
-            }
-        }
-
-        len = nsysfsmetric_sysfs_emit(buf, "%u\n", total_uncorrected_ecc_err_count);
+        uint32_t err_count;
+        bool get_repairable = (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_ECC_REPAIRABLE_HBM_UNCORRECTED));
+        ndhal->ndhal_sysfs_metrics.nsysfsmetric_get_hbm_error_count(nd, get_repairable, &err_count);
+        len = nsysfsmetric_sysfs_emit(buf, "%u\n", err_count);
     } else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_OTHER_SERIAL_NUMBER)) {
         struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
         uint64_t serial_number = 0;
@@ -388,7 +383,16 @@ static ssize_t nsysfsmetric_show_nrt_other_metrics(struct nsysfsmetric_metrics *
 			pr_err("sysfs failed to read power stats from FWIO, error = %d", ret);
 		}
 		len = nsysfsmetric_sysfs_emit(buf, "%s\n", buffer);
-	} else {
+	} else if (attr->metric_id == NON_NDS_ID_TO_SYSFS_METRIC_ID(NON_NDS_COUNTER_PE_ARRAY_ACTIVITY)) {
+        struct neuron_device *nd = container_of(sysfs_metrics, struct neuron_device, sysfs_metrics);
+
+        char buffer[256];
+        int ret = ndhal->ndhal_tpb.pe_format_activity_stats(nd, attr->nc_id, buffer, sizeof(buffer));
+        if (ret) {
+            pr_err("sysfs failed to read pe_array activity counters, error = %d\n", ret);
+        }
+        len = nsysfsmetric_sysfs_emit(buf, "%s", buffer);
+    } else {
 		pr_err("cannot show sysfs metrics for nc_id=%d, metric_id=%d of attr_type OTHER \n", attr->nc_id, attr->metric_id);
 	}
 
@@ -698,6 +702,12 @@ static int nsysfsmetric_init_and_add_nc_default_nodes(struct neuron_device *nd, 
         ret = nsysfsmetric_init_and_add_nodes(sysfs_metrics, custom_node, custom_counter_nodes_info_tbl_cnt, custom_counter_nodes_info_tbl, nc_id);
         if (ret) {
             pr_err("failed to add the other_info node's children under %s\n", nc_name);
+            return ret;
+        }
+
+        // add the neuron_core{0,1, ...}/stats/tensor_engine node
+        ret = ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_tensor_engine_node(sysfs_metrics, stats_node, nc_id, tensor_engine_attrs_info_tbl_cnt, tensor_engine_attrs_info_tbl);
+        if (ret) {
             return ret;
         }
 

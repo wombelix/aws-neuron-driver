@@ -8,6 +8,9 @@
 
 struct neuron_device;
 
+// The maximum number of dice that we will read power utilization from per neuron device
+#define NEURON_POWER_MAX_DIE 2
+
 /*
  * A struct that holds aggregated data about power utilization since the last read
  *
@@ -17,6 +20,7 @@ struct neuron_device;
  * @max_power_bips - the maximum power utilization seen during the sampling period
  * @last_counter - the counter value associated with the most recent power util sample read from
  *                 firmware.  Used to detect if we read samples faster than firmware provides them.
+ *                 We keep an array here to support per-die power utilization data from firmware.
  *
  * @note The power data is expressed in basis points so that we can stick to integer math while
  * preserving resolution.
@@ -26,7 +30,7 @@ struct neuron_power_samples {
 	u64 total_power_util_bips;
 	u16 min_power_bips;
 	u16 max_power_bips;
-	u16 last_counter;
+	u16 last_counter[NEURON_POWER_MAX_DIE];
 };
 
 /**

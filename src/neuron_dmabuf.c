@@ -28,7 +28,11 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+MODULE_IMPORT_NS("DMA_BUF");
+#else
 MODULE_IMPORT_NS(DMA_BUF);
+#endif
 #endif
 
 /* Private context attached to a dmabuf object */

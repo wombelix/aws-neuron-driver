@@ -111,6 +111,12 @@ bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd);
 /**
  * nr_initiate_reset_via_fw() - Initiate a reset request to the device and retry until the device respond
  * 
+ * @nd: Neuron device structure
+ * @nc_map: Neural Core map that specifies reset scope (device vs TPB level)
+ * @tpb_reset_map: Bitmap of TPBs to reset
+ * 
+ * @return: 0 on success, -1 on failure or interruption
+ * 
  */
 int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map);
 

@@ -2443,6 +2443,8 @@ static int ncdev_pod_info(unsigned int cmd, void *param)
 {
 	int ret;
 	struct neuron_ioctl_pod_info arg;
+	enum neuron_ultraserver_mode mode; //unused
+	u32 modes_supported; //unused	
 
 	if (cmd != NEURON_IOCTL_POD_INFO) {
 		return -EINVAL;
@@ -2460,39 +2462,46 @@ static int ncdev_pod_info(unsigned int cmd, void *param)
 	memset(&arg, 0, sizeof(arg));
 	arg.sz = sizeof(arg);
 
-	ret = ndhal->ndhal_npe.npe_pod_info( &arg.pod_type, arg.pod_id, &arg.pod_sz);
+	ret = ndhal->ndhal_npe.npe_pod_info( &arg.pod_type, arg.pod_id, &arg.pod_sz, &mode, &modes_supported);
 
 	return copy_to_user(param, &arg, sizeof(arg));
 }
 
 static int ncdev_pod_status(unsigned int cmd, void *param)
 {
+	static_assert(NEURON_IOCTL_POD_STATUS != NEURON_IOCTL_POD_STATUS_V2);
+
 	int ret;
 	int cret;
-	struct neuron_ioctl_pod_status arg;
+	uint32_t size; 
+	struct neuron_ioctl_pod_status_v2 arg;
 
-	if (cmd != NEURON_IOCTL_POD_STATUS) {
+	if (cmd == NEURON_IOCTL_POD_STATUS) {
+		size = sizeof(arg.v1);
+	} else if (cmd == NEURON_IOCTL_POD_STATUS_V2) {
+		size = sizeof(arg);
+	} else {
 		return -EINVAL;
 	}
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_status*)param, sizeof(arg));
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_status*)param, size);
 	if (ret)
 		return ret;
 
-	// sanity check
-	if (arg.sz != sizeof(arg)) {
+	// sanity check size
+	if (arg.v1.sz != size) {
 		return -EINVAL;
 	}
 
-	memset(&arg, 0, sizeof(arg));
-	arg.sz = sizeof(arg);
+	memset(&arg, 0, size);
+	arg.v1.sz = size;
 
 	// pull pod status before pod info to make sure the pod info is valid
 	//
-	ret = ndhal->ndhal_npe.npe_pod_status( &arg.state, &arg.node_id);
-	ndhal->ndhal_npe.npe_pod_info( &arg.pod_type, arg.pod_id, &arg.pod_sz);
+	ret = ndhal->ndhal_npe.npe_pod_status( &arg.v1.state, &arg.v1.node_id);
+	ndhal->ndhal_npe.npe_pod_info( &arg.v1.pod_type, arg.v1.pod_id, &arg.v1.pod_sz, &arg.mode, &arg.modes_supported);
 
-	cret = copy_to_user(param, &arg, sizeof(arg));
+	cret = copy_to_user(param, &arg, size);
 	if (cret != 0) {
 		return cret;
 	}
@@ -2501,15 +2510,27 @@ static int ncdev_pod_status(unsigned int cmd, void *param)
 
 static int ncdev_pod_ctrl(struct file *filep, unsigned int cmd, void *param)
 {
+	static_assert(NEURON_IOCTL_POD_CTRL != NEURON_IOCTL_POD_CTRL_V2);
+
 	int ret;
 	int cret;
+	u32  size;
 	struct ncdev *ncd;
 	struct neuron_device *nd;
-	struct neuron_ioctl_pod_ctrl arg;
-	
-	if (cmd != NEURON_IOCTL_POD_CTRL) {
+	struct neuron_ioctl_pod_ctrl_v2 arg;
+
+	if (cmd == NEURON_IOCTL_POD_CTRL) {
+		size = sizeof(arg.v1);
+		arg.mode = NEURON_ULTRASERVER_MODE_UNSET;
+	} else if (cmd == NEURON_IOCTL_POD_CTRL_V2) {
+		size = sizeof(arg);
+	} else {
 		return -EINVAL;
 	}
+
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_ctrl*)param, size);
+	if (ret)
+		return ret;
 
 	ncd = filep->private_data;
 	if (ncd == NULL) {
@@ -2520,18 +2541,14 @@ static int ncdev_pod_ctrl(struct file *filep, unsigned int cmd, void *param)
 		return -EINVAL;
 	}
 
-	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_pod_ctrl*)param, sizeof(arg));
-	if (ret)
-		return ret;
-
-	// sanity check
-	if (arg.sz != sizeof(arg)) {
+	// sanity check size
+	if (arg.v1.sz != size) {
 		return -EINVAL;
 	}
 
-	ret = ndhal->ndhal_npe.npe_pod_ctrl(nd, arg.ctrl, arg.timeout, &arg.state);
+	ret = ndhal->ndhal_npe.npe_pod_ctrl(nd, arg.v1.ctrl, arg.mode, arg.v1.timeout, &arg.v1.state);
 
-	cret = copy_to_user(param, &arg, sizeof(arg));
+	cret = copy_to_user(param, &arg, size);
 	if (cret != 0) {
 		return cret;
 	}
@@ -3089,16 +3106,25 @@ int ncdev_delete_device_node(struct neuron_device *ndev)
 
 /*
  * neuron_device class sysfs nodes
- *   node_id
- *   server_id
+ *   node_id_2/4
+ *   node_cnt_2/4
+ *   server_id_2/4
  *
  */
+
+struct ncdev_class_attr {
+	struct class_attribute attr;
+	u32 info;
+};
+
 #if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)))
 static ssize_t ncdev_class_node_id_show(const struct class *class, const struct class_attribute *attr, char *buf)
 #else
 static ssize_t ncdev_class_node_id_show(struct class *class, struct class_attribute *attr, char *buf)
 #endif
 {
+	struct ncdev_class_attr *ca = container_of(attr, struct ncdev_class_attr, attr); 
+
 	// protect against ndhal initialization race
 	if (ndhal == NULL) {
 		return 0;
@@ -3106,7 +3132,7 @@ static ssize_t ncdev_class_node_id_show(struct class *class, struct class_attrib
 	if (ndhal->ndhal_npe.npe_class_node_id_show_data == NULL) {
 		return 0;
 	}
-	return ndhal->ndhal_npe.npe_class_node_id_show_data(buf);
+	return ndhal->ndhal_npe.npe_class_node_id_show_data(buf, ca->info);
 }
 
 #if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)))
@@ -3115,6 +3141,8 @@ static ssize_t ncdev_class_server_id_show(const struct class *class, const struc
 static ssize_t ncdev_class_server_id_show(struct class *class, struct class_attribute *attr, char *buf)
 #endif
 {
+	struct ncdev_class_attr *ca = container_of(attr, struct ncdev_class_attr, attr); 
+
 	// protect against ndhal initialization race
 	if (ndhal == NULL) {
 		return 0;
@@ -3122,14 +3150,45 @@ static ssize_t ncdev_class_server_id_show(struct class *class, struct class_attr
 	if (ndhal->ndhal_npe.npe_class_server_id_show_data == NULL) {
 		return 0;
 	}
-	return ndhal->ndhal_npe.npe_class_server_id_show_data(buf);
+	return ndhal->ndhal_npe.npe_class_server_id_show_data(buf, ca->info);
 }
+
+
+#if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 5)))
+static ssize_t ncdev_class_ultraserver_mode_show(const struct class *class, const struct class_attribute *attr, char *buf)
+#else
+static ssize_t ncdev_class_ultraserver_mode_show(struct class *class, struct class_attribute *attr, char *buf)
+#endif
+{
+	// protect against ndhal initialization race
+	if (ndhal == NULL) {
+		return 0;
+	}
+	if (ndhal->ndhal_npe.npe_class_ultraserver_mode_show_data == NULL) {
+		return 0;
+	}
+	return ndhal->ndhal_npe.npe_class_ultraserver_mode_show_data(buf);
+}
+
+#define NCDEV_CLASS_ATTR(name, f, i) \
+	{__ATTR(name, S_IRUGO, f, NULL), i} 
+
+static const struct ncdev_class_attr ncdev_class_attrs[] = {
+	NCDEV_CLASS_ATTR(node_id_2, ncdev_class_node_id_show, 2),
+	NCDEV_CLASS_ATTR(node_id_4, ncdev_class_node_id_show, 4),
+	NCDEV_CLASS_ATTR(server_id_2, ncdev_class_server_id_show, 2),
+	NCDEV_CLASS_ATTR(server_id_4, ncdev_class_server_id_show, 4),
+	NCDEV_CLASS_ATTR(ultraserver_mode, ncdev_class_ultraserver_mode_show, 0)
+};
 
 static const struct class_attribute class_attr_node_id =
 	__ATTR(node_id, S_IRUGO, ncdev_class_node_id_show, NULL);
 
 static const struct class_attribute class_attr_server_id =
 	__ATTR(server_id, S_IRUGO, ncdev_class_server_id_show, NULL);
+
+static const struct class_attribute class_attr_ultraserver_mode =
+	__ATTR(ultraserver_mode, S_IRUGO, ncdev_class_ultraserver_mode_show, NULL);
 
 static void ncdev_cleanup(void)
 {
@@ -3140,8 +3199,9 @@ static void ncdev_cleanup(void)
 	}
 
 	if (neuron_dev_class) {
-		class_remove_file(neuron_dev_class, &class_attr_node_id);
-		class_remove_file(neuron_dev_class, &class_attr_server_id);
+		for (i = 0; i < sizeof(ncdev_class_attrs) / sizeof(*ncdev_class_attrs); i++) {
+			class_remove_file(neuron_dev_class, &ncdev_class_attrs[i].attr);
+		}
 		class_destroy(neuron_dev_class);
 	}
 
@@ -3173,16 +3233,13 @@ int ncdev_module_init(void)
 		ret = PTR_ERR(neuron_dev_class);
 		goto fail;
 	}
-	
-	ret  = class_create_file(neuron_dev_class, &class_attr_node_id);
-	if (ret) {
-		pr_err("create class/node_id failed");
-		goto fail;
-	}
-	ret  = class_create_file(neuron_dev_class, &class_attr_server_id);
-	if (ret) {
-		pr_err("create class/server_id failed");
-		goto fail;
+
+	for (i = 0; i < sizeof(ncdev_class_attrs) / sizeof(*ncdev_class_attrs); i++) {
+		ret  = class_create_file(neuron_dev_class, &ncdev_class_attrs[i].attr);
+		if (ret) {
+			pr_err("create class/%s failed", ncdev_class_attrs[i].attr.attr.name);
+			goto fail;
+		}
 	}
 	return ret;
 

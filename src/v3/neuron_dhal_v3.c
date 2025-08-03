@@ -2,6 +2,8 @@
 /*
 * Copyright 2023, Amazon.com, Inc. or its affiliates. All Rights Reserved
 */
+#define pr_fmt(fmt) "%s:%s: " fmt, KBUILD_MODNAME, __func__
+
 #include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/version.h>
@@ -28,8 +30,13 @@
 
 extern int dev_nc_map;
 
-#define NR_RESET_RETRY_SLEEP_MS 100
-#define V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS (1000 * 480)
+#define NR_RESET_RETRY_SLEEP_MS                     100
+#define V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS     (1000 * 480)
+#define V3_NR_RESET_POLL_INTERVAL                   100
+
+int force_userver = 0;
+module_param(force_userver , int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(force_userver, "Force Neuron UltraServer");
 
 // For v3/testing
 //
@@ -104,7 +111,7 @@ struct neuron_dm_special_mmap_ent dm_mmap_special_v3[] = {
 	{.block = NEURON_DM_BLOCK_HBM, .block_id = 1, .resource = NEURON_DM_RESOURCE_DMEM, .offset = V3_HBM_1_BASE, .size = V3_HBM_ACTIVE_SIZE, .bar_offset = V3_HBM_SIZE * 1, .bar_num = 4},
 	{.block = NEURON_DM_BLOCK_HBM, .block_id = 2, .resource = NEURON_DM_RESOURCE_DMEM, .offset = V3_HBM_2_BASE, .size = V3_HBM_ACTIVE_SIZE, .bar_offset = V3_HBM_SIZE * 2, .bar_num = 4},
 	{.block = NEURON_DM_BLOCK_HBM, .block_id = 3, .resource = NEURON_DM_RESOURCE_DMEM, .offset = V3_HBM_3_BASE, .size = V3_HBM_ACTIVE_SIZE, .bar_offset = V3_HBM_SIZE * 3, .bar_num = 4},
-	
+
 	{NEURON_DM_BLOCK_INVALID, 0, 0, 0, 0, 0},
 };
 
@@ -157,6 +164,57 @@ u64 ncdev_bar0_write_blocked_addrs_v3[] = {
 	MMAP_BAR0_APB_MISC_RAM_INVALID,
 };
 
+#define V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(base, apb_io_base, pcie_bar0_apb_offset) (base - apb_io_base + pcie_bar0_apb_offset + V3_TPB_ARR_SEQ_QUEUE_PERF_BASE_OFFSET)
+#define V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(base, xbus_id, offset) (base + (xbus_id * V3_TPB_ARR_SEQ_QUEUE_PERF_SIZE) + offset)
+
+u64 ntpb_pe_mm_cntr_offsets_v3[V3_NC_PER_DEVICE] =
+{
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_MATMUL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+};
+
+u64 ntpb_pe_wl_cntr_offsets_v3[V3_NC_PER_DEVICE] =
+{
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 8, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+};
+
+u64 ntpb_pe_fast_wl_cntr_offsets_v3[V3_NC_PER_DEVICE] =
+{
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 0, V3_TPB_ARR_SEQ_QUEUE_PERF_WL_ACTIVE_CYCLE_CNT_LSB_OFFSET),
+};
+
+u64 ntpb_pe_idle_cntr_offsets_v3[V3_NC_PER_DEVICE] =
+{
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_0_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_0_BASE, V3_PCIE_BAR0_APB_IO_0_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_0_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_0_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
+};
+
 static int ndhal_register_funcs_trn2(void) {
 	if (!ndhal) {
 		pr_err("ndhal is null. Can't register functions for trn2.");
@@ -173,8 +231,9 @@ static bool ndhal_instance_type_pod(void)
 {
 	static bool instance_type_is_pod = false;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-#define NEURON_TRN2P_INSTANCE_NAME "trn2p.48xlarge" 
-#define NEURON_TRN2U_INSTANCE_NAME "trn2u.48xlarge" 
+#define NEURON_TRN2P_INSTANCE_NAME "trn2p.48xlarge"
+#define NEURON_TRN2EU_INSTANCE_NAME "trn2eu.48xlarge"
+#define NEURON_TRN2U_INSTANCE_NAME "trn2u.48xlarge"
 	static bool initialized = false;
 	ssize_t len;
 	ssize_t file_size;
@@ -200,8 +259,9 @@ static bool ndhal_instance_type_pod(void)
 		pr_err("read instance type failed");
 		goto done;
 	}
-		
+
 	if ((strncmp(buf, NEURON_TRN2P_INSTANCE_NAME, sizeof(NEURON_TRN2P_INSTANCE_NAME)-1) == 0) ||
+	    (strncmp(buf, NEURON_TRN2EU_INSTANCE_NAME, sizeof(NEURON_TRN2EU_INSTANCE_NAME)-1) == 0) ||
 	    (strncmp(buf, NEURON_TRN2U_INSTANCE_NAME, sizeof(NEURON_TRN2U_INSTANCE_NAME)-1) == 0)) {
 		instance_type_is_pod = true;
 	}
@@ -211,6 +271,9 @@ done:
 		kfree(buf);
 	}
 #endif
+	if (force_userver) {
+		instance_type_is_pod = true;
+	}
 
 	return instance_type_is_pod;
 }
@@ -254,7 +317,7 @@ static void nr_get_tpb_reset_map(uint32_t nc_map, uint32_t *tpb_reset_map)
 
 /**
  * nr_initiate_reset() - initialize a reset
- * 
+ *
  * @param nd - Neuron device which will be reset by the thread.
  */
 static int nr_initiate_reset_v3(struct neuron_device *nd, uint32_t nc_map)
@@ -283,7 +346,7 @@ static int nr_initiate_reset_v3_qemu(struct neuron_device *nd, uint32_t nc_map)
 	volatile void *addr = nd->npdev.bar0 + V3_PCIE_BAR0_APB_IO_0_OFFSET + V3_APB_IO_0_USER_SE_0_RESERVED2_RELBASE + 0x10;
 	writel(tpb_reset_map, (volatile uint32_t *)addr);
 
-	return 0; 
+	return 0;
 }
 
 static int nr_initiate_reset_v3_emu(struct neuron_device *nd, uint32_t nc_map)
@@ -293,7 +356,7 @@ static int nr_initiate_reset_v3_emu(struct neuron_device *nd, uint32_t nc_map)
 
 /**
  * nr_wait_for_reset_completion() - wait for a reset to be completed
- * 
+ *
  * @param nd - Neuron device which will be reset by the thread.
  */
 static int nr_wait_for_reset_completion_v3(struct neuron_device *nd)
@@ -312,7 +375,7 @@ static int nr_wait_for_reset_completion_v3(struct neuron_device *nd)
 			reset_in_progress = status & V2_FW_IO_REG_FW_STATUS_DEVICE_READY_MASK; // FIXME in reset.h abstract and move to somewhere in v3
 		if (!reset_in_progress)
 			return 0;
-		if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i)) 
+		if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i))
 			return -1;
 	}
 	return -1;
@@ -334,10 +397,10 @@ static int nr_wait_for_reset_completion_v3_qemu(struct neuron_device *nd)
 
 		if (!reset_in_progress)
 			return 0;
-		if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i)) 
+		if (nr_msleep_stoppable(nd, NR_RESET_RETRY_SLEEP_MS * i))
 			return -1;
 	}
-	return -1;   
+	return -1;
 }
 
 static int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
@@ -347,7 +410,7 @@ static int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
 
 /**
  * nr_post_reset_config() - perform and post reset configuration needed
- * 
+ *
  * @param nd - Neuron device which will be reset by the thread.
  * @param reset_successful - device reset was successful
  */
@@ -380,7 +443,7 @@ static u8 ts_nq_get_nqid_v3(struct neuron_device *nd, u8 index, u32 nq_type)
 
 /**
  * ts_nq_set_hwaddr() - set physical address of the notification queue
- * 
+ *
  * @nd: neuron device
  * @ts_id: TopSp Id
  * @index: notification engine index in the core
@@ -484,7 +547,7 @@ static void ts_nq_destroy_one_v3(struct neuron_device *nd, u8 ts_id)
 /* Neuron Core Functions */
 /**
  * nc_get_semaphore_base() - get semaphore base address
- * 
+ *
  * @param nd - neuron device
  * @param nc_id - neuron core index
  * @return void* - semaphore base address
@@ -496,7 +559,7 @@ static void *nc_get_semaphore_base_v3(struct neuron_device *nd, u8 nc_id)
 
 /**
  * nc_get_event_addr() - get event address
- * 
+ *
  * @param nd - neuron device
  * @param nc_id - neuron core index
  * @param event_index - event index
@@ -512,7 +575,7 @@ static void *nc_get_event_addr_v3(struct neuron_device *nd, u8 nc_id, u16 event_
 /* Notification Queue Functions */
 /**
  * nnq_get_nqid() - get notification queue id
- * 
+ *
  * @param nd: neuron device
  * @param nc_id: core index in the device
  * @param index: notification engine index in the core
@@ -526,7 +589,7 @@ static u8 nnq_get_nqid_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 nq_t
 
 /**
  * nnq_set_hwaddr() - set the physical address of the queue
- * 
+ *
  * @param nd: neuron device
  * @param nc_id: core index in the device
  * @param index: notification engine index in the core
@@ -555,10 +618,10 @@ static void nnq_set_hwaddr_v3(struct neuron_device *nd, u8 nc_id, u8 index, u32 
 
 /* Memory Pool Functions */
 /**
- * mpset_set_dram_and_mpset_info() 
+ * mpset_set_dram_and_mpset_info()
  *              - set the address and size of device dram
  *              - set mpset's num_channels and number of regions in the device pool
- * 
+ *
  * @param mpset: pointer to mpset
  * @param device_dram_addr: DRAM Channel 0 and 1's addresses
  * @param device_dram_size: DRAM Channel 0 and 1's sizes
@@ -606,9 +669,9 @@ static void mpset_set_dram_and_mpset_info_v3(struct mempool_set *mpset, u64 *dev
 // Upper 16MB is used internally by the firmware, don't use it in the allocation pool
 #define MEMPOOL_CARVEOUT_SIZE 0x1000000 // 16MB
 /**
- * mpset_block_carveout_regions() 
+ * mpset_block_carveout_regions()
  *          - in v3, block carve out regions: Upper 16 MB is used internally by firmware
- * 
+ *
  * @param nd: neuron device
  * @param mpset: pointer to mpset
  * @param device_dram_addr: DRAM Channel 0's and 1's addresses
@@ -653,14 +716,14 @@ static int mpset_block_carveout_regions_v3(struct neuron_device *nd, struct memp
 		}
 		ndhal->ndhal_mpset.device_dram_effective_base_addr[channel] = device_dram_addr[channel] + MEMPOOL_CARVEOUT_SIZE;
 	}
-	
+
 	return 0;
 }
 
 
 /* DMA Ring Functions */
-/** 
- * ndmar_get_h2t_eng_id() 
+/**
+ * ndmar_get_h2t_eng_id()
  *          - get the host-to-device or device-to-host DMA engine ID
  *          - DMA engine 33 (H2D) and 32 (D2H) are top level DMA engines that allow moving data from/to HBM.
  *
@@ -672,16 +735,16 @@ static uint32_t ndmar_get_h2t_eng_id_v3(struct neuron_device *nd, uint32_t nc_id
 {
 	const uint32_t h2d_dma_eng_id[V3_NUM_H2D_DMA_PER_DEVICE] = {
 		V3_D2H_0_IDX,
-		V3_H2D_0_IDX, 
+		V3_H2D_0_IDX,
 		V3_D2H_1_IDX,
 		V3_H2D_1_IDX
-		};      
+		};
 	const uint32_t seng_id = nc_id / V3_NC_PER_SENG;
 	return h2d_dma_eng_id[seng_id];
 }
 
-/** 
- * ndmar_get_h2t_qid()  - return the H2T engine's queue id for this core 
+/**
+ * ndmar_get_h2t_qid()  - return the H2T engine's queue id for this core
  *
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA queue id
@@ -692,8 +755,8 @@ static int ndmar_get_h2t_qid_v3(uint32_t nc_id)
 	return nc_id % V3_NC_PER_SENG;
 }
 
-/** 
- * ndmar_is_h2t_q() - return true 
+/**
+ * ndmar_is_h2t_q() - return true
  *
  * @param nd: Neuron device which contains the DMA engine
  * @param eng_id: engine id
@@ -708,8 +771,8 @@ static bool ndmar_is_h2t_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_
 /**
  * nr_init_h2t_eng() - return true if the h2t dma should be initialized
  *     h2t dma is shared by adjacent cores so only have the even nc init the engine
- * 
- * @param nd_idx - index of the core that owns the h2t 
+ *
+ * @param nd_idx - index of the core that owns the h2t
  * @param nc_map - map of all cores being reset
  */
 static bool nr_init_h2t_eng_v3( int nc_idx, uint32_t nc_map)
@@ -732,7 +795,7 @@ static bool nr_init_h2t_eng_v3( int nc_idx, uint32_t nc_map)
 
 /**
  * ndmar_is_nx_ring() - is the DMA ring reserved for NX cores
- * 
+ *
  * @param eng_id: the DMA engine id
  * @param q_id: the DMA queue id
  */
@@ -878,9 +941,9 @@ static int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_i
 
 /**
  * fw_io_register_readless_read_region() - Register readless read BAR regions
- * 
+ *
  * @param ctx: FWIO context
- * 
+ *
  * @return int: 0 on success. -1 on failure
  */
 static int fw_io_register_readless_read_region_v3(struct fw_io_ctx *ctx, void __iomem *bar0, u64 bar0_size, void __iomem *bar2, u64 bar2_size)
@@ -896,13 +959,13 @@ static int fw_io_register_readless_read_region_v3(struct fw_io_ctx *ctx, void __
 
 /**
  * fw_io_read_csr_array() - Read the CSR array
- * 
+ *
  * @param addrs: array of CSR addresses to be read
  * @param values: output array
  * @param num_csrs: number of CSR addresses
  * @param operational: true if the read expects the device to be in operational state;
  *                     it's used to distinguish between when the driver first discovers the device (possibly unknown state) and when it's successfully been reset "operational"
- * 
+ *
  * @return int: 0 on success, -1 on failure
  */
 static int fw_io_read_csr_array_v3(void **ptrs, u32 *values, u32 num_csrs, bool operational)
@@ -910,19 +973,14 @@ static int fw_io_read_csr_array_v3(void **ptrs, u32 *values, u32 num_csrs, bool 
 	if (num_csrs > FW_IO_MAX_READLESS_READ_REGISTER_COUNT)
 		return -EINVAL;
 
-	if (!use_rr) { // do not use readless read
-		return fw_io_read_csr_array_direct(ptrs, values, num_csrs, operational);
-	}
-
-    int ret = fw_io_read_csr_array_readless(ptrs, values, num_csrs);
-	return ret;
+	return fw_io_read_csr_array_direct(ptrs, values, num_csrs, operational);
 }
 
 
 /* Register Access (read and write) Functions */
 /**
  * reg_read32_array() - read an array of 32bit registers.
- * 
+ *
  * @addr: register address.
  * @value: read value would be stored here.
  * @num_values: num values to read
@@ -953,7 +1011,7 @@ inline int reg_read32_array_v3_qemu_emu(void **addr, u32 *value, u32 num_values)
 /* Memory Map Functions */
 /**
  * mmap_get_bar4_offset() - calculate the offset of BAR4
- * 
+ *
  * @param start_addr: start address
  * @param size: size of memory
  * @param offset: offset of BAR4
@@ -987,16 +1045,16 @@ static int root_info_node_attrs_info_tbl_cnt_v3 = sizeof(root_info_node_attrs_in
 
 /**
  * nsysfsmetric_add_ecc_nodes() - add neuron{0, 1, ...}/stats/hardware/{sram_ecc_uncorrected, mem_ecc_uncorrected} to sysfs directory
- * 
+ *
  * @param metrics: the sysfs metrics structure
  * @param stats_node: the sysfs node structure of the stats directory
  * @param ecc_attrs_info_tbl_cnt: number of the ecc attributes
  * @param attr_info_tbl: the ecc attributes as an array
  * @return int 0 on success; otherwise on failure
- * 
- * Note: ecc errors are only supported by sysfs for V2/3. TODO: V1 support will be added 
+ *
+ * Note: ecc errors are only supported by sysfs for V2/3. TODO: V1 support will be added
  */
-static int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics, 
+static int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics,
                                   struct nsysfsmetric_node *stats_node,
                                   int ecc_attrs_info_tbl_cnt,
                                   const nsysfsmetric_attr_info_t *ecc_attrs_info_tbl)
@@ -1010,14 +1068,85 @@ static int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics,
 	return 0;
 }
 
+/**
+ * nsysfsmetric_get_hbm_error_count_v3() - check hbm repairable/unrepairable error count
+ *
+ * @param nd - neuron device
+ * @param repairable - indicates checking for repairable/unrepairable error counts
+ * @param err_count - error count returns
+ */
+static void nsysfsmetric_get_hbm_error_count_v3(struct neuron_device *nd,
+                                                 bool repairable,
+                                                 uint32_t *err_count)
+{
+	int ret;
+	uint32_t total_uncorrected_ecc_err_count;
+	uint32_t ecc_repair_state;
+
+	*err_count = 0;
+
+	ret = fw_io_hbm_uecc_repair_state_read(nd->npdev.bar0, &ecc_repair_state);
+	if (ret) {
+		pr_err("sysfs failed to read HBM ECC repair state from FWIO\n");
+		return;
+	}
+	total_uncorrected_ecc_err_count = fw_io_get_total_uecc_err_count(nd->npdev.bar0);
+
+	/*
+	*  HBM Repair State Bitfield notes:
+	*      2 bits to represent the state of hbm repair
+	*      0x0 means no pending repair
+	*      0x1 means pending repair
+	*      0x2 means repair failure
+	*/
+	if (total_uncorrected_ecc_err_count == 0 && ecc_repair_state != 0) {
+		// For legacy Pacific firmware, there might be the case that (err count > 0 && repair state == 0), so allow this case
+		// When err count = 0, repair state must be 0x0
+		pr_warn_once("[ND %d] Total Uncorrected ecc err count is %d, but repair state is %d which is invalid. Please contact Neuron for support.\n", nd->device_index, total_uncorrected_ecc_err_count, ecc_repair_state);
+		return;
+	}
+	if (repairable) {
+		*err_count = (ecc_repair_state == 0x1) ? total_uncorrected_ecc_err_count : 0;
+	} else {
+		*err_count = (ecc_repair_state == 0x2) ? total_uncorrected_ecc_err_count : 0;
+		if (ecc_repair_state == 0x0) {
+			// legacy FW hack - TODO remove at some point
+			*err_count = total_uncorrected_ecc_err_count;
+		}
+	}
+}
+
+/**
+ * nsysfsmetric_add_tensor_engine_node() - add neuron{0, 1, ...}/neuron_core{0,1, ...}/stats/tensor_engine node to sysfs directory
+ *
+ * @param metrics: the sysfs metrics structure
+ * @param stats_node: the sysfs node structure of the nc stats directory
+ * @param ecc_attrs_info_tbl_cnt: number of the teng attributes
+ * @param attr_info_tbl: the teng attributes as an array
+ * @return int 0 on success; otherwise on failure
+ */
+static int nsysfsmetric_add_tensor_engine_node_v3(struct nsysfsmetric_metrics *metrics,
+				struct nsysfsmetric_node *stats_node,
+				int nc_id,
+				int tensor_engine_attrs_info_tbl_cnt,
+				const nsysfsmetric_attr_info_t *tensor_engine_attrs_info_tbl)
+{
+	struct nsysfsmetric_node *tensor_engine_node = nsysfsmetric_init_and_add_one_node(metrics, stats_node, "tensor_engine", false, nc_id, tensor_engine_attrs_info_tbl_cnt, tensor_engine_attrs_info_tbl);
+	if (!tensor_engine_node) {
+		pr_err("failed to add the tensor_engine node under stats for nc%d\n", nc_id);
+		return -1;
+	}
+	return 0;
+}
+
 
 /* PCI Functions */
 /**
  * neuron_pci_release_bar() - Release a PCI BAR
- * 
+ *
  * @param dev: PCI device whose resources were previously reserved by pci_request_region()
  * @param bar: BAR to be reserved
- * 
+ *
  * for V3, this function is dummy
  */
 static int neuron_pci_release_bar_v3(struct pci_dev *dev, int bar)
@@ -1036,7 +1165,7 @@ static int neuron_pci_release_bar_v3(struct pci_dev *dev, int bar)
 
 /**
  * neuron_pci_reserve_bar() - Mark the PCI region associated with PCI BAR as being reserved
- * 
+ *
  * @param dev: PCI device whose resources are to be reserved
  * @param bar: BAR to be reserved
  * @param res_name: Name to be associated with resource.
@@ -1070,7 +1199,7 @@ err:
 
  /**
  * neuron_pci_set_npdev() - set BAR's physical addr, io addr, and size of neuron_pci_device
- * 
+ *
  * @param dev: PCI device that owns the BAR
  * @param bar: BAR number
  * @param res_name: Name associated with resource
@@ -1098,14 +1227,14 @@ static int neuron_pci_set_npdev_v3(struct pci_dev *dev,
 		pci_info(dev, "BAR%d len is 0\n", bar);
 		goto err;
 	}
-	
+
 	*bar_pa = pci_resource_start(dev, bar);
 	if (!(*bar_pa)) {
 		pci_info(dev, "Can't get start address of BAR%d %s\n", bar, res_name);
 		goto err;
 	}
 	*bar_size = pci_resource_len(dev, bar);
-	
+
 	if (bar == ndhal->ndhal_pci.dram_bar) {
 		ndhal->ndhal_pci.dram_bar_size = *bar_size;
 	}
@@ -1137,7 +1266,7 @@ static int neuron_pci_handle_dup_routing_id(void)
 	dup_cnt = atomic_fetch_add(1, &dup_rid_cnt);
 #else
 	dup_cnt = atomic_add_return(1, &dup_rid_cnt) - 1;
-#endif 
+#endif
 
 	// If this is the first dup encounted, unload the driver
 	if ((dup_cnt == 0) && dup_helper_enable) {
@@ -1184,11 +1313,11 @@ static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
 
 /**
  * neuron_pci_get_device_id() - get device id from pacific and set nd->device_index
- * 
+ *
  * @param dev: PCI device
  * @param nd: neuron device
  * @return int: 0 on success, otherwise on failure
- * 
+ *
  * for V1, this function is dummy
  */
 static int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev *dev)
@@ -1211,7 +1340,7 @@ static int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev 
 		return -ENODEV;
 	}
 
-	// TODO - this should be a "valid routing_id check for TRN2 
+	// TODO - this should be a "valid routing_id check for TRN2
 	if (routing_id < 0 || routing_id >= MAX_NEURON_DEVICE_COUNT) {
 		pr_err("Invalid device index %u", routing_id);
 		return -ENODEV;
@@ -1233,12 +1362,12 @@ static int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev 
 
 /**
  * neuron_pci_device_id_to_rid_map() - return device id to routing id map.  Used by nccl for topology discovery
- * 
+ *
  * @param count: total number of neuron devices on the host instance
  * @param did_to_rid_map: map of device ids to routing ids
  * @return int: Returns 0 on success, otherwise failure
  */
-static int 
+static int
 neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 {
 	int i;
@@ -1256,13 +1385,13 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 
 
 /* Char Device (cdev) Functions */
-/* 
+/*
  * IMPORTANT:
  *           - These variables track the range of "compatible" versions of the RT
  *             i.e. the range of RT versions that is compatible with this version of the driver.
  *           - This value is independent from the "release" version, because the
  *             "release" number is controlled by PM, marketing, etc. considerations.
- * 
+ *
  *           - MAX should be incremented when the driver API/behavior
  *             changes in a way that is meaningful to the RT.  In that case
  *             both the MAX here and the version expected by the RT should be
@@ -1286,7 +1415,7 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 #define V3_RT_MAX_COMPATIBLE_VERSION 11
 /**
  * ncdev_compatible_version() - fill in the compatible version of the RT with the current driver version
- * 
+ *
  * @param arg: min and max compatible versions to be filled in
  */
 static void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *arg)
@@ -1297,7 +1426,7 @@ static void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *
 
 /**
  * ncdev_quiesce_exec_on_proc_exit() - for V1, before resetting DMA, allow current NeuronCore execution to finish and settle
- * 
+ *
  * Note:
  *      When a process is killed, the driver resets DMA but there is no
  *      way to soft reset neuron cores. This causes problem if the
@@ -1305,14 +1434,14 @@ static void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *
  *      which result in abrubtly stopping DMA engines hence engines are
  *      are blocked on semaphores. This results in next model
  *      load failure or inference timeout.
- * 
+ *
  *      Proper way is clearing out semaphore, events after resetting
  *      DMA engines. However, it is a lot of code change, hence
  *      adding a sleep for 1 second when process exits, which allows
  *      the NeuronCore to continue to execute for a second. Since
  *      no new inference can be submitted during this time, NeuronCore
  *      state would be cleared out.
- * 
+ *
  */
 static void ncdev_quiesce_exec_on_proc_exit_v3(void)
 {
@@ -1322,14 +1451,14 @@ static void ncdev_quiesce_exec_on_proc_exit_v3(void)
 
 /**
  * ncdev_bar_write_data() - write data to bar
- * 
+ *
  * @param nd: neuron device
  * @param bar: the BAR to write to
  * @param reg_addresses
  * @param data: the data to be written into the bar
  * @param data_count: the number of data to be written
  * @return 0 on success, otherwise failure
- * 
+ *
  * V1:
  *    For BAR0 the addresses are passed as array(random access).
  *    For BAR2 a single address is provided and driver does sequential writes.
@@ -1386,9 +1515,9 @@ static void ncdev_get_default_tpbs_for_hbm_v3(u32 hbm_index, u32 tpbs[MAX_NC_PER
 #define UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY (1 << 16)
 /**
  * udma_m2s_data_rd_cfg_boundaries_set(): set data_rd_cfg to break at 256B boundaries
- * 
+ *
  * @param udma: the UDMA structure
- * 
+ *
  * for V1, this function is dummy
  */
 static void udma_m2s_data_rd_cfg_boundaries_set_v3(struct udma *udma)
@@ -1423,18 +1552,18 @@ static void udma_q_config_v3(struct udma_q *udma_q)
 /* NDMA Functions */
 /**
  * ndma_get_wait_for_completion_time() - calculate the first and the following wait times for a DMA tranfer completion
- * 
+ *
  *      One full descriptor takes ~2 usec to transfer (64K at 32G/sec) on V3  and ~4 usec to transfer on V2.
  *      The last descriptor may be partial, so wait 1/4 64K transfer time for that descriptor.
  *      Also, count includes the completion descriptor so don't include that in the count.
- * 
+ *
  * @param first_wait_time: the wait time for the first sleep
  * @param wait_time: the wait time for the following sleeps
  */
 static void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *first_wait_time, u64 *following_wait_time)
 {
 	u64 est_wait_time = 2 * (count -1);
-	*first_wait_time = async ? 1 : (est_wait_time - 1);  // FIXME - need to adjust for zerocopy  
+	*first_wait_time = async ? 1 : (est_wait_time - 1);  // FIXME - need to adjust for zerocopy
 	*following_wait_time = (est_wait_time * 100) - *first_wait_time;
 
 	// for some reason getting a timeout when staging some of BERT training graphs.
@@ -1485,7 +1614,7 @@ static int ndma_validate_pa_v3(struct neuron_device *nd, phys_addr_t pa, struct 
 
 /**
  * ndma_init() - Initialize a DMA engine
- * 
+ *
  * @param bar0: BAR0
  * @param udma: UDMA structure
  * @param eng_id: DMA engine index to initialize
@@ -1659,9 +1788,9 @@ static int ndma_is_bar0_write_blocked_v3(u64 off)
 
 /**
  * ndma_get_m2m_barrier_type() - get the m2m barrier type
- * 
- * @param set_dmb 
- * @return int 
+ *
+ * @param set_dmb
+ * @return int
  */
 static int ndma_get_m2m_barrier_type_v3(bool set_dmb)
 {
@@ -1698,7 +1827,7 @@ static const uint32_t neuron_nc_map_die_flip_mask = 0x6;
 static bool ndhal_die_flipped(void)
 {
 	u32 state;
-	u8 node_id;
+	s8 node_id;
 
 	if (force_die_flip) {
 		return true;
@@ -1708,7 +1837,7 @@ static bool ndhal_die_flipped(void)
 	}
 
 	npe_get_pod_status(&state, &node_id);
-	if ((state == NEURON_POD_E_STATE_ULTRASERVER) && ((node_id == 1) || (node_id == 2))) {
+	if ((state == NEURON_POD_E_STATE_ULTRASERVER) && ((node_id == 1) || (node_id == 3))) {
 		return true;
 	}
 	return false;
@@ -1779,20 +1908,26 @@ static void npe_notify_mark_v3(int mark_cnt, bool mark)
 /**
  * npe_pod_info() - return information about the pod the instance belongs to
  *
- * @param pod_type - type of pod the instance belongs to or NONE if not part of a pod
- * @param pod_id   - unique id of the pod
- * @param pod_sz   - size of the pod.  0 if not a pod
+ * @param pod_type 			- type of pod the instance belongs to or NONE if not part of a pod
+ * @param pod_id   			- unique id of the pod
+ * @param pod_sz   			- size of the pod.  0 if not a pod
+ * @param mode     			- current operating mode
+ * @param modes_supported	- supported operating modes
  *
  */
-static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
+static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz, enum neuron_ultraserver_mode *mode, u32 *modes_supported)
 {
 	if (!ndhal_instance_type_pod()) {
 		*pod_type = NEURON_POD_TYPE_NONE;
 		*pod_sz = 0;
+		*mode = NEURON_ULTRASERVER_MODE_UNSET;
+		*modes_supported = 0;
 	} else {
 		*pod_type = NEURON_POD_TYPE_P2P;
-		*pod_sz = 4;
+		npe_get_pod_sz(pod_sz);
 		npe_get_pod_id(pod_id);
+		npe_get_pod_mode(mode);
+		npe_get_pod_modes_supported(modes_supported);
 	}
 	return 0;
 }
@@ -1803,8 +1938,8 @@ static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz)
  * @param pod_state - state/outcome of the pod's election process
  * @param node_id   - node id within the pod
  *
- */ 
-static int npe_pod_status_v3(u32 *pod_state, u8 *node_id)
+ */
+static int npe_pod_status_v3(u32 *pod_state, s8 *node_id)
 {
 	if (!ndhal_instance_type_pod()) {
 		*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
@@ -1819,38 +1954,91 @@ static int npe_pod_status_v3(u32 *pod_state, u8 *node_id)
  *
  * @nd:    neuron device
  * @param pod_ctrl  - control operation to perform
+ * @param mode - requested operating mode for mode control
  * @param timeout - timeout for the control operation
  * @param pod_state - state/outcome of the pod's election process
  *
  */
-static int npe_pod_ctrl_v3(struct neuron_device *nd, u32 pod_ctrl, u32 timeout, u32 *pod_state)
+static int npe_pod_ctrl_v3(struct neuron_device *nd, u32 pod_ctrl, enum neuron_ultraserver_mode mode, u32 timeout, u32 *pod_state)
 {
 	if (!ndhal_instance_type_pod()) {
 		return 0;
 	}
-	return npe_pod_ctrl(nd, pod_ctrl, timeout, pod_state);
+	return npe_pod_ctrl(nd, pod_ctrl, mode, timeout, pod_state);
 }
 
 /**
  * npe_class_node_id_show_data() - return sysfs class node_id
  *
  * @buf - sysfs buffer
+ * @sz - size of ultraserver config to show data for
  *
  */
-static ssize_t npe_class_node_id_show_data_v3(char *buf)
+static ssize_t npe_class_node_id_show_data_v3(char *buf, u32 sz)
 {
-	return npe_class_node_id_show_data(buf);
+	if (!ndhal_instance_type_pod()) {
+    	return dhal_sysfs_emit(buf, "-1\n");
+	}
+	return npe_class_node_id_show_data(buf, sz);
 }
 
 /**
  * npe_class_server_id_show_data() - return sysfs class node_id
  *
  * @buf - sysfs buffer
+ * @sz - size of ultraserver config to show data for
  *
  */
-static 	ssize_t npe_class_server_id_show_data_v3(char *buf)
+static 	ssize_t npe_class_server_id_show_data_v3(char *buf, u32 sz)
 {
-	return npe_class_server_id_show_data(buf);
+	if (!ndhal_instance_type_pod()) {
+    	return dhal_sysfs_emit(buf, "0000000000000000\n");
+	}
+	return npe_class_server_id_show_data(buf, sz);
+}
+
+/**
+ * npe_class_ultraserver_mode_show_data() - return sysfs class ultraserver_mode
+ *
+ * @buf - sysfs buffer
+ *
+ */
+static ssize_t npe_class_ultraserver_mode_show_data_v3(char *buf)
+{
+	if (!ndhal_instance_type_pod()) {
+    	return dhal_sysfs_emit(buf, "\n");
+	}
+    return npe_class_ultraserver_mode_show_data(buf);
+}
+
+/**
+ * ntpb_pe_get_aggregated_wl_cycle_cnt() - return aggregated pe array weight-load activity cycle count
+ *
+ * @param nd - neuron device
+ * @param nc_id - neuron core id
+ * @param row_grp_id - row group id
+ * @param val: aggregated weight load cycle count
+ * @return int - 0 on success
+ *
+ */
+static int ntpb_pe_get_aggregated_wl_cycle_cnt_v3(struct neuron_device *nd, int nc_id, int row_grp_id, u64 *val)
+{
+	int ret = 0;
+	u64 wl_cycle_cnt = 0;
+	u64 fast_wl_cycle_cnt = 0;
+
+	ret = ndhal->ndhal_tpb.pe_get_counter_val(nd->npdev.bar0, ndhal->ndhal_tpb.pe_get_row_grp_activity_counter_offset(ndhal->ndhal_tpb.pe_wl_cntr_offsets[nc_id], row_grp_id), &wl_cycle_cnt);
+	if (ret) {
+		return ret;
+	}
+	ret = ndhal->ndhal_tpb.pe_get_fast_wl_cycle_cnt(nd, nc_id, row_grp_id, &fast_wl_cycle_cnt);
+	if (ret) {
+		return ret;
+	}
+
+	*val = wl_cycle_cnt + fast_wl_cycle_cnt;
+
+	return ret;
 }
 
 /**
@@ -1879,7 +2067,7 @@ static_assert( NUM_DMA_ENG_PER_DEVICE >= V3_NUM_DMA_ENG_PER_DEVICE, "Max dma eng
 
 /**
  * ndhal_register_funcs_v3() - initialize the dhal for v3 chips
- *  
+ *
  */
 int ndhal_register_funcs_v3(void) {
 	int ret = 0;
@@ -1901,11 +2089,15 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_address_map.mmap_nc_size = V3_MMAP_NC_SIZE;
 	ndhal->ndhal_address_map.nc_per_device = V3_NC_PER_DEVICE;
 	ndhal->ndhal_address_map.dev_nc_map = (1 << V3_NC_PER_DEVICE) - 1;
+	ndhal->ndhal_address_map.dice_per_device = V3_NUM_DIE_PER_DEVICE;
 	ndhal->ndhal_address_map.semaphore_count = V3_SEMAPHORE_COUNT;
 	ndhal->ndhal_address_map.event_count = V3_EVENTS_COUNT;
 	ndhal->ndhal_address_map.ts_per_device = V3_TS_PER_DEVICE;
 	ndhal->ndhal_address_map.dma_eng_per_nc = V3_DMA_ENG_PER_NC;
 	ndhal->ndhal_address_map.dram_channels = V3_MAX_DRAM_CHANNELS;
+	ndhal->ndhal_reset.reset_poll_interval = V3_NR_RESET_POLL_INTERVAL;
+	ndhal->ndhal_reset.reset_device_initial_poll_delay = 0;
+	ndhal->ndhal_reset.reset_tpb_initial_poll_delay = 0;
 	ndhal->ndhal_reset.initiate_max_wait_time = V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
 	ndhal->ndhal_reset.nr_post_reset_config = nr_post_reset_config_v3;
@@ -1936,13 +2128,15 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt = root_info_node_attrs_info_tbl_cnt_v3;
 	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl = root_info_node_attrs_info_tbl_v3;
 	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_ecc_nodes = nsysfsmetric_add_ecc_nodes_v3;
+	ndhal->ndhal_sysfs_metrics.nsysfsmetric_get_hbm_error_count = nsysfsmetric_get_hbm_error_count_v3;
+	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_tensor_engine_node = nsysfsmetric_add_tensor_engine_node_v3;
 	ndhal->ndhal_pci.axi_bar = BAR_UNUSED;
 	ndhal->ndhal_pci.dram_bar = 4;
 	ndhal->ndhal_pci.neuron_pci_release_bar = neuron_pci_release_bar_v3;
 	ndhal->ndhal_pci.neuron_pci_reserve_bar = neuron_pci_reserve_bar_v3;
 	ndhal->ndhal_pci.neuron_pci_set_npdev = neuron_pci_set_npdev_v3;
 	ndhal->ndhal_pci.neuron_pci_get_device_id = neuron_pci_get_device_id_v3;
-	ndhal->ndhal_pci.neuron_pci_device_id_to_rid_map = neuron_pci_device_id_to_rid_map_v3; 
+	ndhal->ndhal_pci.neuron_pci_device_id_to_rid_map = neuron_pci_device_id_to_rid_map_v3;
 	ndhal->ndhal_cdev.ncdev_mem_regions = ncdev_mem_regions_v3;
 	ndhal->ndhal_cdev.ncdev_bar0_write_blocked_addrs = ncdev_bar0_write_blocked_addrs_v3;
 	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v3;
@@ -1966,6 +2160,16 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_npe.npe_pod_ctrl = npe_pod_ctrl_v3;
 	ndhal->ndhal_npe.npe_class_node_id_show_data = npe_class_node_id_show_data_v3;
 	ndhal->ndhal_npe.npe_class_server_id_show_data = npe_class_server_id_show_data_v3;
+	ndhal->ndhal_npe.npe_class_ultraserver_mode_show_data = npe_class_ultraserver_mode_show_data_v3;
+	ndhal->ndhal_tpb.pe_xbus_count = 9;
+	ndhal->ndhal_tpb.pe_row_grp_count = 4;
+	ndhal->ndhal_tpb.pe_col_grp_count = 4;
+	ndhal->ndhal_tpb.pe_perf_reg_grp_size = V3_TPB_ARR_SEQ_QUEUE_PERF_SIZE;
+	ndhal->ndhal_tpb.pe_mm_cntr_offsets = ntpb_pe_mm_cntr_offsets_v3;
+	ndhal->ndhal_tpb.pe_wl_cntr_offsets = ntpb_pe_wl_cntr_offsets_v3;
+	ndhal->ndhal_tpb.pe_fast_wl_cntr_offsets = ntpb_pe_fast_wl_cntr_offsets_v3;
+	ndhal->ndhal_tpb.pe_idle_cntr_offsets = ntpb_pe_idle_cntr_offsets_v3;
+	ndhal->ndhal_tpb.pe_get_aggregated_wl_cycle_cnt = ntpb_pe_get_aggregated_wl_cycle_cnt_v3;
 	ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v3;
 
 	extern unsigned int nmetric_log_posts;
@@ -1977,6 +2181,7 @@ int ndhal_register_funcs_v3(void) {
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
 		ndhal->ndhal_pci.apb_bar = 2;
 		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_qemu;
+		ndhal->ndhal_address_map.dice_per_device = 1;
 
 		// Disable metrics on inkling
 		nmetric_log_posts = 0;
@@ -1990,6 +2195,7 @@ int ndhal_register_funcs_v3(void) {
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
 		ndhal->ndhal_pci.apb_bar = 0;
 		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_emu;
+		ndhal->ndhal_address_map.dice_per_device = 1;
 
 		// Disable metrics on emulation
 		nmetric_log_posts = 0;

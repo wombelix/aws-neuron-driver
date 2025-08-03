@@ -34,10 +34,6 @@ DECLARE_FAULT_ATTR(neuron_fail_fwio_read);
 DECLARE_FAULT_ATTR(neuron_fail_fwio_post_metric);
 #endif
 
-int use_rr = 0;
-module_param(use_rr, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-MODULE_PARM_DESC(use_rr, "use readless reads");
-
 int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count)
 {
 	if (ecc_offset != FW_IO_REG_SRAM_ECC_OFFSET &&
@@ -56,6 +52,27 @@ int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count)
 		return -EIO;
 	}
 
+	return 0;
+}
+
+int fw_io_hbm_uecc_repair_state_read(void *bar0, uint32_t *hbm_repair_state)
+{
+	int ret;
+	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_HBM_REPAIR_STATE_OFFSET;
+
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, hbm_repair_state, 1, false);
+	if (ret) {
+		pr_err("failed to get hbm reapirable state\n");
+		return -EIO;
+	}
+	/*
+	 *  HBM Repair State Bitfield notes:
+	 *      2 bits to represent the state of hbm repair
+	 *      0x0 means no pending repair
+	 *      0x1 means pending repair
+	 *      0x2 means repair failure
+	 */
+	*hbm_repair_state = *hbm_repair_state & 0x3;
 	return 0;
 }
 
@@ -84,11 +101,18 @@ int fw_io_serial_number_read(void *bar0, uint64_t *serial_number)
 	return ret;
 }
 
-int fw_io_device_power_read(void *bar0, u32 *power)
+int fw_io_device_power_read(void *bar0, u32 *power, unsigned die)
 {
 	int ret;
 
-	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_POWER_UTIL_OFFSET;
+	if (die >= ndhal->ndhal_address_map.dice_per_device) {
+		pr_err("die %u is out of range\n", die);
+		return -EINVAL;
+	}
+
+    // Read power utilization from MiscRAM.  The power utilization for each die are set up in contiguous 32 bit
+    // miscram registers, so we can treat it like an array of uint32s for our purposes.
+	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_POWER_UTIL_D0_OFFSET + 4*die;
 	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, power, 1, false);
 	if (ret) {
 		pr_err("failed to get device power from the device, ret = %d\n", ret);
@@ -530,4 +554,24 @@ void fw_io_destroy(struct fw_io_ctx *ctx)
 	}
 
 	kfree(ctx);
+}
+
+uint32_t fw_io_get_total_uecc_err_count(void *bar0) {
+	uint32_t total_uncorrected_ecc_err_count = 0;
+	uint32_t channel = 0;
+	uint32_t ecc_err_count = 0;
+	uint64_t ecc_offset = 0;
+
+	for (channel = 0; channel < ndhal->ndhal_address_map.dram_channels; channel++) {
+		ecc_offset = FW_IO_REG_HBM0_ECC_OFFSET + channel * sizeof(uint32_t);
+		ecc_err_count = 0;
+		int ret = fw_io_ecc_read(bar0, ecc_offset, &ecc_err_count);
+		if (ret) {
+			pr_err("sysfs failed to read ECC HBM%u error from FWIO\n", channel);
+		} else if (ecc_err_count != 0xdeadbeef) {
+			// ue count is in the lowest 16 bits
+			total_uncorrected_ecc_err_count += (ecc_err_count & 0x0000ffff);
+		}
+	}
+	return total_uncorrected_ecc_err_count;
 }

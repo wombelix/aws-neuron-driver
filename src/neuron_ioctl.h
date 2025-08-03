@@ -558,7 +558,14 @@ struct neuron_ioctl_pod_status {
 	__u32 state;		// [out] current pod election state
 	__u8 pod_type;      // [out] 0:NONE 1:P2P 2:SWITCH
 	__u8 pod_sz;        // [out] size of the pod
-	__u8 node_id;       // [out] Relative intra pod node id
+	__s8 node_id;       // [out] Relative intra pod node id
+};
+
+// extension of v1 pod status
+struct neuron_ioctl_pod_status_v2 {
+	struct neuron_ioctl_pod_status v1;
+	__u32 mode;				// [out] operating mode
+	__u32 modes_supported; 	// [out] mask of supported modes
 };
 
 struct neuron_ioctl_pod_ctrl {
@@ -566,6 +573,12 @@ struct neuron_ioctl_pod_ctrl {
 	__u32 ctrl;		    // [in] control
 	__u32 timeout;		// [in] timeout in seconds for the operation
 	__u32 state;		// [out] current pod election state
+};
+
+// extension of v1 pod control
+struct neuron_ioctl_pod_ctrl_v2 {
+	struct neuron_ioctl_pod_ctrl v1;
+	__u32 mode;			// [in] operating mode
 };
 
 #define NEURON_IOCTL_BASE 'N'
@@ -757,8 +770,10 @@ struct neuron_ioctl_pod_ctrl {
 #define NEURON_IOCTL_POD_INFO _IOWR(NEURON_IOCTL_BASE, 121, struct neuron_ioctl_pod_info)
 
 #define NEURON_IOCTL_POD_STATUS _IOWR(NEURON_IOCTL_BASE, 122, struct neuron_ioctl_pod_status)
+#define NEURON_IOCTL_POD_STATUS_V2 _IOWR(NEURON_IOCTL_BASE, 122, struct neuron_ioctl_pod_status_v2)
 
 #define NEURON_IOCTL_POD_CTRL _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl)
+#define NEURON_IOCTL_POD_CTRL_V2 _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl_v2)
 
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
 #define NEURON_IOCTL_MAX 124

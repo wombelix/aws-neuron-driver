@@ -25,11 +25,9 @@ int no_reset = 0;
 module_param(no_reset, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(no_reset, "Dont reset device");
 
-#define NR_RESET_INIT_PRE_WAIT_TIME_MS 7000
-#define NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS 3000
-#define NR_RESET_INIT_PRE_WAIT_TIME_INC_MS 2000
+#define NR_DEVICE_RESET_RETRY_INTERVAL  30000   // millisecond
+#define NR_TPB_RESET_RETRY_INTERVAL     10000   // millisecond
 
-#define NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS (NR_RESET_INIT_PRE_WAIT_TIME_INC_MS * 5)
 
 /**
  * ITER_COAL_REQS - iterate over coalesced reset requests
@@ -108,7 +106,11 @@ static int nr_reset_thread_fn(void *arg)
 		if (coal_cnt > 1) {
 			pr_info("nd%d: Coalesced %d reset requests\n", nd->device_index, coal_cnt);
 		}
-		ITER_COAL_REQS(request_iter, first_request, last_request, pr_info("nd%d: initiating reset request %u\n", nd->device_index, request_iter->request_id);)
+
+		ITER_COAL_REQS(request_iter, first_request, last_request, 
+					   pr_info("nd%d: initiating %s reset request %u\n", nd->device_index, 
+																		 (nc_map == NEURON_NC_MAP_DEVICE) ? "device" : "TPB", 
+																 		 request_iter->request_id);)
 
 		ret = ndhal->ndhal_reset.nr_initiate_reset(nd, nc_map);
 		if (ret) {
@@ -373,31 +375,66 @@ bool nr_op_in_reset_wnd(uint64_t op_start_time, struct neuron_device *nd)
 
 int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t tpb_reset_map)
 {
-	int i;
+	bool is_device_reset;
+	uint32_t reset_retry_interval;
 	ktime_t start_time;
+	ktime_t next_reset_retry_time;
+	uint32_t initial_poll_delay;
+	ktime_t cur_time;
+    s64 reset_time;
 
-	/* Wait times are different for device reset vs nc reset (aka tpb reset) */
-	uint32_t reset_init_retry_wait_time = (nc_map == NEURON_NC_MAP_DEVICE ? NR_RESET_INIT_PRE_WAIT_TIME_MS : NR_TPB_RESET_INIT_PRE_WAIT_TIME_MS);
-	uint32_t reset_inc = 0;
+	is_device_reset = (nc_map == NEURON_NC_MAP_DEVICE); // do device reset or TPB reset
+
+	/* Wait times are different for device reset and TPB reset */
+	reset_retry_interval = (is_device_reset ? NR_DEVICE_RESET_RETRY_INTERVAL : NR_TPB_RESET_RETRY_INTERVAL);
 
 	start_time = ktime_get();
 
+	/* Send reset request to firmware */
+	fw_io_initiate_reset(nd->npdev.bar0, is_device_reset, tpb_reset_map);
+	next_reset_retry_time = ktime_add_ms(start_time, reset_retry_interval);
+
+	/* V1 only. Sleep extra time before polling */
+	initial_poll_delay = (nc_map == NEURON_NC_MAP_DEVICE ? 
+											 ndhal->ndhal_reset.reset_device_initial_poll_delay : 
+											 ndhal->ndhal_reset.reset_tpb_initial_poll_delay);
+	if (nr_msleep_stoppable(nd, initial_poll_delay)) {
+		return -1;
+	}
+
 	do {
-		fw_io_initiate_reset(nd->npdev.bar0, nc_map == NEURON_NC_MAP_DEVICE, tpb_reset_map);
-		// once reset is initiated, FWIO wont respond until the device
-		// comes out of reset, so sleep here for sometime
-		if (nr_msleep_stoppable(nd, reset_init_retry_wait_time + reset_inc))
+		/* 
+		 * After reset initiation, firmware becomes unresponsive until
+		 * the device completes the reset. Wait before next polling cycle.
+		 */
+		if (nr_msleep_stoppable(nd, ndhal->ndhal_reset.reset_poll_interval)) {
 			return -1;
-		for (i = 0; i < ndhal->ndhal_reset.retry_count; i++) {
-			if (fw_io_is_reset_initiated(nd->npdev.bar0))
-				return 0;
-			if (nd->nr.stop)
-				return -1;
 		}
 
-		reset_inc = (reset_inc >= NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS) ? NR_RESET_INIT_PRE_WAIT_TIME_INC_MAX_MS : reset_inc + NR_RESET_INIT_PRE_WAIT_TIME_INC_MS;
+		/* Poll to check if firmware has acknowledged the reset request */
+		if (fw_io_is_reset_initiated(nd->npdev.bar0)) {
+			// Reset is done. Record the time to metrics.
+			reset_time = ktime_ms_delta(ktime_get(), start_time);
+			if (reset_time > 0) {
+				nmetric_set_max_reset_time_ms(nd, (uint64_t)reset_time, is_device_reset);
+			} else {
+				return -1;
+			}
+			return 0;
+		}
 
-	} while (ktime_to_ms(ktime_sub(ktime_get(), start_time)) < ndhal->ndhal_reset.initiate_max_wait_time);
+		cur_time = ktime_get();
+		if (ktime_after(cur_time, next_reset_retry_time)) {
+			/* 
+			 * If timed out, retry the reset.
+			 * This handles cases where the initial/previous reset was missed.
+			 */
+			fw_io_initiate_reset(nd->npdev.bar0, is_device_reset, tpb_reset_map);
 
+			next_reset_retry_time = ktime_add_ms(cur_time, reset_retry_interval);
+		}
+	} while (ktime_before(ktime_get(), ktime_add_ms(start_time, ndhal->ndhal_reset.initiate_max_wait_time)));
+
+	/* Timeout reached - reset failed */
 	return -1;
 }
