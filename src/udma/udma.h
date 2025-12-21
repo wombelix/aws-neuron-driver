@@ -66,7 +66,8 @@ union udma_desc {
 #define M2S_DESC_LEN_SHIFT 0
 #define M2S_DESC_LEN_MASK (0xffff << M2S_DESC_LEN_SHIFT) /* Data length */
 
-#define S2M_DESC_INT_EN BIT(28) /* Enable Interrupt on completion */
+#define S2M_DESC_INT_EN 			BIT(28) /* Enable Interrupt on completion */
+#define S2M_DESC_STRONG_ORDER_WR	BIT(29) /* Enable strong order write on this descriptor, V3+ only */
 #define S2M_DESC_RING_ID_SHIFT 24
 #define S2M_DESC_RING_ID_MASK (0x3 << S2M_DESC_RING_ID_SHIFT) /* Ring ID bits in s2m */
 #define S2M_DESC_RING_SHIFT UDMA_S2M_Q_RDRBP_LOW_ADDR_SHIFT
@@ -195,7 +196,8 @@ struct udma {
 enum {
 	UDMA_M2M_BARRIER_NONE = 0,
 	UDMA_M2M_BARRIER_DMB = 1,
-	UDMA_M2M_BARRIER_WRITE_BARRIER = 2
+	UDMA_M2M_BARRIER_WRITE_BARRIER = 2,
+	UDMA_M2M_BARRIER_SOW = 3
 };
 
 /**

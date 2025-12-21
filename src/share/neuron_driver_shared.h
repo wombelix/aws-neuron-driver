@@ -6,6 +6,7 @@
 #define NEURON_DRIVER_SHARED_H
 
 #include <linux/types.h>
+#include "neuron_driver_shared_tensor_batch_op.h"
 
 enum neuron_driver_feature_flag {
 	NEURON_DRIVER_FEATURE_DMABUF = 1ull <<  0, 
@@ -16,6 +17,7 @@ enum neuron_driver_feature_flag {
 	NEURON_DRIVER_FEATURE_HBM_SCRUB = 1ull << 5,
 	NEURON_DRIVER_FEATURE_MEM_ALLOC64 = 1ull << 6,
 	NEURON_DRIVER_FEATURE_CONTIGUOUS_SCRATCHPAD = 1ull << 7,
+	NEURON_DRIVER_FEATURE_ZEROCOPY = 1ull << 8,
 };
 
 // FIXME  this should be more generic - like node type.
@@ -46,6 +48,11 @@ enum neuron_ultraserver_mode {
 	NEURON_ULTRASERVER_MODE_X2H = 2,  		 // 2 node US configuration using horizontal links 
 	NEURON_ULTRASERVER_MODE_X2V = 3,  		 // 2 node US configuration using vertical links 
 	NEURON_ULTRASERVER_MODE_X1 = 4,  		 // 1 node US configuration (standalone)
+};
+
+enum neuron_metrics_mode {
+    NEURON_METRICS_MODE_PERIODIC_ENABLE = 0,    // enable periodic posting
+    NEURON_METRICS_MODE_PERIODIC_DISABLE = 1,   // disable periodic posting
 };
 
 #define NEURON_NC_MAP_DEVICE (0xffffffff)
@@ -90,6 +97,10 @@ enum neuron_dma_h2t_ctx_handle_type {
 	NEURON_DMA_H2T_CTX_HANDLE_CNT    =  3   // number of dma 
 };
 
+/*
+ * H2T DMA Default Queue id
+ */
+#define NEURON_DMA_H2T_DEFAULT_QID (-1)
 
 /*
  * NOTE: In runtime version 5, this enum was passed in as a bool instead -
@@ -187,6 +198,17 @@ struct neuron_ioctl_nc_map {
     __u32 num_entries;
     struct neuron_ioctl_nc_map_entry mappings[];
 };
+
+/* A batch of copy operations */
+typedef struct neuron_memcpy_batch {
+	__u64 mem_handle;               // [in] Source or Destination memory handle from/to data needs to be copied.
+	__u64 mem_handle_offset;        // [in] Memory offset of the memory handle
+	const nrt_tensor_batch_op_t *ops_ptr; // [in] Pointer to array of operations
+	__u32 num_ops;                  // [in] Number of neuron_memcpy_op operations.
+	__u16 bar4_wr_threshold;        // [in] Threshold below which we will use bar4 direct write vs. DMA. Subject to driver limits.
+	__u16 flags;                    // [in] TBD.
+	void *context;                  // [in] TBD. opaque context pointer passed back in completion queue
+} neuron_memcpy_batch_t;
 
 /*
  * Memory allocation categories for sysfs counters

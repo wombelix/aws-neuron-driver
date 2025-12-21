@@ -464,7 +464,6 @@ static void mpset_set_dram_and_mpset_info_v2(struct mempool_set *mpset, u64 *dev
 /**
  * mpset_block_carveout_regions() 
  *          - in v2, block carve out regions: Upper 16 MB is used internally by firmware
- *          - in v1, do nothing and just return 0 
  * 
  * @param nd: neuron device
  * @param mpset: pointer to mpset
@@ -531,25 +530,25 @@ static uint32_t ndmar_get_h2t_eng_id_v2(struct neuron_device *nd, uint32_t nc_id
 }
 
 /** 
- * ndmar_get_h2t_qid()  - return the H2T engine's queue id for this core 
+ * ndmar_get_h2t_def_qid()  - return the H2T engine's default queue id for this core 
  *
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA queue id
  */
-static int ndmar_get_h2t_qid_v2(uint32_t nc_id)
+static int ndmar_get_h2t_def_qid_v2(uint32_t nc_id)
 {
 	return 0;
 }
 
 /** 
- * ndmar_is_h2t_q() - return true 
+ * ndmar_is_h2t_def_q() - return true 
  *
  * @param nd: Neuron device which contains the DMA engine
  * @param eng_id: engine id
  * @param q_id:  queue id
- * Return true if this is an h2t queue
+ * Return true if this is a default h2t queue
  */
-static bool ndmar_is_h2t_q_v2(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
+static bool ndmar_is_h2t_def_q_v2(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
 {
 	return (nd->ndma_engine[eng_id].used_for_h2t && (q_id == 0));
 }
@@ -699,7 +698,7 @@ const int *inf2_24xl_neighbor_ids[6] = {
  */
 static int fw_io_topology_v2(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
 {
-	// V2 does not have the device support to detect east/west/south/north neighbors like V1,
+	// V2 does not have the device support to detect east/west/south/north neighbors,
 	// so its topology is hardcoded based on instance type.
 	*count = 0;
 
@@ -768,6 +767,39 @@ static int fw_io_read_csr_array_v2(void **ptrs, u32 *values, u32 num_csrs, bool 
 		return -EINVAL;
 
 	return fw_io_read_csr_array_direct(ptrs, values, num_csrs, operational);
+}
+
+
+/**
+ * fw_io_execute_request() - Execute commands
+ * 
+ * @param ctx: FWIO context
+ * @param command_id: command ID
+ * @param req: Request data
+ * @param req_size: Request size
+ * @param resp: Response buffer
+ * @param resp_size: Response buffer size
+ *
+ * @return int: 0 on success, -1 on failure
+ */
+static int fw_io_execute_request_v2(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size, u8 *resp, u32 resp_size)
+{
+	return fw_io_execute_request(ctx, command_id, req, req_size, resp, resp_size);
+}
+
+
+/**
+ * fw_io_post_metric() - Post metrics to CW
+ * 
+ * @param ctx: FWIO context
+ * @param data: Data to write
+ * @param size: Size of data
+ *
+ * @return int: 0 on success, -1 on failure
+ */
+static int fw_io_post_metric_v2(struct fw_io_ctx *ctx, u8 *data, u32 size)
+{
+	return fw_io_post_metric(ctx, data, size);
 }
 
 
@@ -841,7 +873,7 @@ static int root_info_node_attrs_info_tbl_cnt_v2 = sizeof(root_info_node_attrs_in
  * @param attr_info_tbl: the ecc attributes as an array
  * @return int 0 on success; otherwise on failure
  * 
- * Note: ecc errors are only supported by sysfs for V2. TODO: V1 support will be added 
+ * Note: ecc errors are only supported by sysfs for V2.
  */
 static int nsysfsmetric_add_ecc_nodes_v2(struct nsysfsmetric_metrics *metrics, 
                                   struct nsysfsmetric_node *stats_node,
@@ -1064,8 +1096,6 @@ static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
  * @param dev: PCI device
  * @param nd: neuron device
  * @return int: 0 on success, otherwise on failure
- * 
- * for V1, this function is dummy
  */
 static int neuron_pci_get_device_id_v2(struct neuron_device *nd, struct pci_dev *dev)
 {
@@ -1093,7 +1123,7 @@ static int neuron_pci_get_device_id_v2(struct neuron_device *nd, struct pci_dev 
 		return -ENODEV;
 	}
 
-	// TODO - TRN1 and INF2 mappings are different - likely all of this and the INF1 should be encapsulated.
+	// TODO - TRN1 and INF2 mappings are different
 	if (nd->pdev->device == TRN1_DEVICE_ID0)
 		nd->device_index = neuron_pci_routing_id_to_user_id(routing_id);
 	else
@@ -1153,7 +1183,7 @@ neuron_pci_device_id_to_rid_map_v2(uint32_t * count, uint32_t * did_to_rid_map)
  *
  *           - Version 3 of runtime requires 1) aligned memory allocation support  2) SPROT.
  *           - Version 4 of the runtime requires support for DMA queue init w/o already allocated rings (2.7).
- *           - Version 5 of the runtime requires V2 device renumbering (don't care for V1).
+ *           - Version 5 of the runtime requires V2 device renumbering (don't care before V2).
  *           - Version 6 of the runtime requires ham notification support,
  *              + new V2 reset api for single-tpb reset + new notification init API with force mem realloc/resize.
  *           - Version 7 of the runtime requires udma queue size support for non power of 2 rings + dmabuf support.
@@ -1172,7 +1202,7 @@ static void ncdev_compatible_version_v2(struct neuron_ioctl_compatible_version *
 }
 
 /**
- * ncdev_quiesce_exec_on_proc_exit() - for V1, before resetting DMA, allow current NeuronCore execution to finish and settle
+ * ncdev_quiesce_exec_on_proc_exit()
  * 
  * Note:
  *      When a process is killed, the driver resets DMA but there is no
@@ -1196,102 +1226,10 @@ static void ncdev_quiesce_exec_on_proc_exit_v2(void)
 	return;
 }
 
-/**
- * ncdev_bar_write_data() - write data to bar
- * 
- * @param nd: neuron device
- * @param bar: the BAR to write to
- * @param reg_addresses
- * @param data: the data to be written into the bar
- * @param data_count: the number of data to be written
- * @return 0 on success, otherwise failure
- * 
- * V1:
- *    For BAR0 the addresses are passed as array(random access).
- *    For BAR2 a single address is provided and driver does sequential writes.
- * V2:
- *    Only BAR0 is used right now. TODO: change runtime ioctl
-*/
-static int ncdev_bar_write_data_v2(struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count)
-{
-	if (bar == 0) {
-		int i;
-		for (i = 0; i < data_count; i++) {
-			u64 off = reg_addresses[i] - (u64)nd->npdev.bar0;
-			if (off > nd->npdev.bar0_size) {
-				return -EINVAL;
-			}
-			if (ndhal->ndhal_ndma.ndma_is_bar0_write_blocked(off)) {
-				return -EINVAL;
-			}
-			writel(data[i], nd->npdev.bar0 + off);
-			trace_bar_write(nd, bar, off, data[i]);
-		}
-	} else if (bar == 4) {
-		// TODO: we don't have any use case for r/w memory over the BAR right now.  Disabling.
-		//
-		// We'd like to use DMA for r/w of BAR4 because we might expect access to large amounts of data.
-		// Access via DMA requires an application to own a TPB because it determines which of the h2t DMAs
-		// are safe to use, otherwise a TPB along with its DMA could be reset while that DMA is used here.
-		// Don't want/need to solve it now.
-		return -EINVAL;
-
-		/*
-		dma_addr_t dst_addr = reg_addresses[0] - (u64)nd->npdev.bar0;
-
-		ret = ndma_memcpy(nd, 0, virt_to_phys(data) | ndhal->ndhal_address_map.pci_host_base, dst_addr, data_size);
-		if (ret)
-			return ret;
-		*/
-	} else {
-		pr_err("direct BAR%d write is not supported.\n", bar);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static void ncdev_get_default_tpbs_for_hbm_v2(u32 hbm_index, u32 tpbs[MAX_NC_PER_DEVICE], u32 *tpb_count)
 {
 	tpbs[0] = hbm_index;
 	*tpb_count = 1;
-}
-
-/* UDMA Functions */
-#define UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY (1 << 16)
-/**
- * udma_m2s_data_rd_cfg_boundaries_set(): set data_rd_cfg to break at 256B boundaries
- * 
- * @param udma: the UDMA structure
- * 
- * for V1, this function is dummy
- */
-static void udma_m2s_data_rd_cfg_boundaries_set_v2(struct udma *udma)
-{
-	reg_write32(&udma->udma_regs_m2s->axi_m2s.data_rd_cfg,
-	  UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY | 0x8);
-}
-
-#define UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB (1 << 2)
-/**
- * udma_q_config() - set misc queue configurations
- *
- * @param udma_q udma_q: the queue data structure
- *
- * for V1, this function is dummy
- */
-static void udma_q_config_v2(struct udma_q *udma_q)
-{
-	if (udma_q->type != UDMA_TX) {
-		return;
-	}
-
-	uint32_t *reg_addr = &udma_q->q_regs->m2s_q.rlimit.mask;
-	uint32_t val = udma_q->rlimit_mask;
-
-	// enable DMB
-	val &= ~UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB;
-	reg_write32(reg_addr, val);
 }
 
 
@@ -1299,7 +1237,7 @@ static void udma_q_config_v2(struct udma_q *udma_q)
 /**
  * ndma_get_wait_for_completion_time() - calculate the first and the following wait times for a DMA tranfer completion
  * 
- *      One full descriptor takes ~4 usec to transfer (64K at 16G/sec) on V2  and ~16 usec to transfer on V1.
+ *      One full descriptor takes ~4 usec to transfer (64K at 16G/sec) on V2.
  *      The last descriptor may be partial, so wait 1/4 64K transfer time for that descriptor.
  *      Also, count includes the completion descriptor so don't include that in the count.
  * 
@@ -1332,14 +1270,12 @@ static void ndma_get_wait_for_completion_time_v2_emu(u32 count, bool async, u64 
 
 /**
  * ndma_validate_pa() - check the validity of the desc physical addresses
- *      V1:
  *         west side: PCIEX4_1_BASE: 0x00c00000000000 host: PCIEX8_0_BASE: 0x00400000000000
  *         If west side is set then even host bit is set. When mc_alloc is called we set only the host bit
  *         and insert into tree.. If some one sets the west side on that PA, then there is no way to check that,
  *         since there could be a tdram address that could have the west side set
  *         (that will look as though host is also set)
- *      V2:
- *         similar idea.  Just check for valid address allocated in host memory
+ *         Just check for valid address allocated in host memory
  *
  * @param nd: the neuron device
  * @param pa: the desc physical addresses
@@ -1594,6 +1530,12 @@ static int npe_pod_ctrl_v2(struct neuron_device *nd, u32 pod_ctrl, enum neuron_u
 	return 0;
 }
 
+static int perf_set_profile_v2(struct neuron_device *nd, uint32_t profile)
+{
+	// NOP implementation for v2
+    return 0;
+}
+
 /**
  * npe_class_node_id_show_data() - return sysfs class node_id
  *
@@ -1708,8 +1650,6 @@ int ndhal_register_funcs_v2(void) {
 	ndhal->ndhal_address_map.dma_eng_per_nc = V2_DMA_ENG_PER_NC;
 	ndhal->ndhal_address_map.dram_channels = V2_MAX_DRAM_CHANNELS;
 	ndhal->ndhal_reset.reset_poll_interval = V2_NR_RESET_POLL_INTERVAL;
-	ndhal->ndhal_reset.reset_device_initial_poll_delay = 0;
-	ndhal->ndhal_reset.reset_tpb_initial_poll_delay = 0;
 	ndhal->ndhal_reset.initiate_max_wait_time = V2_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
 	ndhal->ndhal_reset.nr_post_reset_config = nr_post_reset_config_v2;
@@ -1726,8 +1666,8 @@ int ndhal_register_funcs_v2(void) {
 	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v2;
 	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v2;
 	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v2;
-    ndhal->ndhal_ndmar.ndmar_get_h2t_qid = ndmar_get_h2t_qid_v2;
-    ndhal->ndhal_ndmar.ndmar_is_h2t_q = ndmar_is_h2t_q_v2;
+    ndhal->ndhal_ndmar.ndmar_get_h2t_def_qid = ndmar_get_h2t_def_qid_v2;
+    ndhal->ndhal_ndmar.ndmar_is_h2t_def_q = ndmar_is_h2t_def_q_v2;
 	ndhal->ndhal_ndmar.nr_init_h2t_eng = nr_init_h2t_eng_v2;
 	ndhal->ndhal_ndmar.ndmar_is_nx_ring = ndmar_is_nx_ring_v2;
 	ndhal->ndhal_ndmar.ndmar_quiesce_queues = ndmar_quiesce_queues_v2;
@@ -1735,6 +1675,8 @@ int ndhal_register_funcs_v2(void) {
 	ndhal->ndhal_fw_io.fw_io_topology = fw_io_topology_v2;
 	ndhal->ndhal_fw_io.fw_io_register_readless_read_region = fw_io_register_readless_read_region_v2;
 	ndhal->ndhal_fw_io.fw_io_read_csr_array = fw_io_read_csr_array_v2;
+	ndhal->ndhal_fw_io.fw_io_execute_request = fw_io_execute_request_v2;
+	ndhal->ndhal_fw_io.fw_io_post_metric = fw_io_post_metric_v2;
 	ndhal->ndhal_mmap.dm_mmap_special = dm_mmap_special_v2;
 	ndhal->ndhal_mmap.mmap_get_bar4_offset = mmap_get_bar4_offset_v2;
 	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt = root_info_node_attrs_info_tbl_cnt_v2;
@@ -1753,12 +1695,9 @@ int ndhal_register_funcs_v2(void) {
 	ndhal->ndhal_cdev.ncdev_bar0_write_blocked_addrs = ncdev_bar0_write_blocked_addrs_v2;
 	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v2;
 	ndhal->ndhal_cdev.ncdev_quiesce_exec_on_proc_exit = ncdev_quiesce_exec_on_proc_exit_v2;
-	ndhal->ndhal_cdev.ncdev_bar_write_data = ncdev_bar_write_data_v2;
 	ndhal->ndhal_cdev.ncdev_logical_to_physical_nc_map = NULL;
 	ndhal->ndhal_cdev.ncdev_get_default_tpbs_for_hbm = ncdev_get_default_tpbs_for_hbm_v2;
 	ndhal->ndhal_udma.num_beats = 1024; // >= UDMA_REV_ID_4
-	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set = udma_m2s_data_rd_cfg_boundaries_set_v2;
-	ndhal->ndhal_udma.udma_q_config = udma_q_config_v2;
 	ndhal->ndhal_ndma.ndma_retry_memcpy = true;
 	ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v2;
 	ndhal->ndhal_ndma.ndma_validate_pa = ndma_validate_pa_v2;
@@ -1773,6 +1712,7 @@ int ndhal_register_funcs_v2(void) {
 	ndhal->ndhal_npe.npe_class_node_id_show_data = npe_class_node_id_show_data_v2;
 	ndhal->ndhal_npe.npe_class_server_id_show_data = npe_class_server_id_show_data_v2;
 	ndhal->ndhal_npe.npe_class_ultraserver_mode_show_data = npe_class_ultraserver_mode_show_data_v2;
+	ndhal->ndhal_perf.perf_set_profile = perf_set_profile_v2;
 	ndhal->ndhal_tpb.pe_xbus_count = 5;
 	ndhal->ndhal_tpb.pe_row_grp_count = 4;
 	ndhal->ndhal_tpb.pe_col_grp_count = 4;

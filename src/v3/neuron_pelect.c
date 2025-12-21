@@ -157,6 +157,16 @@
 #include "../neuron_crwl.h"
 #include "neuron_pelect.h"
 
+int userver_pds_node_cnt = 2;
+module_param(userver_pds_node_cnt, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(userver_pds_node_cnt, "pds ultraserver node count");
+
+int userver_pds_server_id = 0x0001;
+module_param(userver_pds_server_id, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+MODULE_PARM_DESC(userver_pds_server_id, "pds ultraserver id");
+
+
+/* Enable ultraserver auto election (4 node configuration) by default  */
 /*
  * UltraServer ctl to
  * - control of when election is triggered
@@ -282,6 +292,8 @@ typedef struct pod_neighbor_io {
 	struct mem_chunk *rx_mc;
 	struct mem_chunk *data_mc;
 } pod_neighbor_io_t;
+
+static void npe_pds_spoof(void);
 
 static bool npe_pod_ctl_is_set(int value)
 {
@@ -844,11 +856,11 @@ static int npe_primary_device_do_election(struct neuron_device *nd, int secondar
 
 	// Initialize neighbor io structures
 	// Left
-	ret = npe_pod_neighbor_io_init(&(pnio[0][0]), nd, 36);
-	ret |= npe_pod_neighbor_io_init(&(pnio[0][1]), nd, 68);
+	ret = npe_pod_neighbor_io_init(&(pnio[0][0]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[0][0]);
+	ret |= npe_pod_neighbor_io_init(&(pnio[0][1]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[0][1]);
 	// Right
-	ret |= npe_pod_neighbor_io_init(&(pnio[1][0]), nd, 4);
-	ret |= npe_pod_neighbor_io_init(&(pnio[1][1]), nd, 100);
+	ret |= npe_pod_neighbor_io_init(&(pnio[1][0]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[1][0]);
+	ret |= npe_pod_neighbor_io_init(&(pnio[1][1]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[1][1]);
 	if (ret) {
 		pr_err("neighbor io initialization failed");
 		goto done;
@@ -914,7 +926,6 @@ static int npe_primary_device_do_election(struct neuron_device *nd, int secondar
 	// determine our node id node cnt and pod serial number
 	//
 	node_id = npe_get_node_id(serial_number, nbr_serial_number[0], nbr_serial_number[1], diagonal, &node_cnt, &pod_serial_number);
-	ret = 0;
 
 	// set election status, with bad node id
 	//
@@ -988,11 +999,11 @@ static int npe_secondary_device_vet(struct neuron_device *nd, volatile long unsi
 
 	// Initialize neighbor io structures
 	// Left
-	ret = npe_pod_neighbor_io_init(&(pnio[0][0]), nd, 36);
-	ret |= npe_pod_neighbor_io_init(&(pnio[0][1]), nd, 68);
+	ret = npe_pod_neighbor_io_init(&(pnio[0][0]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[0][0]);
+	ret |= npe_pod_neighbor_io_init(&(pnio[0][1]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[0][1]);
 	// Right
-	ret |= npe_pod_neighbor_io_init(&(pnio[1][0]), nd, 4);
-	ret |= npe_pod_neighbor_io_init(&(pnio[1][1]), nd, 100);
+	ret |= npe_pod_neighbor_io_init(&(pnio[1][0]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[1][0]);
+	ret |= npe_pod_neighbor_io_init(&(pnio[1][1]), nd, ndhal->ndhal_npe.npe_neighbor_eng_ids[1][1]);
 
 	if (ret) {
 		pr_err("nd%02d: neighbor io initialization failed", nd->device_index);
@@ -1040,6 +1051,9 @@ static int npe_secondary_device_vet(struct neuron_device *nd, volatile long unsi
 					nd->device_index, (i==0) ? 'L':'R', (dev_id > 15) ? 0 : dev_id, nbr_serial_number[i]);
 			ret = -EPIPE;
 		}
+	}
+	if (ret) {
+		goto done;
 	}
 
 	// set election status, check neighbor's election status, and
@@ -1154,7 +1168,7 @@ int npe_election_exec_on_rst(struct neuron_device *nd, bool reset_successful)
 	// Device 0 is the primary actor in the election/topology discovery process, so 
 	// when we process Device 0 reset completions, we need to do some bookkeeping.
 	//
-	if (nd->device_index == 0) {
+	if ((nd->device_index == 0) && (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_ULTRASERVER)) {
 		// Prior election results are cached in miscram, for testing purposes, 
 		// we can clear the results through a module parameter, allowing us
 		// to ignore the cached results.
@@ -1188,6 +1202,13 @@ int npe_election_exec_on_rst(struct neuron_device *nd, bool reset_successful)
 			goto done;
 		}
 	}
+
+	// spoof PDS topology/election data
+	//
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+		npe_pds_spoof();
+		goto done;
+	}
 	
 	// if we aren't kicking off election on first driver reset (testing) or 
 	// if we aren't in init state then we've already made an election decision.
@@ -1201,7 +1222,7 @@ int npe_election_exec_on_rst(struct neuron_device *nd, bool reset_successful)
 	if (!npe_all_rst_complete()) {
 			goto done;
 	}
-
+	
 	npe_initiate_election(ndhal_pelect_data.nbr_data_read_timeout);
 
 done:
@@ -1563,6 +1584,12 @@ int npe_pod_ctrl(struct neuron_device *nd, u32 ctrl, enum neuron_ultraserver_mod
 	} else if (ctrl == NEURON_NPE_POD_CTRL_REQ_POD) {
 		int mark_cnt = ncrwl_range_mark_cnt_get();
 
+		// no election required on PDS, return success
+		if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+			ret = 0;
+			goto done;
+		}
+
 		if ((mark_cnt == 0) && npe_all_rst_complete()) {
 			npe_initiate_election(timeout * 1000);
 			ret = 0;
@@ -1772,6 +1799,42 @@ ssize_t npe_class_ultraserver_mode_show_data(char *buf)
 	// zap the last "," in the output
 	output[len-1] = 0;
 	return dhal_sysfs_emit(buf, "%s\n", output);
+}
+
+/* npe_pds_spoof(void)
+ *
+ *   temp spoof of PDS platform data
+ *
+ */
+static void npe_pds_spoof(void)
+{
+	static bool initialized = false;
+	pr_info("spoofing pds data");
+	
+	if (initialized) {
+		return;
+	}
+
+	ndhal_pelect_data.node_cnt = userver_pds_node_cnt;
+
+	if (ndhal_pelect_data.node_cnt == 0) {
+		ndhal_pelect_data.node_id = -1;
+	} else if (ndhal_pelect_data.node_cnt == 2) {
+		// node_cnt of 2 uses V-links
+		ndhal_pelect_data.lr_mask = 0x1;
+		ndhal_pelect_data.node_id = ndhal->ndhal_arch.server_id;
+	} else if (ndhal_pelect_data.node_cnt == 4) {
+		// TODO PDS add in rack id
+		ndhal_pelect_data.node_id = ndhal->ndhal_arch.server_id; 
+	} else {
+		ndhal_pelect_data.node_cnt = 0;
+		pr_err("invalid PDS node count of %d", ndhal_pelect_data.node_cnt);
+	}
+
+	ndhal_pelect_data.pod_serial_num = userver_pds_server_id;
+	ndhal_pelect_data.pod_state_internal = NEURON_NPE_POD_ST_ELECTION_SUCCESS;
+	
+	initialized = true;
 }
 
 int npe_init(void)

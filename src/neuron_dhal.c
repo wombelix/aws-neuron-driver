@@ -29,21 +29,23 @@ int neuron_dhal_init(unsigned int pci_device_id) {
     }
     mutex_unlock(&ndhal_init_lock);
 
-    ndhal->arch = narch_get_arch();
+    ndhal->ndhal_arch.arch = narch_get_arch();
     ndhal->pci_device_id = pci_device_id;
-    ret = ndhal_register_funcs_vc();
-    switch (ndhal->arch) {
-        case NEURON_ARCH_V1:
-            ret = ndhal_register_funcs_v1();
-            break;
+    ndhal_register_funcs_vc();
+
+    switch (ndhal->ndhal_arch.arch) {
         case NEURON_ARCH_V2:
             ret = ndhal_register_funcs_v2();
             break;
         case NEURON_ARCH_V3:
             ret = ndhal_register_funcs_v3();
             break;
+        case NEURON_ARCH_V4:
+            ret = ndhal_register_funcs_v3(); // use v3 as base
+            ret = ndhal_register_funcs_v4(); // apply v4 overrides
+            break;
         default:
-            pr_err("Unknown HW architecture: %d. Can't init neuron_dhal.\n", ndhal->arch);
+            pr_err("Unknown HW architecture: %d. Can't init neuron_dhal.\n", ndhal->ndhal_arch.arch);
             return -EINVAL;
     }
 

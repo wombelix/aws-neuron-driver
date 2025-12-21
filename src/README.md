@@ -46,9 +46,6 @@ Neuron Devices implement a communication channel (FWIO) that allows the driver a
 * neuron_cdev.c - char device interface.
 * fw_io.[ch] - Communication channel
 * udma/* - DMA engines and queues HAL
-* v1/address_map.h - Neuron Device address space
-* v1/putils.h - Notification HAL
-* v1/tdma.h - Additional DMA HAL functionality
 
 # Compiling and Installing
 

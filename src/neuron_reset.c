@@ -379,7 +379,6 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
 	uint32_t reset_retry_interval;
 	ktime_t start_time;
 	ktime_t next_reset_retry_time;
-	uint32_t initial_poll_delay;
 	ktime_t cur_time;
     s64 reset_time;
 
@@ -393,14 +392,6 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
 	/* Send reset request to firmware */
 	fw_io_initiate_reset(nd->npdev.bar0, is_device_reset, tpb_reset_map);
 	next_reset_retry_time = ktime_add_ms(start_time, reset_retry_interval);
-
-	/* V1 only. Sleep extra time before polling */
-	initial_poll_delay = (nc_map == NEURON_NC_MAP_DEVICE ? 
-											 ndhal->ndhal_reset.reset_device_initial_poll_delay : 
-											 ndhal->ndhal_reset.reset_tpb_initial_poll_delay);
-	if (nr_msleep_stoppable(nd, initial_poll_delay)) {
-		return -1;
-	}
 
 	do {
 		/* 
@@ -416,7 +407,7 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
 			// Reset is done. Record the time to metrics.
 			reset_time = ktime_ms_delta(ktime_get(), start_time);
 			if (reset_time > 0) {
-				nmetric_set_reset_time_metrics(nd, (uint64_t)reset_time, is_device_reset);
+				nmetric_set_reset_time_metrics(nd, reset_time, is_device_reset);
 			} else {
 				return -1;
 			}

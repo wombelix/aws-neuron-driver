@@ -344,8 +344,13 @@ int ndmabuf_get_fd(u64 va, u64 size, int *dmabuf_fd)
 
 	fd = dma_buf_fd(dmabuf, exp_info.flags);
 	if (fd < 0) {
-		pr_err("error %d while installing a file descriptor for dma-buf\n", ret);
-		ret = -EINVAL;
+		if (fd == -EMFILE) {
+			pr_err("dma_buf_fd failed: too many open files\n");
+			ret = -EMFILE;
+		} else {
+			pr_err("error %d while installing a file descriptor for dma-buf\n", ret);
+			ret = -EINVAL;
+		}
 		goto err_dma_buf_put;
 	}
 

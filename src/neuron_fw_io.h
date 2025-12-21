@@ -7,24 +7,55 @@
 
 #include <linux/types.h>
 
+union fw_io_request_hdr {
+	struct {
+		u8 sequence_number; // sequence number to be copied in the next response.
+		u8 command_id; // command to hw.
+		u16 size; // request size in bytes including the header.
+		u32 crc32; // crc32 of the entire request, crc32 must be set to 0 before calculating
+	} hdr;
+	struct {
+		u32 dw0; // bytes 0-3: sequence_number, command_id, size
+		u32 dw1; // bytes 4-7: crc32
+	} reg;
+};
+
+union fw_io_response_hdr {
+	struct {
+		u8 sequence_number; // request sequence number
+		u8 error_code; // 0 means request was successfully completed
+		u16 size; // response size in bytes including this header
+	} hdr;
+	struct {
+		u32 dw0;
+	} reg;
+};
+
 struct fw_io_request {
-	u8 sequence_number; // sequence number to be copied in the next response.
-	u8 command_id; // command to hw.
-	u16 size; // request size in bytes including the header.
-	u32 crc32; // crc32 of the entire request, crc32 must be set to 0 before calculating
-	u8 data[0];
+	union fw_io_request_hdr request_hdr;
+	u8 data[];
 };
 
 struct fw_io_response {
-	u8 sequence_number; // request sequence number
-	u8 error_code; // 0 means request was successfully completed
-	u16 size; // response size in bytes including this header
-	u8 data[0]; // response data if any
+	union fw_io_response_hdr response_hdr;
+	u8 data[];
+};
+
+union fw_io_req_perfprofile_data {
+	struct {
+		uint32_t reserved;
+		uint8_t profile;
+		uint8_t voltage_margin;
+		uint8_t frequency_index;
+		uint8_t ocw_index;
+	} rec;
+	uint32_t raw[2];
 };
 
 enum {
 	FW_IO_CMD_READ = 1, // read a register value
-	FW_IO_CMD_POST_TO_CW = 2 // post given blob as metrics to CloudWatch
+	FW_IO_CMD_POST_TO_CW = 2, // post given blob as metrics to CloudWatch
+	FW_IO_CMD_SET_POWER_PROFILE = 3 // set power profile
 };
 
 enum {
@@ -42,6 +73,7 @@ enum {
 // offsets in MISC RAM for FWIO
 enum {
 	FW_IO_REG_DEVICE_ID_OFFSET = 0x24,
+	FW_IO_REG_SERVER_RACK_ID_OFFSET = 0x70,
 
 	// MISC RAM register for API version
 	//   - This register is used to determine the API version of the firmware.
@@ -77,7 +109,7 @@ enum {
 
 	FW_IO_REG_RUNTIME_RESERVED0 = 0xC0, // 0xC0 to 0xF0
 
-	FW_IO_REG_METRIC_OFFSET = 0x100, // 0x100 to 0x17F, 128 bytes
+	FW_IO_REG_DATA_OFFSET = 0x100, // 0x100 to 0x17F, 128 bytes
 	FW_IO_REG_LH_NEIGHBOR_SERNUM_HI = 0x180, // LH/RH neighbors
 	FW_IO_REG_LH_NEIGHBOR_SERNUM_LO = 0x184, 
 	FW_IO_REG_RH_NEIGHBOR_SERNUM_HI = 0x188, 
@@ -94,6 +126,7 @@ enum {
 	FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET = 0x1fc,
 	FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET = 0x1f8,
 	FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET = 0x800,
+	FW_IO_REG_ACK_OFFSET = 0xf0,
 };
 	
 #define FW_IO_REG_METRIC_BUF_SZ 128
@@ -113,12 +146,23 @@ struct fw_io_ctx {
 #define UINT64_LOW(x) ((u32)(((u64)(x)) & 0xffffffffULL))
 #define UINT64_HIGH(x) ((u32)((x) >> 32))
 
-// Hardware might take up to 15 seconds in worst case.
+#define FW_IO_CMD_MAX 4
+
+#define FW_IO_CMD_MAX 4
+
+// Wait up to 30 seconds in worst case.
+// Hardware can in some cases take longer to come out of reset but for some reads
+// (like reading device ID before creating the device) we cannot wait too long
+// because it's confusing if driver load appears to hang and kernel may complain
 #define FW_IO_RD_TIMEOUT (1000 * 1000 * 1)
-#define FW_IO_RD_RETRY   15
+#define FW_IO_RD_RETRY   30
 
 // max number of registers can be read in single function call
 #define FW_IO_MAX_READLESS_READ_REGISTER_COUNT 100
+
+// Min Pacific API version for new readless read framework
+#define FW_IO_NEW_READLESS_READ_MIN_API_VERSION 7
+#define FW_IO_POWER_MIN_API_VERSION 3
 
 
 /**
@@ -213,6 +257,15 @@ void fw_io_destroy(struct fw_io_ctx *ctx);
 int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size);
 
 /**
+ * fw_io_post_metric_new() - Post given block data as metric using new framework
+ * @param ctx: FWIO context
+ * @param data: data to post
+ * @param size: size of the data
+ * Return: 0 if metric is successfully posted, negative on failure
+ */
+int fw_io_post_metric_new(struct fw_io_ctx *ctx, u8 *data, u32 size);
+
+/**
  * fw_io_initiate_reset() - Initiate device local reset.
  *
  * @bar0: Device's BAR0 base address
@@ -245,6 +298,14 @@ bool fw_io_is_reset_initiated(void __iomem *bar0);
  */
 int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_out[],
 			uint32_t num_counters);
+
+/**
+ * fw_io_server_info_read() - Read server info
+ * @param bar - from bar
+ * @param server_info  - server info containing rack & server ids
+ * @return  0 on success.
+ */
+int fw_io_server_info_read(void *bar0, u32 *server_info);
 
 /**
  * fw_io_device_id_read() - Read device id
@@ -321,4 +382,36 @@ uint32_t fw_io_get_total_uecc_err_count(void *bar0);
  * @param bar0: from bar
  */
 int fw_io_hbm_uecc_repair_state_read(void *bar0, uint32_t *hbm_repair_state);
+
+/**
+ * fw_io_execute_request() - Execute request (original protocols)
+ * @param ctx: FWIO context
+ * @param command_id: Command ID
+ * @param req: Request data
+ * @param req_size: Request size
+ * @param resp: Response buffer
+ * @param resp_size: Response buffer size
+ * @return 0 on success, negative on failure
+ */
+int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size, u8 *resp, u32 resp_size);
+
+/**
+ * fw_io_execute_request_new() - Execute request (new protocols)
+ * @param ctx: FWIO context
+ * @param command_id: Command ID
+ * @param req: Request data
+ * @param req_size: Request size
+ * @param resp: Response buffer
+ * @param resp_size: Response buffer size
+ * @return 0 on success, negative on failure
+ */
+int fw_io_execute_request_new(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size, u8 *resp, u32 resp_size);
+
+/**
+ * fw_io_set_power_profile() - Set power profile
+ * @param ctx: FWIO context
+ * @param profile: Power profile value
+ * @return 0 on success, negative on failure
+ */
+int fw_io_set_power_profile(struct fw_io_ctx *ctx, uint32_t profile);
 #endif

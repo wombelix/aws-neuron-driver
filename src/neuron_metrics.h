@@ -2,7 +2,10 @@
 /*
  * Copyright 2021, Amazon.com, Inc. or its affiliates. All Rights Reserved
  */
+#include <linux/atomic.h>
+
 #include "neuron_ds.h"
+#include "share/neuron_driver_shared.h"
 
 #ifndef _NEURON_METRICS_H
 #define _NEURON_METRICS_H
@@ -30,23 +33,36 @@
 #define NMETRIC_CONST_U64_FLAG_SKIP_ZERO (0x1ull << 0)
 #define NMETRIC_CONST_U64_FLAG_PREFER_FREED (0x1ull << 1)
 
-enum driver_metrics_idx {
-	NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS = 0,
-	NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS = 1,
+// The final driver metrics to be posted to CR.
+// They are not stored in datastore
+enum driver_final_metrics_idx {
+	NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS     = 0,
+	NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS        = 1,
 
-	NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS = 2,
-	NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS = 3,
+	NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS     = 2,
+	NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS        = 3,
 
-	// Intermediate metrics. do not post to CW directly.
-	NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS = 4,
-	NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS = 5,
-	NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT = 6,
-	NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT = 7,
+	NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT   = 4,
+	NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT      = 5,
 
-	NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT = 8,
-	NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT = 9,
+	NMETRIC_FINAL_DRIVER_METRICS_COUNT                      = 6,
+};
 
-	NMETRIC_DRIVER_METRICS_IDX_COUNT = 10,
+// The intermediate driver metrics are not posted to CW.
+// They are used to calculate the final driver metrics above.
+// They are not stored in datastore
+enum driver_intermediate_metrics_idx {
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS   = 0,
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS      = 1,
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT     = 2,
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT        = 3,
+
+	NMETRIC_INTERMEDIATE_DRIVER_METRICS_COUNT               = 4,
+};
+
+struct nmetric_driver_metrics {
+	atomic64_t final_metrics[NMETRIC_FINAL_DRIVER_METRICS_COUNT];               // final driver metrics to be posted to CR. Not in datastore
+	atomic64_t intermediate_metrics[NMETRIC_INTERMEDIATE_DRIVER_METRICS_COUNT]; // intermediate driver metrics, and not posted to CW. Not in datastore
 };
 
 // Sadly, the 3 #defines below need to be updated when adding new metrics to nmetric_defs
@@ -54,7 +70,7 @@ enum driver_metrics_idx {
 #define NMETRIC_VERSION_COUNT	3
 
 // Number of metrics of type NMETRIC_TYPE_CONSTANT
-#define NMETRIC_CONSTANTS_COUNT	2
+#define NMETRIC_CONSTANTS_COUNT	3
 
 // Number of metrics of type NMETRIC_TYPE_COUNTER + the special case (type NMETRIC_TYPE_FW_IO_ERR)
 #define NMETRIC_COUNTER_COUNT	29
@@ -64,9 +80,6 @@ enum driver_metrics_idx {
 
 // Number of metrics of type NMETRIC_CONSTANT_U64
 #define NMETRIC_CONSTANT_U64_COUNT 1
-
-// Number of metrics of type NMETRIC_DRIVER
-#define NMETRIC_DRIVER_METRICS_COUNT NMETRIC_DRIVER_METRICS_IDX_COUNT
 
 typedef struct {
 	u8 index;	// metric specific index
@@ -93,10 +106,18 @@ struct nmetric_versions {
 	u64 version_metrics[NEURON_METRICS_VERSION_MAX_CAPACITY];
 };
 
+enum nmetric_state {
+	NMETRIC_STATE_STOPPED = 0,  // thread not active/signaled to exit the loop
+	NMETRIC_STATE_RUNNING = 1,  // thread is active and periodically posting metrics
+	NMETRIC_STATE_PAUSED = 2,   // thread is active, but periodic posting is skipped
+	NMETRIC_STATE_RESUMING = 3, // immediately wakes thread and transitions to NMETRIC_STATE_RUNNING
+};
+
 struct nmetric_aggregation_thread {
 	struct task_struct *thread; // aggregation thread that sends metrics every ~5 minutes
 	wait_queue_head_t wait_queue;
-	volatile bool running; // if cleared, thread would exit the loop
+	volatile enum nmetric_state state;
+	u64 last_logged_slow_tick; // when the last metric request was posted
 	u64 curr[NMETRIC_COUNTER_COUNT]; // metrics for the current session so far
 	u64 prev[NMETRIC_COUNTER_COUNT]; // recorded metrics from the last post
 	u64 freed[NMETRIC_COUNTER_COUNT]; // cache holding metrics that were freed before the posting period was reached
@@ -109,7 +130,7 @@ struct neuron_metrics {
 	u64 ds_freed_const_u64_buf[NMETRIC_CONSTANT_U64_COUNT];	// stores unsent constant u64 values about to be freed from datastore
 	struct nmetric_aggregation_thread neuron_aggregation;	// aggregation thread that periodically aggregates and posts metrics
 	u8 posting_buffer[NEURON_METRICS_MAX_POSTING_BUF_SIZE + 1];
-    u64 driver_metrics[NMETRIC_DRIVER_METRICS_COUNT];		// stores driver internal metrics that is not in datastore
+	struct nmetric_driver_metrics driver_metrics;			// driver metrics. not in datastore
 };
 
 /**
@@ -138,7 +159,7 @@ void nmetric_partial_aggregate(struct neuron_device *nd, struct neuron_datastore
 void nmetric_stop_thread(struct neuron_device *nd);
 
 /**
- * nmetric_init_driver_metrics() - Initializes the driver metrics to 0
+ * nmetric_init_driver_metrics() - Initializes the driver metrics lock and values to 0
  * 
  * @param nd - the neuron device
  */
@@ -158,7 +179,7 @@ int nmetric_init(struct neuron_device *nd);
  * @param cur_reset_time_ms: the current TPB or device reset time in milliseconds.
  * @param is_device_reset: whether it is TPB or device reset.
  */
-void nmetric_set_reset_time_metrics(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset);
+void nmetric_set_reset_time_metrics(struct neuron_device *nd, s64 cur_reset_time_ms, bool is_device_reset);
 
 /**
  * nmetric_increment_reset_failure_count() - Increment the reset failure count by 1 for a device or TPB reset failure.
@@ -168,4 +189,19 @@ void nmetric_set_reset_time_metrics(struct neuron_device *nd, uint64_t cur_reset
  */
 void nmetric_increment_reset_failure_count(struct neuron_device *nd, bool is_device_reset);
 
+/**
+ * nmetric_set_performance_profile() - Set the current performance profile value for metrics posting.
+ * 
+ * @param nd: neuron device
+ * @param profile: performance profile value
+ */
+void nmetric_set_performance_profile(struct neuron_device *nd, int profile);
+
+/**
+ * nmetric_set_mode() - Enable or disable periodic posting of metrics.
+ *
+ * @param nd: neuron device
+ * @param mode: whether to change or maintain current behavior
+ */
+void nmetric_set_mode(struct neuron_device *nd, enum neuron_metrics_mode mode);
 #endif

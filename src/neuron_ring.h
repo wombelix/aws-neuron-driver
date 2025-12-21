@@ -44,18 +44,22 @@ struct ndma_h2t_dma_context {
 };
 
 struct ndma_ring {
+	// TODO combine all the h2t stuff in a sub structure
+	struct mutex h2t_ring_lock;
+	struct udma_ring_ptr h2t_completion;  // TODO why are we using udma_ring_ptr...
+	struct mem_chunk *h2t_completion_mc;
+	struct ndma_h2t_dma_context h2t_dma_ctx[NEURON_DMA_H2T_CTX_HANDLE_CNT];
+	u32 h2t_nc_id;
+	bool h2t_allocated; // ring can be allocated for standard use or h2t 
 	u32 qid;
 	u32 size; //total size - num desc * desc size
 	bool has_compl;
 	struct udma_ring_ptr tx;
 	struct udma_ring_ptr rx;
 	struct udma_ring_ptr rxc;
-	struct udma_ring_ptr h2t_completion;
 	struct mem_chunk *tx_mc;
 	struct mem_chunk *rx_mc;
 	struct mem_chunk *rxc_mc;
-	struct mem_chunk *h2t_completion_mc;
-	struct ndma_h2t_dma_context h2t_dma_ctx[NEURON_DMA_H2T_CTX_HANDLE_CNT];
 	u32 dram_channel;
 };
 
@@ -73,7 +77,6 @@ struct ndma_eng {
 	struct ndma_queue queues[DMA_MAX_Q_MAX];
 	struct udma udma;
 	bool used_for_h2t;
-	struct mutex h2t_ring_lock;
 };
 
 /**
@@ -287,4 +290,60 @@ int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid);
 
 u32 ndmar_ring_get_desc_count(u32 v);
 
+/** 
+ * ndmar_h2t_ring_request() - request a h2t ring
+ *
+ * @nd: Neuron device which contains the DMA engine
+ * @nc_id: neuron core id
+ * @h2t: initialize ring to be used for h2t traffic
+ * @rqid: returned id of the queue
+ *
+ */
+int ndmar_h2t_ring_request(struct neuron_device *nd, int nc_id, bool h2t, int *rqid);
+
+/** 
+ * ndmar_h2t_ring_release()
+ *
+ * @nd: Neuron device which contains the DMA engine
+ * @nc_id: neuron core id
+ * @qid: id the h2t queue to release
+ *
+ */
+int ndmar_h2t_ring_release(struct neuron_device *nd, int nc_id, int qid);
+
+/**
+ * ndmar_h2t_ring_is_h2t() - return true if this is an h2t ring
+ */
+static inline bool ndmar_h2t_ring_is_h2t(struct ndma_ring *ring)
+{
+	return (ring->h2t_completion_mc != NULL);
+}
+
+/**
+ * ndmar_h2t_ring_is_owner - return true if this h2t ring is owned by nc_id
+ *
+ */
+static inline bool ndmar_h2t_ring_is_owner(struct ndma_ring *ring, int nc_id)
+{
+	return (nc_id == ring->h2t_nc_id) && ndmar_h2t_ring_is_h2t(ring);
+}
+		
+static inline bool ndmar_h2t_ring_is_allocated(struct ndma_ring *ring)
+{
+	return ring->h2t_allocated;
+}
+
+static inline void ndmar_h2t_ring_state_clr(struct ndma_ring *ring)
+{
+	ring->h2t_nc_id = -1;
+	ring->h2t_allocated = false;
+}
+
+/**
+ * ndmar_qid_valid() - return true if a queue is valid
+ */
+static inline bool ndmar_qid_valid(int qid)
+{
+	return ((qid >= 0) && (qid < DMA_MAX_Q_MAX));
+}
 #endif

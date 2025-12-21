@@ -26,11 +26,22 @@ int dev_nc_map = 1;
 module_param(dev_nc_map, int, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
 MODULE_PARM_DESC(dev_nc_map, "Map of active neuron cores");
 
+// forward
+static void ndmar_h2t_ring_free(struct ndma_ring *ring);
+
 struct ndma_eng *ndmar_acquire_engine(struct neuron_device *nd, u32 eng_id)
 {
 	if (eng_id >= NUM_DMA_ENG_PER_DEVICE)
 		return NULL;
 	mutex_lock(&nd->ndma_engine[eng_id].lock);
+	return &nd->ndma_engine[eng_id];
+}
+
+// acquire dma engine w/o locking.  Use for scanning.
+static struct ndma_eng *ndmar_acquire_engine_nl(struct neuron_device *nd, u32 eng_id)
+{
+	if (eng_id >= NUM_DMA_ENG_PER_DEVICE)
+		return NULL;
 	return &nd->ndma_engine[eng_id];
 }
 
@@ -143,10 +154,18 @@ int ndmar_queue_init(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx_desc_
 	queue = ndmar_get_queue(eng, qid);
 	ring = ndmar_get_ring(queue);
 
+	// check if the ring has been allocated to h2t and fail
+	if (ndmar_h2t_ring_is_h2t(ring) && (tx_mc != nd->ndma_q_dummy_mc)) { 
+		pr_err("nd%02d: DMA ring allocation collision with h2t dma on eng: %d, queue: %d", nd->device_index, eng_id, qid);
+		ret = -EALREADY;
+		goto done;
+	}
+
 	queue->eng_id = eng_id;
 	queue->qid = qid;
 	queue->owner = task_tgid_nr(current);
 	ring->qid = qid;
+	ring->h2t_completion_mc = NULL;
 
 	trace_dma_queue_init(nd, eng_id, qid, tx_desc_count, rx_desc_count, tx_mc, rx_mc, rxc_mc,
 			     port);
@@ -193,15 +212,39 @@ void ndmar_handle_process_exit(struct neuron_device *nd, pid_t pid)
 	const int desc_count = NDMA_QUEUE_DUMMY_RING_DESC_COUNT;
 	for (eng_id = 0; eng_id < ndhal->ndhal_address_map.dma_eng_per_nd; eng_id++) {
 		for (qid = 0; qid < DMA_MAX_Q_MAX; qid++) {
-			if (nd->ndma_engine[eng_id].queues[qid].owner != pid) {
+			struct ndma_eng *eng = ndmar_acquire_engine_nl(nd, eng_id);
+			struct ndma_queue *queue;
+			struct ndma_ring *ring;
+
+			if (eng == NULL) {
+				// 
+				continue;
+			}
+			queue = ndmar_get_queue(eng, qid);
+			ring = ndmar_get_ring(queue);
+
+			if (queue->owner != pid) {
 				continue;
 			}
 
-			// h2t rings are maintained by the driver so dont reset.
+			// default h2t rings are maintained by the driver so dont reset.
 			// there cant be any outstanding DMA transaction in h2t since it is a
 			// synchronous system call(which will block till finished when a process crashes).
-			if (ndhal->ndhal_ndmar.ndmar_is_h2t_q(nd, eng_id, qid))
+			// TODO: async h2t will need to get cleaned up here.
+			
+			if (ndhal->ndhal_ndmar.ndmar_is_h2t_def_q(nd, eng_id, qid)) {
+				pr_err_once("nd%02d: unexpected pid associated with default h2t ring", nd->device_index);
 				continue;
+			}
+		
+			// h2t rings owned by driver are freed up on different path
+			if (ndmar_h2t_ring_is_h2t(ring)) { 
+				pr_err_once("h2t ring should not be bound to process");
+				continue;
+			}
+
+			ndmar_h2t_ring_state_clr(ring);
+			queue->owner = 0;
                                                          
 			// rings owned by the nx should not be reset by us
 			// ok since they should never be interacting with host mem
@@ -280,30 +323,33 @@ int ndmar_queue_copy_start(struct neuron_device *nd, u32 eng_id, u32 qid, u32 tx
 int ndmar_queue_release(struct neuron_device *nd, u32 eng_id, u32 qid)
 {
 	trace_dma_queue_release(nd, eng_id, qid);
-	// inf1 does not need any special handling
 	return 0;
 }
 
-static int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
+static int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id, int qid)
 {
 	int ret = 0;
 	struct mem_chunk *rx_mc = NULL, *tx_mc = NULL, *h2t_completion_mc = NULL;
+	struct ndma_queue *queue;
+	struct ndma_ring *ring;
 
 	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
 	const int ndesc = DMA_H2T_DESC_COUNT;
 	const u32 ring_size = ndmar_ring_get_desc_count(ndesc) * sizeof(union udma_desc);
-	const int qid = ndhal->ndhal_ndmar.ndmar_get_h2t_qid(nc_id);
 
 	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
 		return -EINVAL;
 
+	queue = ndmar_get_queue(eng, qid);
+	ring = ndmar_get_ring(queue);
+
 	eng->used_for_h2t = true;
-	struct ndma_queue *queue = &eng->queues[qid];
-	queue->qid = qid;
 	queue->eng_id = eng_id;
-	struct ndma_ring *ring = &queue->ring_info;
+	queue->qid = qid;
+	queue->owner = 0;
 	ring->qid = qid;
+	ring->h2t_nc_id = nc_id;
 	ring->size = ring_size;
 	ring->has_compl = false;
 
@@ -332,13 +378,18 @@ static int ndmar_h2t_ring_alloc(struct neuron_device *nd, int nc_id)
 	ring->h2t_completion.ptr = h2t_completion_mc->va;
 	ring->h2t_completion.addr = virt_to_phys(ring->h2t_completion.ptr) | ndhal->ndhal_address_map.pci_host_base;
 
-	mutex_init(&eng->h2t_ring_lock);
+	mutex_init(&ring->h2t_ring_lock);
 
 	ndmar_release_engine(eng);
 
 	return 0;
 
 error:
+	ring->h2t_nc_id = -1;
+	ring->tx_mc = NULL;
+	ring->rx_mc = NULL;
+	ring->h2t_completion_mc = NULL;
+
 	ndmar_release_engine(eng);
 
 	if (rx_mc)
@@ -347,7 +398,7 @@ error:
 		mc_free(&tx_mc);
 	if (h2t_completion_mc)
 		mc_free(&h2t_completion_mc);
-
+	
 	return ret;
 }
 
@@ -359,10 +410,131 @@ int ndmar_h2t_ring_init(struct ndma_eng *eng, int qid)
 	int ndesc = DMA_H2T_DESC_COUNT;
 	u32 alloced_desc = ndmar_ring_get_desc_count(ndesc);
 
-	queue = &eng->queues[qid];
-	ring = &queue->ring_info;
+	queue = ndmar_get_queue(eng, qid);
+	ring = ndmar_get_ring(queue);
 	ret = udma_m2m_init_queue(&eng->udma, qid, eng->eng_id, alloced_desc, alloced_desc, true, &ring->tx,
 				  &ring->rx, NULL);
+	return ret;
+}
+
+static bool ndmar_h2t_ring_claim(struct neuron_device *nd, u32 eng_id, struct ndma_ring *ring)
+{
+	bool claimed = false;
+	struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
+	if (eng == NULL)
+		return false;
+	if (!ring->h2t_allocated) {
+		ring->h2t_nc_id = -1;
+		ring->h2t_allocated = true;
+		claimed = true;
+	}
+	ndmar_release_engine(eng);
+	return claimed;
+}
+
+/* ndmar_h2t_ring_request()
+ *
+ *    Ask the driver to dynamically allocate an h2t ring.
+ *
+ *   caveats:
+ *    - Other runtime allocated rings are not tracked by the driver, so h2t rings have to be requested
+ *      prior to any rings allocated for a model.  So basically we only track h2t ring allocations in the
+ *      driver.
+ */
+int ndmar_h2t_ring_request(struct neuron_device *nd, int nc_id, bool h2t, int *rqid)
+{
+	int ret = -1;
+	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
+	struct ndma_eng *eng;
+	struct ndma_queue *queue;
+	struct ndma_ring *ring;
+	int qid;
+	
+	eng = ndmar_acquire_engine_nl(nd, eng_id);
+	if (eng == NULL)
+		return -EINVAL;
+
+	for (qid = 0; qid < DMA_MAX_Q_MAX; qid++) {
+		if (ndhal->ndhal_ndmar.ndmar_is_h2t_def_q(nd, eng_id, qid))
+			continue;
+		queue = ndmar_get_queue(eng, qid);
+		ring = ndmar_get_ring(queue);
+
+		// ring is unallocated, we can use it
+		if (ndmar_h2t_ring_claim(nd, eng_id, ring)) {
+			// For historical reasons, there are two ways we keep track of and manage queue ownership.  DMAs that
+			// are managed by the driver on behalf of a process are tagged by nc_id that is used by the process,
+			// DMAs managed elsewhere (such as DMAs used NX refill) are tagged with PID.  The tagging determines
+			// where the DMA resources are cleaned up.
+			if (h2t) {
+				// queue is used for driver memcopy
+				ret = ndmar_h2t_ring_alloc(nd, nc_id, qid);
+				if (ret) {
+					pr_err("nd%d:nc%d H2T ring allocation for qid:%d failed - %d\n", nd->device_index, nc_id, qid, ret);
+					ring->h2t_allocated = false;
+					goto done;
+				}
+				ret = ndmar_h2t_ring_init(eng, qid);
+				if (ret) {
+					ndmar_h2t_ring_free(ring);
+					pr_err("nd%d:nc%d H2T ring init for qid:%d failed - %d\n", nd->device_index, nc_id, qid, ret);
+					ring->h2t_allocated = false;
+					goto done;
+				}
+			} else {
+				// queue is use by HW or the RT directly
+				queue->owner = task_tgid_nr(current);
+				ring->h2t_nc_id = nc_id;
+				ret = 0;
+			}
+			*rqid = qid;
+			break;
+		}
+	}
+
+done:
+	return ret;
+}
+
+int ndmar_h2t_ring_release(struct neuron_device *nd, int nc_id, int qid)
+{
+	int ret = 0;
+	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
+	struct ndma_eng *eng;
+	struct ndma_queue *queue;
+	struct ndma_ring *ring;
+	
+	if (qid >= DMA_MAX_Q_MAX) {
+		return -EINVAL;
+	}
+
+	if (ndhal->ndhal_ndmar.ndmar_is_h2t_def_q(nd, eng_id, qid)) {
+		return 0;
+	}
+
+	eng = ndmar_acquire_engine(nd, eng_id);
+	if (eng == NULL) {
+		return -EINVAL;
+	}
+
+	queue = ndmar_get_queue(eng, qid);
+	ring = ndmar_get_ring(queue);
+
+	if (!ndmar_h2t_ring_is_allocated(ring) || (ring->h2t_nc_id != nc_id)) {
+		pr_err("nd%02d: attempting to release ring %d on nc: %d that is not allocated as h2t ring", nd->device_index, qid, nc_id);
+		ret = -ENXIO;
+		goto done;
+	}
+
+	if (ndmar_h2t_ring_is_h2t(ring)) {
+		ndmar_h2t_ring_free(ring);
+	} else {
+		ndmar_h2t_ring_state_clr(ring);
+		queue->owner = 0;
+	}
+
+done:
+	ndmar_release_engine(eng);
 	return ret;
 }
 
@@ -532,7 +704,9 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx, bool init_h2t_eng
 		}
 	}
 
-	ret = ndmar_h2t_ring_alloc(nd, nc_idx);
+	const int qid = ndhal->ndhal_ndmar.ndmar_get_h2t_def_qid(nc_idx);
+
+	ret = ndmar_h2t_ring_alloc(nd, nc_idx, qid);
 	if (ret) {
 		pr_err("nd%d:nc%d H2T ring allocation failed - %d\n", nd->device_index, nc_idx, ret);
 		return ret;
@@ -541,7 +715,7 @@ static int ndmar_init_nc(struct neuron_device *nd, int nc_idx, bool init_h2t_eng
 	struct ndma_eng *eng = ndmar_acquire_engine(nd, eng_id);
 	if (eng == NULL)
 		return -EINVAL;
-	const int qid = ndhal->ndhal_ndmar.ndmar_get_h2t_qid(nc_idx);
+
 	ret = ndmar_h2t_ring_init(eng, qid);
 	ndmar_release_engine(eng);
 	if (ret) {
@@ -579,22 +753,61 @@ int ndmar_init(struct neuron_device *nd)
 	return ndmar_init_ncs(nd, -1);
 }
 
-static void ndmar_h2t_ring_free(struct neuron_device *nd, int nc_idx, int eng_id)
+static void ndmar_h2t_ring_free(struct ndma_ring *ring)
 {
-	const int qid = ndhal->ndhal_ndmar.ndmar_get_h2t_qid(nc_idx);
-	struct ndma_eng *eng  = ndmar_acquire_engine(nd, eng_id);
-	BUG_ON(eng == NULL);
-	struct ndma_queue *queue = &eng->queues[qid];
-	struct ndma_ring *ring = &queue->ring_info;
-
-	if (ring->tx_mc)
+	if (ring->tx_mc) {
 		mc_free(&ring->tx_mc);
+		ring->tx_mc = NULL;
+	}
 
-	if (ring->rx_mc)
+	if (ring->rx_mc) {
 		mc_free(&ring->rx_mc);
+		ring->rx_mc = NULL;
+	}
 
-	if (ring->rxc_mc)
+	if (ring->rxc_mc) {
 		mc_free(&ring->rxc_mc);
+		ring->rxc_mc = NULL;
+	}
+	
+	if (ring->h2t_completion_mc) {
+		mc_free(&ring->h2t_completion_mc);
+		ring->h2t_completion_mc = NULL;
+	}
+
+	ndmar_h2t_ring_state_clr(ring);
+}
+
+/* ndmar_h2t_ring_free_all()
+ *
+ */
+static void ndmar_h2t_ring_free_all(struct neuron_device *nd, int nc_idx)
+{
+	struct ndma_eng *eng;
+	struct ndma_queue *queue;
+	struct ndma_ring *ring;
+	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_idx);
+	int qid;
+	
+	eng  = ndmar_acquire_engine(nd, eng_id);
+	if (eng == NULL) {
+		pr_err("nd%02d: fatal error unable to acquire engine %d", nd->device_index, eng_id);
+		return;
+	}
+
+	for (qid = 0; qid < DMA_MAX_Q_MAX; qid++) {
+		queue = ndmar_get_queue(eng, qid);
+		ring = ndmar_get_ring(queue);
+		if (ndmar_h2t_ring_is_allocated(ring) && ring->h2t_nc_id == nc_idx) {
+			if (ndmar_h2t_ring_is_h2t(ring)) {
+				// h2t queue free all resources
+				ndmar_h2t_ring_free(ring);
+			} else {
+				// service queue only clear state
+				ndmar_h2t_ring_state_clr(ring);
+			}
+		}
+	}
 
 	ndmar_release_engine(eng);
 }
@@ -604,8 +817,7 @@ static void ndmar_close_nc(struct neuron_device *nd, int nc_idx)
 	if (!nd->dmar_init_done[nc_idx]) {
 		return;
 	}
-	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_idx);
-	ndmar_h2t_ring_free(nd, nc_idx, eng_id);
+	ndmar_h2t_ring_free_all(nd, nc_idx);
 	nd->dmar_init_done[nc_idx] = false;
 }
 

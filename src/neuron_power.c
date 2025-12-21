@@ -49,6 +49,14 @@ bool npower_enabled_in_fw(struct neuron_device *nd)
 	int ret = 0;
 	u32 api_version_num = 0;
 
+	extern unsigned int nmetric_log_posts;
+
+	// If metric log posting is disabled, don't do power reporting - we're likely on
+	// bringup hardware or simulation
+	if (!nmetric_log_posts) {
+		return false;
+	}
+
 	// Just read the API version from firmware.  We could try to be smart here and cache
 	// this, but we need to protect ourselves from rollbacks in the Pacific version or
 	// other changes.  Plus, this is just a simple MMIO read, so it's cheap.

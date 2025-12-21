@@ -33,13 +33,11 @@
 
 /* Vendor / Device ID for all devices supported by the driver */
 #define AMZN_VENDOR_ID  0x1D0F
-#define INF1_DEVICE_ID0 0x7064
-#define INF1_DEVICE_ID1 0x7065
-#define INF1_DEVICE_ID2 0x7066
-#define INF1_DEVICE_ID3 0x7067
 #define INF2_DEVICE_ID0 0x7264
 #define TRN1_DEVICE_ID0 0x7164
 #define TRN2_DEVICE_ID0 0x7364
+#define TRN3_DEVICE_ID0 0x7564
+#define TRN3_DEVICE_ID1 0x7565
 
 // Global host memory buf size used for memset the device memory
 #define MEMSET_HOST_BUF_SIZE MAX_DMA_DESC_SIZE // guessed optimal DMA transfer and PCIe TLP size.
@@ -116,7 +114,7 @@ struct neuron_device {
 	u64 nc_model_started_count[MAX_NC_PER_DEVICE]; // number of times the NCs has started model
 
 	struct nsysfsmetric_metrics sysfs_metrics;
-	
+
 	struct neuron_log_obj log_obj; // logging object
 
 	struct neuron_hbm_scrub_ctx hbm_scrub_ctx;

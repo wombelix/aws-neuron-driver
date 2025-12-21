@@ -136,17 +136,16 @@ done:
  * ndhal_register_funcs_vc() - initialize the common dhal for all chips
  *
  */
-int ndhal_register_funcs_vc(void) {
-	int ret = 0;
-
-	if (!ndhal) {
-		pr_err("ndhal is null. Can't register functions for VC.");
-		return -EINVAL;
-	}
+int ndhal_register_funcs_vc(void)
+{
+    if (!ndhal) {
+        pr_err("ndhal is null. Can't register functions for VC.");
+        return -EINVAL;
+    }
 
     ndhal->ndhal_tpb.pe_format_activity_stats = ntpb_pe_format_activity_stats_vc;
     ndhal->ndhal_tpb.pe_get_counter_val = ntpb_pe_get_counter_val_vc;
     ndhal->ndhal_tpb.pe_get_row_grp_activity_counter_offset = ntpb_pe_get_row_grp_activity_counter_offset_vc;
     ndhal->ndhal_tpb.pe_get_fast_wl_cycle_cnt = ntpb_pe_get_fast_wl_cycle_cnt_vc;
-    return ret;
+    return 0;
 }

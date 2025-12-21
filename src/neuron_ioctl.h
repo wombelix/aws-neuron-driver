@@ -186,6 +186,26 @@ struct neuron_ioctl_mem_buf_copy64 {
 	__u32 copy_to_mem_handle; // [in] if set to True copies from buffer to memhandle else copies from memhandle to buffer.
 };
 
+struct neuron_ioctl_mem_buf_copy64zc {
+	__u64 mem_handle; // [in] Source or Destination memory handle from/to data needs to be copied.
+	void *buffer; // [in] Buffer from/to where data to be copied.
+	__u64 size; // [in] Size of the data to be copied.
+	__u64 offset; // [in] Offset in the memory handle where the data to be written/read.
+	__u32 is_copy_to_device; // [in] if set to True copies to device
+	__u32 bar4_wr_threshold; // [in] threshold below which we will use bar4 direct write vs. DMA. Subject to driver limits.
+	__s32 h2t_qid; // [in] h2t queue to use for the transfer.  -1 = use default
+	__u32 dummy;  // [na] pad to change size of struct to version ioctl
+};
+
+struct neuron_ioctl_mem_buf_copy64zc_batches {
+	__u64 sequence_num;                 // [in] The sequence number that uniquely indentifies each async I/O.
+	neuron_memcpy_batch_t *batches_ptr; // [in] Pointer to an array of memory copy batches.
+	__u32 num_batches;                  // [in] Number of batches in the batches_ptr array.
+	__u16 is_copy_to_device;            // [in] If true, then copies from host to device.
+	__s32 h2t_qid;                      // [in] H2T queue ID. -1 for default.
+	__u16 flags;                        // [in] TBD
+};
+
 struct neuron_ioctl_program_engine {
 	__u64 dst; // [in] Destination engine address
 	void *buffer; // [in] Buffer from/to where data to be copied.
@@ -581,6 +601,34 @@ struct neuron_ioctl_pod_ctrl_v2 {
 	__u32 mode;			// [in] operating mode
 };
 
+struct neuron_ioctl_h2t_dma_alloc_queues {
+	__u16 sz;					// [in] structure size for versioning.
+	__u16 nc_id;				// [in] neuron core to allocate h2t queues for
+	__u16 copy_queue_cnt;		// [in] number of copy queues requested
+	__u16 service_queue_cnt;	// [in] number of service queues requested
+	__u32 copy_queue_bmap;		// [out] return bitmap of copy queues allocated
+	__u32 service_queue_bmap;	// [out] return bitmap of service queues allocated
+	__u32 copy_default_queue;	// [out] return default h2t copy queue
+};
+
+struct neuron_ioctl_h2t_dma_free_queues {
+	__u16 sz;           // [in] structure size for versioning.
+	__u8 nc_id;			// [in] neuron core to free h2t queues for
+	__u8 fill0;			// [in] padding 
+	__u32 queue_bmap;	// [in] bitmap of queues to free
+};
+
+struct neuron_ioctl_power_profile {
+	__u16 sz;		// [in] size of the structure
+	__u16 ctrl;		// [in] control 0 = set; 1 = get
+	__u32 profile;	// [in] power profile to set
+};
+
+struct neuron_ioctl_metrics_ctrl {
+	__u32 mode;     // [in] modifications to metric behavior (neuron_metrics_mode)
+};
+
+
 #define NEURON_IOCTL_BASE 'N'
 
 /* Deprecated reset related IOCTLs. Now it would always return success. */
@@ -775,9 +823,18 @@ struct neuron_ioctl_pod_ctrl_v2 {
 #define NEURON_IOCTL_POD_CTRL _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl)
 #define NEURON_IOCTL_POD_CTRL_V2 _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl_v2)
 
-#define NEURON_IOCTL_MEM_BUF_ZEROCOPY64 _IOWR(NEURON_IOCTL_BASE, 124, struct neuron_ioctl_mem_buf_copy64)
+#define NEURON_IOCTL_MEM_BUF_ZEROCOPY64 _IOWR(NEURON_IOCTL_BASE, 124, struct neuron_ioctl_mem_buf_copy64zc)
+
+#define NEURON_IOCTL_H2T_DMA_ALLOC_QUEUES _IOWR(NEURON_IOCTL_BASE, 125, struct neuron_ioctl_h2t_dma_alloc_queues)
+#define NEURON_IOCTL_H2T_DMA_FREE_QUEUES _IOWR(NEURON_IOCTL_BASE, 126, struct neuron_ioctl_h2t_dma_free_queues)
+
+#define NEURON_IOCTL_POWER_PROFILE _IOW(NEURON_IOCTL_BASE, 127, struct neuron_ioctl_power_profile)
+
+#define NEURON_IOCTL_METRICS_CTRL _IOW(NEURON_IOCTL_BASE, 128, struct neuron_ioctl_metrics_ctrl)
+
+#define NEURON_IOCTL_MEM_BUF_ZEROCOPY64_BATCHES _IOWR(NEURON_IOCTL_BASE, 129, struct neuron_ioctl_mem_buf_copy64zc_batches)
 
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
-#define NEURON_IOCTL_MAX 125
+#define NEURON_IOCTL_MAX 130
 
 #endif

@@ -165,7 +165,7 @@ int ndma_memcpy64k(struct ndma_eng *eng, struct ndma_ring *ring, dma_addr_t src,
  *    add a completion entry to the ring 
  *
  */
-int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *ring, void * completion_buffer);
+int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *ring, void * completion_buffer, int barrier_type);
 
 /**
  * Wait for completion by start transfer of a DMA between two host memory locations and polling
@@ -174,18 +174,89 @@ int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *rin
 int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_d2d);
 
 /**
- * ndma_memcpy_zero_copy_mc()
+ * ndma_mc_pair_to_nc - Resolve the neuron core id for two memory chunks.
+ * @src_mc: Source memory chunk participating in the transfer.
+ * @dst_mc: Destination memory chunk participating in the transfer.
  *
- *   Wrapper around ndma_memcpyzero_copy() that pulls nc_id and device phyical address from
- *   the mem chunk.
- *
- *   Todo:
- *     Range check the device address here.  
- *
- *   Assumptions:
- *     caller has done access_ok() check on the host address 
- *     if (!access_ok(blah) return -EFAULT;
- *     or check_copy_size()
+ * Returns the NC identifier that owns the DMA engine, favoring the device-side
+ * chunk when one side resides in host memory.
  */
-int ndma_memcpy_zero_copy_mc( struct neuron_device *nd,  void * host_addr, struct mem_chunk *dev_mc, u64 dev_offset, u64 size, bool direction);
+u32 ndma_mc_pair_to_nc(struct mem_chunk *src_mc, struct mem_chunk *dst_mc);
+
+/**
+ * ndma_mc_to_pa - Translate a memory chunk into a DMA-usable physical address.
+ * @mc: Memory chunk to translate.
+ *
+ * Host chunks map through the PCI host BAR, while device chunks already carry
+ * their physical base address.
+ */
+dma_addr_t ndma_mc_to_pa(struct mem_chunk *mc);
+
+/**
+ * ndma_zerocopy_supported - Check whether zero-copy DMA is permitted.
+ *
+ * Architectures that require DMA retry disable the zero-copy pipeline.
+ */
+bool ndma_zerocopy_supported(void);
+
+/**
+ * ndma_memcpy_zerocopy - Perform a pipelined zero-copy DMA transfer.
+ * @nd: Neuron device whose DMA engine is used.
+ * @nc_id: Neuron core identifier owning the queue.
+ * @ops: Array of host buffer descriptors.
+ * @num_ops: Number of descriptors in @ops.
+ * @dev_base: Base device physical address for the transfer.
+ * @qid: Queue identifier to submit descriptors on.
+ * @direction: true for host-to-device, false for device-to-host.
+ *
+ *   DMA data between a user space virtual address range and a contiguous location in device memory.
+ *   In order to do this, we need to know the physical pages are associated with
+ *   the user virtual address range and we need to make sure those physical pages stay
+ *   associated with the user virtual address range while the DMA is happening.
+ *   
+ *   How do we do this?  By asking the kernel to pin the physical pages in memory until we are 
+ *   done with them.  But our transaction could be large, the physical pages won't be contiguous,
+ *   and pinning takes CPU cycles, so we break the dma transfer up into a series of smaller transfers
+ *   where we pipeline the pinning of physical pages with dma transfers.
+ *
+ *   We use pin_user_pages_fast() to reduce pinning overhead because we know the process can't go 
+ *   away while we are down here doing our thing in the kernel within a single IOCTL call. 
+ *   
+ *   We ping pong back and forth between two dma contexts. So while dma for context A is in progress, 
+ *   we are pinning pages and starting dmas for context B. 
+ *
+ *   Algorithm goes like this:
+ *      initial a pair of dma contexts 
+ *      prev dma ctx = null
+ *      lock()
+ *      while still more data remaining
+ *         current dma ctx = next available context
+ *         init current dma context
+ *         calc size of the transfer for this dma context.  We want to transfer up to page boundaries
+ *         calc number of pages that need to be pinned for this dma
+ *         pin host pages in memory
+ *         generate descriptors for 
+ *         if prev dma ctx != NULL, wait for the prev dma to complete
+ *         update host address, device address and ammount remaining
+ *      wait for the last dma ctx to complete
+ *      unlock()
+ *      free resources
+ *
+ *  Notes:
+ *    unpinning responsibilities. Up until a dma is successfully launched, this routine is responsible for unpinning
+ *    host memory.  After that ndma_zerocopy_wait_for_completion() owns responsibility for unpinning pages.
+ *
+ *    We don't do this here, but pinning user pages across system (IOCTL) calls has a number of additional requirements.
+ *    We would have to cleanup any pinned pages when the process goes away, so any pinned pages have to get tracked in 
+ *    process context.
+ *
+ */
+int ndma_memcpy_zerocopy(struct neuron_device *nd,
+			 u32 nc_id,
+			 const nrt_tensor_batch_op_t *ops,
+			 u32 num_ops,
+			 dma_addr_t dev_base,
+			 int qid,
+			 bool direction);
+
 #endif

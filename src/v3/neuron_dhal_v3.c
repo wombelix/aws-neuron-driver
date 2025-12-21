@@ -6,10 +6,6 @@
 
 #include <linux/delay.h>
 #include <linux/pci.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-#include <linux/kernel_read_file.h>
-#endif
 
 #include "sdma.h"
 #include "notific.h"
@@ -215,6 +211,12 @@ u64 ntpb_pe_idle_cntr_offsets_v3[V3_NC_PER_DEVICE] =
 	V3_TPB_PE_ACTIVITY_COUNTER_OFFSET(V3_TPB_PE_SEQ_QUEUE_PERF_OFFSET(V3_APB_IO_1_USER_SE_1_TPB_1_PE_SEQ_CLUSTER_HOST_VISIBLE_BASE, V3_APB_IO_1_BASE, V3_PCIE_BAR0_APB_IO_1_OFFSET), 4, V3_TPB_ARR_SEQ_QUEUE_PERF_IDLE_CYCLE_CNT_LSB_OFFSET),
 };
 
+u32 npe_neighbor_eng_ids_v3[2][2] =
+{
+    {36, 68},  // Left
+    {4, 100}   // Right
+};
+
 static int ndhal_register_funcs_trn2(void) {
 	if (!ndhal) {
 		pr_err("ndhal is null. Can't register functions for trn2.");
@@ -227,58 +229,38 @@ static int ndhal_register_funcs_trn2(void) {
 	return 0;
 }
 
-static bool ndhal_instance_type_pod(void)
-{
-	static bool instance_type_is_pod = false;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
+/* Instance names
+ */
 #define NEURON_TRN2P_INSTANCE_NAME "trn2p.48xlarge"
 #define NEURON_TRN2EU_INSTANCE_NAME "trn2eu.48xlarge"
 #define NEURON_TRN2U_INSTANCE_NAME "trn2u.48xlarge"
-	static bool initialized = false;
-	ssize_t len;
-	ssize_t file_size;
-	void *buf = NULL;
+#define NEURON_TRN2UAC_INSTANCE_NAME "trn2u-ac.24xlarge"
+#define NEURON_TRN2PDS_INSTANCE_NAME "trn2es.48xlarge"
 
-	if (initialized) {
-		return instance_type_is_pod;
-	}
+static enum neuron_platform_type ndhal_platform_type_v3(void)
+{
+	enum neuron_platform_type platform_type = NEURON_PLATFORM_TYPE_INVALID;
+	char buf[128];
 
-	initialized = true;
-
-	buf = kzalloc(PAGE_SIZE, GFP_KERNEL);
-
-	if (buf == NULL) {
-		pr_err("failed to allocate buffer to read instance type");
-		goto done;
-	}
-
-	len = kernel_read_file_from_path("/sys/class/dmi/id/product_name",
-									 0, &buf, 64, &file_size, READING_UNKNOWN);
-
-	if (!len) {
-		pr_err("read instance type failed");
-		goto done;
-	}
-
+	if (narch_get_instance_type_name(buf, sizeof(buf))) goto done;
 	if ((strncmp(buf, NEURON_TRN2P_INSTANCE_NAME, sizeof(NEURON_TRN2P_INSTANCE_NAME)-1) == 0) ||
 	    (strncmp(buf, NEURON_TRN2EU_INSTANCE_NAME, sizeof(NEURON_TRN2EU_INSTANCE_NAME)-1) == 0) ||
-	    (strncmp(buf, NEURON_TRN2U_INSTANCE_NAME, sizeof(NEURON_TRN2U_INSTANCE_NAME)-1) == 0)) {
-		instance_type_is_pod = true;
+	    (strncmp(buf, NEURON_TRN2U_INSTANCE_NAME, sizeof(NEURON_TRN2U_INSTANCE_NAME)-1) == 0) ||
+	    (strncmp(buf, NEURON_TRN2UAC_INSTANCE_NAME, sizeof(NEURON_TRN2UAC_INSTANCE_NAME)-1) == 0)) {
+		platform_type = NEURON_PLATFORM_TYPE_ULTRASERVER;
+	} else if ((strncmp(buf, NEURON_TRN2PDS_INSTANCE_NAME, sizeof(NEURON_TRN2PDS_INSTANCE_NAME)-1) == 0)) {
+		platform_type = NEURON_PLATFORM_TYPE_PDS;
+	} else {
+		platform_type = NEURON_PLATFORM_TYPE_STD;
 	}
 
 done:
-	if (buf) {
-		kfree(buf);
-	}
-#endif
 	if (force_userver) {
-		instance_type_is_pod = true;
+		platform_type = NEURON_PLATFORM_TYPE_ULTRASERVER;
 	}
 
-	return instance_type_is_pod;
+	return platform_type;
 }
-
-
 
 /* Device Reset Functions */
 /**
@@ -416,7 +398,7 @@ static int nr_wait_for_reset_completion_v3_emu(struct neuron_device *nd)
  */
 static int nr_post_reset_config_v3(struct neuron_device *nd, bool reset_successful)
 {
-	if (!ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD) {
 		return 0;
 	}
 
@@ -744,26 +726,26 @@ static uint32_t ndmar_get_h2t_eng_id_v3(struct neuron_device *nd, uint32_t nc_id
 }
 
 /**
- * ndmar_get_h2t_qid()  - return the H2T engine's queue id for this core
+ * ndmar_get_h2t_def_qid()  - return the H2T engine's default queue id for this core
  *
  * @param nc_id: Neuron core corresponding to H2T engine
  * Return DMA queue id
  */
-static int ndmar_get_h2t_qid_v3(uint32_t nc_id)
+static int ndmar_get_h2t_def_qid_v3(uint32_t nc_id)
 {
  	// on V3 on h2t engines are shared between 2 cores so we give the even core queue 0 and the odd core queue 1
 	return nc_id % V3_NC_PER_SENG;
 }
 
 /**
- * ndmar_is_h2t_q() - return true
+ * ndmar_is_h2t_def_q() - return true
  *
  * @param nd: Neuron device which contains the DMA engine
  * @param eng_id: engine id
  * @param q_id:  queue id
- * Return true if this is an h2t queue
+ * Return true if this is a default h2t queue
  */
-static bool ndmar_is_h2t_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
+static bool ndmar_is_h2t_def_q_v3(struct neuron_device *nd, uint32_t eng_id, uint32_t q_id)
 {
 	return (nd->ndma_engine[eng_id].used_for_h2t && ((q_id == 0) || (q_id == 1)));
 }
@@ -915,7 +897,7 @@ const int trn2_32xl_neigbor_ids[16][4] = {
  */
 static int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count)
 {
-	// V3 does not have Pacific support to detect east/west/south/north neighbors like V1,
+	// V3 does not have Pacific support to detect east/west/south/north neighbors,
 	// so its topology is hardcoded based on instance type.
 	*count = 0;
 
@@ -924,6 +906,9 @@ static int fw_io_topology_v3(struct fw_io_ctx *ctx, int pdev_index, int device_i
 
 	switch (pdev_index) {
 		case TRN2_DEVICE_ID0: // Trn2
+		case TRN3_DEVICE_ID0: // Trn3
+		case TRN3_DEVICE_ID1: // Trn3
+			// TODO PDS update
 			if (total_neuron_devices % 16 == 0) {
 				int i;
 				*count = 4;
@@ -974,6 +959,39 @@ static int fw_io_read_csr_array_v3(void **ptrs, u32 *values, u32 num_csrs, bool 
 		return -EINVAL;
 
 	return fw_io_read_csr_array_direct(ptrs, values, num_csrs, operational);
+}
+
+
+/**
+ * fw_io_execute_request() - Execute commands
+ *
+ * @param ctx: FWIO context
+ * @param command_id: command ID
+ * @param req: Request data
+ * @param req_size: Request size
+ * @param resp: Response buffer
+ * @param resp_size: Response buffer size
+ *
+ * @return int: 0 on success, -1 on failure
+ */
+static int fw_io_execute_request_v3(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size, u8 *resp, u32 resp_size)
+{
+	return fw_io_execute_request(ctx, command_id, req, req_size, resp, resp_size);
+}
+
+
+/**
+ * fw_io_post_metric() - Post metrics to CW
+ *
+ * @param ctx: FWIO context
+ * @param data: Data to write
+ * @param size: Size of data
+ *
+ * @return int: 0 on success, -1 on failure
+ */
+static int fw_io_post_metric_v3(struct fw_io_ctx *ctx, u8 *data, u32 size)
+{
+	return fw_io_post_metric(ctx, data, size);
 }
 
 
@@ -1052,7 +1070,7 @@ static int root_info_node_attrs_info_tbl_cnt_v3 = sizeof(root_info_node_attrs_in
  * @param attr_info_tbl: the ecc attributes as an array
  * @return int 0 on success; otherwise on failure
  *
- * Note: ecc errors are only supported by sysfs for V2/3. TODO: V1 support will be added
+ * Note: ecc errors are only supported by sysfs for V2/3.
  */
 static int nsysfsmetric_add_ecc_nodes_v3(struct nsysfsmetric_metrics *metrics,
                                   struct nsysfsmetric_node *stats_node,
@@ -1297,18 +1315,34 @@ static int neuron_pci_handle_dup_routing_id(void)
 // for V3 rename Neuron devices for better customer experience.
 // see internal documentation: TRN2-Discovery
 // map routing id to user id:
-static const u32 v3_routing_id_to_user_id[] = {
+static const u32 v3_torus_routing_id_to_user_id[] = {
 	0,	3,	4,	7,
 	12,	15,	8,	11,
 	1,	2,	5,	6,
 	13,	14,	9,	10 };
 
-#define V3_ROUTING_ID_TBL_SZ  (sizeof(v3_routing_id_to_user_id) / sizeof(v3_routing_id_to_user_id[0]))
+// map routing id to user id for trn2pds instance type.
+// the only hard rule this map needs to follow is
+// rid (i*2) and rid (i*2)+1 map to did (n*2) and did (n*2)+1
+// since rid (i*2) and rid (i*2)+1 are on the same JBOG.
+static const u32 v3_pds_routing_id_to_user_id[] = {
+	0, 1,
+	2, 3,
+	4, 5,
+	6, 7,
+	8, 9,
+	10, 11,
+	12, 13,
+	14, 15 };
+
+#define V3_ROUTING_ID_TBL_SZ  (sizeof(v3_torus_routing_id_to_user_id) / sizeof(v3_torus_routing_id_to_user_id[0]))
 
 static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
 {
-	u32 user_id_base = v3_routing_id_to_user_id[ routing_id % V3_ROUTING_ID_TBL_SZ];
-	return user_id_base + (routing_id / V3_ROUTING_ID_TBL_SZ) * V3_ROUTING_ID_TBL_SZ;
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+		return v3_pds_routing_id_to_user_id[ routing_id % V3_ROUTING_ID_TBL_SZ];
+	}
+	return v3_torus_routing_id_to_user_id[ routing_id % V3_ROUTING_ID_TBL_SZ];
 }
 
 /**
@@ -1317,14 +1351,13 @@ static u32 neuron_pci_routing_id_to_user_id(u32 routing_id)
  * @param dev: PCI device
  * @param nd: neuron device
  * @return int: 0 on success, otherwise on failure
- *
- * for V1, this function is dummy
  */
 static int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev *dev)
 {
 	int ret = 0;
 	int i;
 	u32 routing_id = (u32)-1;
+	u32 routing_id_max = MAX_NEURON_DEVICE_COUNT;
 
 	// Poll the device id until the device is ready
 	for (i = 0; i < 20; i++) {
@@ -1340,8 +1373,28 @@ static int neuron_pci_get_device_id_v3(struct neuron_device *nd, struct pci_dev 
 		return -ENODEV;
 	}
 
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+		u32 server_info = 0;
+		bool server_id_valid = 0;
+		u32 server_id = 0;
+		ret = fw_io_server_info_read(nd->npdev.bar0, &server_info);
+		if (ret) {
+			return -ENODEV;
+		}
+
+		server_id_valid = (server_info >> 15) & 0x1; // TODO PDS we probably need const shift value or macro
+		if (server_id_valid) {
+			server_id = server_info & 0x7fff; // TODO PDS we probably need constant mask for this
+		} else {
+			pr_err("Could not retrieve valid server id, ret = %d\n", ret);
+			return -ENODEV;
+		}
+		ndhal->ndhal_arch.server_id = server_id;
+		routing_id_max = MAX_NEURON_DEVICE_COUNT * 2;
+	}
+
 	// TODO - this should be a "valid routing_id check for TRN2
-	if (routing_id < 0 || routing_id >= MAX_NEURON_DEVICE_COUNT) {
+	if (routing_id < 0 || routing_id >= routing_id_max) {
 		pr_err("Invalid device index %u", routing_id);
 		return -ENODEV;
 	}
@@ -1374,8 +1427,16 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 
 	switch (ndhal->pci_device_id) {
 		case TRN2_DEVICE_ID0:
+		case TRN3_DEVICE_ID0:
+		case TRN3_DEVICE_ID1:
 			for (i = 0; i < total_neuron_devices; i++) {
-				did_to_rid_map[neuron_pci_routing_id_to_user_id(i)] = i;
+				u32 routing_id;
+				if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+					routing_id = i + ndhal->ndhal_arch.server_id * total_neuron_devices;
+				} else {
+					routing_id = i;
+				}
+				did_to_rid_map[neuron_pci_routing_id_to_user_id(routing_id)] = routing_id;
 			}
 			break;
 
@@ -1408,7 +1469,7 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
  *
  *           - Version 3 of runtime requires 1) aligned memory allocation support  2) SPROT.
  *           - Version 4 of the runtime requires support for DMA queue init w/o already allocated rings (2.7).
- *           - Version 5 of the runtime requires V2 device renumbering (don't care for V1).
+ *           - Version 5 of the runtime requires V2 device renumbering (don't care before V2).
  *           - Version 6 of the runtime requires ham notification support,
  *              + new V2 reset api for single-tpb reset + new notification init API with force mem realloc/resize.
  *           - Version 7 of the runtime requires udma queue size support for non power of 2 rings + dmabuf support.
@@ -1431,7 +1492,7 @@ static void ncdev_compatible_version_v3(struct neuron_ioctl_compatible_version *
 }
 
 /**
- * ncdev_quiesce_exec_on_proc_exit() - for V1, before resetting DMA, allow current NeuronCore execution to finish and settle
+ * ncdev_quiesce_exec_on_proc_exit()
  *
  * Note:
  *      When a process is killed, the driver resets DMA but there is no
@@ -1455,103 +1516,11 @@ static void ncdev_quiesce_exec_on_proc_exit_v3(void)
 	return;
 }
 
-/**
- * ncdev_bar_write_data() - write data to bar
- *
- * @param nd: neuron device
- * @param bar: the BAR to write to
- * @param reg_addresses
- * @param data: the data to be written into the bar
- * @param data_count: the number of data to be written
- * @return 0 on success, otherwise failure
- *
- * V1:
- *    For BAR0 the addresses are passed as array(random access).
- *    For BAR2 a single address is provided and driver does sequential writes.
- * V2/3:
- *    Only BAR0 is used right now. TODO: change runtime ioctl
-*/
-static int ncdev_bar_write_data_v3(struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count)
-{
-	if (bar == 0) {
-		int i;
-		for (i = 0; i < data_count; i++) {
-			u64 off = reg_addresses[i] - (u64)nd->npdev.bar0;
-			if (off > nd->npdev.bar0_size) {
-				return -EINVAL;
-			}
-			if (ndhal->ndhal_ndma.ndma_is_bar0_write_blocked(off)) {
-				return -EINVAL;
-			}
-			writel(data[i], nd->npdev.bar0 + off);
-			trace_bar_write(nd, bar, off, data[i]);
-		}
-	} else if (bar == 4) {
-		// TODO: we don't have any use case for r/w memory over the BAR right now.  Disabling.
-		//
-		// We'd like to use DMA for r/w of BAR4 because we might expect access to large amounts of data.
-		// Access via DMA requires an application to own a TPB because it determines which of the h2t DMAs
-		// are safe to use, otherwise a TPB along with its DMA could be reset while that DMA is used here.
-		// Don't want/need to solve it now.
-		return -EINVAL;
-
-		/*
-		dma_addr_t dst_addr = reg_addresses[0] - (u64)nd->npdev.bar0;
-
-		ret = ndma_memcpy(nd, 0, virt_to_phys(data) | ndhal->ndhal_address_map.pci_host_base, dst_addr, data_size);
-		if (ret)
-			return ret;
-		*/
-	} else {
-		pr_err("direct BAR%d write is not supported.\n", bar);
-		return -EINVAL;
-	}
-
-	return 0;
-}
-
 static void ncdev_get_default_tpbs_for_hbm_v3(u32 hbm_index, u32 tpbs[MAX_NC_PER_DEVICE], u32 *tpb_count)
 {
 	tpbs[0] = hbm_index * 2;
 	tpbs[1] = (hbm_index * 2) + 1;
 	*tpb_count = 2;
-}
-
-/* UDMA Functions */
-#define UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY (1 << 16)
-/**
- * udma_m2s_data_rd_cfg_boundaries_set(): set data_rd_cfg to break at 256B boundaries
- *
- * @param udma: the UDMA structure
- *
- * for V1, this function is dummy
- */
-static void udma_m2s_data_rd_cfg_boundaries_set_v3(struct udma *udma)
-{
-	reg_write32(&udma->udma_regs_m2s->axi_m2s.data_rd_cfg,
-	  UDMA_AXI_M2S_DATA_RD_CFG_ALWAYS_BREAK_ON_MAX_BOUDRY | 0x8);
-}
-
-#define UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB (1 << 2)
-/**
- * udma_q_config() - set misc queue configurations
- *
- * @param udma_q udma_q: the queue data structure
- *
- * for V1, this function is dummy
- */
-static void udma_q_config_v3(struct udma_q *udma_q)
-{
-	if (udma_q->type != UDMA_TX) {
-		return;
-	}
-
-	uint32_t *reg_addr = &udma_q->q_regs->m2s_q.rlimit.mask;
-	uint32_t val = udma_q->rlimit_mask;
-
-	// enable DMB
-	val &= ~UDMA_M2S_Q_RATE_LIMIT_MASK_INTERNAL_PAUSE_DMB;
-	reg_write32(reg_addr, val);
 }
 
 
@@ -1570,7 +1539,7 @@ static void ndma_get_wait_for_completion_time_v3(u32 count, bool async, u64 *fir
 {
 	u64 est_wait_time = 2 * (count -1);
 	*first_wait_time = async ? 1 : (est_wait_time - 1);  // FIXME - need to adjust for zerocopy
-	*following_wait_time = (est_wait_time * 100) - *first_wait_time;
+	*following_wait_time = (est_wait_time * 400) - *first_wait_time;
 
 	// for some reason getting a timeout when staging some of BERT training graphs.
 	// https://tiny.amazon.com/8jw7wl18
@@ -1592,16 +1561,12 @@ static void ndma_get_wait_for_completion_time_v3_emu(u32 count, bool async, u64 
 
 /**
  * ndma_validate_pa() - check the validity of the desc physical addresses
- *      V1:
  *         west side: PCIEX4_1_BASE: 0x00c00000000000 host: PCIEX8_0_BASE: 0x00400000000000
  *         If west side is set then even host bit is set. When mc_alloc is called we set only the host bit
  *         and insert into tree.. If some one sets the west side on that PA, then there is no way to check that,
  *         since there could be a tdram address that could have the west side set
  *         (that will look as though host is also set)
- *      V2:
- *         similar idea.  Just check for valid address allocated in host memory
- *      V3:
- *         similar idea.  Just check for valid address allocated in host memory
+ *         Just check for valid address allocated in host memory
  *
  * @param nd: the neuron device
  * @param pa: the desc physical addresses
@@ -1838,7 +1803,7 @@ static bool ndhal_die_flipped(void)
 	if (force_die_flip) {
 		return true;
 	}
-	if (!ndhal_instance_type_pod()) {
+	if (!(ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_ULTRASERVER)) {
 		return false;
 	}
 
@@ -1897,6 +1862,7 @@ static void ndma_get_engines_with_host_connectivity_v3(u32 hbm_index, u32 engine
 
 
 /* POD Functions */
+
 /**
  * npe_notify_mark() - api for crwl to notify range marking (core claiming) activities
  *
@@ -1906,7 +1872,7 @@ static void ndma_get_engines_with_host_connectivity_v3(u32 hbm_index, u32 engine
  */
 static void npe_notify_mark_v3(int mark_cnt, bool mark)
 {
-	if (ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type != NEURON_PLATFORM_TYPE_STD) {
 		npe_notify_mark(mark_cnt, mark);
 	}
 }
@@ -1923,17 +1889,26 @@ static void npe_notify_mark_v3(int mark_cnt, bool mark)
  */
 static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz, enum neuron_ultraserver_mode *mode, u32 *modes_supported)
 {
-	if (!ndhal_instance_type_pod()) {
+	if ((ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD)) {
 		*pod_type = NEURON_POD_TYPE_NONE;
 		*pod_sz = 0;
 		*mode = NEURON_ULTRASERVER_MODE_UNSET;
 		*modes_supported = 0;
-	} else {
+	} else if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+		*pod_type = NEURON_POD_TYPE_SWITCH;
+		npe_get_pod_sz(pod_sz);
+		npe_get_pod_id(pod_id);
+		npe_get_pod_mode(mode);
+		npe_get_pod_modes_supported(modes_supported);
+	} else if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_ULTRASERVER) {
 		*pod_type = NEURON_POD_TYPE_P2P;
 		npe_get_pod_sz(pod_sz);
 		npe_get_pod_id(pod_id);
 		npe_get_pod_mode(mode);
 		npe_get_pod_modes_supported(modes_supported);
+	} else {
+		pr_err("invalid platform type");
+		return -EINVAL;
 	}
 	return 0;
 }
@@ -1947,7 +1922,7 @@ static int npe_pod_info_v3(u8 *pod_type, u8 *pod_id, u8 *pod_sz, enum neuron_ult
  */
 static int npe_pod_status_v3(u32 *pod_state, s8 *node_id)
 {
-	if (!ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD) {
 		*pod_state = NEURON_POD_E_STATE_SINGLE_NODE;
 		*node_id = -1;
 		return 0;
@@ -1967,10 +1942,21 @@ static int npe_pod_status_v3(u32 *pod_state, s8 *node_id)
  */
 static int npe_pod_ctrl_v3(struct neuron_device *nd, u32 pod_ctrl, enum neuron_ultraserver_mode mode, u32 timeout, u32 *pod_state)
 {
-	if (!ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD) {
 		return 0;
 	}
 	return npe_pod_ctrl(nd, pod_ctrl, mode, timeout, pod_state);
+}
+
+static int perf_set_profile_v3(struct neuron_device *nd, uint32_t profile)
+{
+	int ret;
+	ret = fw_io_set_power_profile(nd->fw_io_ctx, profile);
+	if (ret == 0) {
+		ndhal->ndhal_perf.current_performance_profile = profile;
+		nmetric_set_performance_profile(nd, profile);
+	}
+    return ret;
 }
 
 /**
@@ -1982,7 +1968,7 @@ static int npe_pod_ctrl_v3(struct neuron_device *nd, u32 pod_ctrl, enum neuron_u
  */
 static ssize_t npe_class_node_id_show_data_v3(char *buf, u32 sz)
 {
-	if (!ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD) {
     	return dhal_sysfs_emit(buf, "-1\n");
 	}
 	return npe_class_node_id_show_data(buf, sz);
@@ -1997,7 +1983,7 @@ static ssize_t npe_class_node_id_show_data_v3(char *buf, u32 sz)
  */
 static 	ssize_t npe_class_server_id_show_data_v3(char *buf, u32 sz)
 {
-	if (!ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD) {
     	return dhal_sysfs_emit(buf, "0000000000000000\n");
 	}
 	return npe_class_server_id_show_data(buf, sz);
@@ -2011,7 +1997,7 @@ static 	ssize_t npe_class_server_id_show_data_v3(char *buf, u32 sz)
  */
 static ssize_t npe_class_ultraserver_mode_show_data_v3(char *buf)
 {
-	if (!ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_STD) {
     	return dhal_sysfs_emit(buf, "\n");
 	}
     return npe_class_ultraserver_mode_show_data(buf);
@@ -2053,7 +2039,7 @@ static int ntpb_pe_get_aggregated_wl_cycle_cnt_v3(struct neuron_device *nd, int 
  */
 static void ndhal_ext_cleanup_v3(void)
 {
-	if (ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_ULTRASERVER) {
     	npe_cleanup();
 	}
 	return;
@@ -2083,6 +2069,7 @@ int ndhal_register_funcs_v3(void) {
 		return -EINVAL;
 	}
 
+	ndhal->ndhal_arch.platform_type = ndhal_platform_type_v3();
 	ndhal->ndhal_address_map.pci_host_base = V3_PCIE_A0_BASE;
 	ndhal->ndhal_address_map.mmap_p_offset = V3_MMAP_P_OFFSET;
 	ndhal->ndhal_address_map.mmap_nc_event_offset = V3_MMAP_NC_EVENT_OFFSET;
@@ -2102,8 +2089,6 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_address_map.dma_eng_per_nc = V3_DMA_ENG_PER_NC;
 	ndhal->ndhal_address_map.dram_channels = V3_MAX_DRAM_CHANNELS;
 	ndhal->ndhal_reset.reset_poll_interval = V3_NR_RESET_POLL_INTERVAL;
-	ndhal->ndhal_reset.reset_device_initial_poll_delay = 0;
-	ndhal->ndhal_reset.reset_tpb_initial_poll_delay = 0;
 	ndhal->ndhal_reset.initiate_max_wait_time = V3_NR_RESET_INIT_MAX_TOTAL_WAIT_TIME_MS;
 	ndhal->ndhal_reset.retry_count = NR_RESET_RETRY_COUNT;
 	ndhal->ndhal_reset.nr_post_reset_config = nr_post_reset_config_v3;
@@ -2120,8 +2105,8 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_mpset.mpset_set_dram_and_mpset_info = mpset_set_dram_and_mpset_info_v3;
 	ndhal->ndhal_mpset.mpset_block_carveout_regions = mpset_block_carveout_regions_v3;
 	ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id = ndmar_get_h2t_eng_id_v3;
-	ndhal->ndhal_ndmar.ndmar_get_h2t_qid = ndmar_get_h2t_qid_v3;
-	ndhal->ndhal_ndmar.ndmar_is_h2t_q = ndmar_is_h2t_q_v3;
+	ndhal->ndhal_ndmar.ndmar_get_h2t_def_qid = ndmar_get_h2t_def_qid_v3;
+	ndhal->ndhal_ndmar.ndmar_is_h2t_def_q = ndmar_is_h2t_def_q_v3;
 	ndhal->ndhal_ndmar.nr_init_h2t_eng = nr_init_h2t_eng_v3;
 	ndhal->ndhal_ndmar.ndmar_is_nx_ring = ndmar_is_nx_ring_v3;
 	ndhal->ndhal_ndmar.ndmar_quiesce_queues = ndmar_quiesce_queues_v3;
@@ -2129,6 +2114,8 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_fw_io.fw_io_topology = fw_io_topology_v3;
 	ndhal->ndhal_fw_io.fw_io_register_readless_read_region = fw_io_register_readless_read_region_v3;
 	ndhal->ndhal_fw_io.fw_io_read_csr_array = fw_io_read_csr_array_v3;
+	ndhal->ndhal_fw_io.fw_io_execute_request = fw_io_execute_request_v3;
+	ndhal->ndhal_fw_io.fw_io_post_metric = fw_io_post_metric_v3;
 	ndhal->ndhal_mmap.dm_mmap_special = dm_mmap_special_v3;
 	ndhal->ndhal_mmap.mmap_get_bar4_offset = mmap_get_bar4_offset_v3;
 	ndhal->ndhal_sysfs_metrics.root_info_node_attrs_info_tbl_cnt = root_info_node_attrs_info_tbl_cnt_v3;
@@ -2137,6 +2124,7 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_sysfs_metrics.nsysfsmetric_get_hbm_error_count = nsysfsmetric_get_hbm_error_count_v3;
 	ndhal->ndhal_sysfs_metrics.nsysfsmetric_add_tensor_engine_node = nsysfsmetric_add_tensor_engine_node_v3;
 	ndhal->ndhal_pci.axi_bar = BAR_UNUSED;
+	ndhal->ndhal_pci.apb_bar = 0;
 	ndhal->ndhal_pci.dram_bar = 4;
 	ndhal->ndhal_pci.neuron_pci_release_bar = neuron_pci_release_bar_v3;
 	ndhal->ndhal_pci.neuron_pci_reserve_bar = neuron_pci_reserve_bar_v3;
@@ -2147,12 +2135,9 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_cdev.ncdev_bar0_write_blocked_addrs = ncdev_bar0_write_blocked_addrs_v3;
 	ndhal->ndhal_cdev.ncdev_compatible_version = ncdev_compatible_version_v3;
 	ndhal->ndhal_cdev.ncdev_quiesce_exec_on_proc_exit = ncdev_quiesce_exec_on_proc_exit_v3;
-	ndhal->ndhal_cdev.ncdev_bar_write_data = ncdev_bar_write_data_v3;
 	ndhal->ndhal_cdev.ncdev_logical_to_physical_nc_map = ncdev_logical_to_physical_nc_map_v3;
 	ndhal->ndhal_cdev.ncdev_get_default_tpbs_for_hbm = ncdev_get_default_tpbs_for_hbm_v3;
 	ndhal->ndhal_udma.num_beats = 2296;  // allow up to 288 outstanding writes
-	ndhal->ndhal_udma.udma_m2s_data_rd_cfg_boundaries_set = udma_m2s_data_rd_cfg_boundaries_set_v3;
-	ndhal->ndhal_udma.udma_q_config = udma_q_config_v3;
 	ndhal->ndhal_ndma.ndma_retry_memcpy = false;
 	ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3;
 	ndhal->ndhal_ndma.ndma_validate_pa = ndma_validate_pa_v3;
@@ -2167,6 +2152,8 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_npe.npe_class_node_id_show_data = npe_class_node_id_show_data_v3;
 	ndhal->ndhal_npe.npe_class_server_id_show_data = npe_class_server_id_show_data_v3;
 	ndhal->ndhal_npe.npe_class_ultraserver_mode_show_data = npe_class_ultraserver_mode_show_data_v3;
+	ndhal->ndhal_npe.npe_neighbor_eng_ids = npe_neighbor_eng_ids_v3;
+	ndhal->ndhal_perf.perf_set_profile = perf_set_profile_v3;
 	ndhal->ndhal_tpb.pe_xbus_count = 9;
 	ndhal->ndhal_tpb.pe_row_grp_count = 4;
 	ndhal->ndhal_tpb.pe_col_grp_count = 4;
@@ -2176,6 +2163,7 @@ int ndhal_register_funcs_v3(void) {
 	ndhal->ndhal_tpb.pe_fast_wl_cntr_offsets = ntpb_pe_fast_wl_cntr_offsets_v3;
 	ndhal->ndhal_tpb.pe_idle_cntr_offsets = ntpb_pe_idle_cntr_offsets_v3;
 	ndhal->ndhal_tpb.pe_get_aggregated_wl_cycle_cnt = ntpb_pe_get_aggregated_wl_cycle_cnt_v3;
+	ndhal->ndhal_perf.current_performance_profile = 0;
 	ndhal->ndhal_ext_cleanup = ndhal_ext_cleanup_v3;
 
 	extern unsigned int nmetric_log_posts;
@@ -2185,7 +2173,6 @@ int ndhal_register_funcs_v3(void) {
 		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3_qemu;
 		ndhal->ndhal_address_map.dma_eng_per_nd = V3_NC_PER_DEVICE * V3_DMA_ENG_PER_NC;
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
-		ndhal->ndhal_pci.apb_bar = 2;
 		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_qemu;
 		ndhal->ndhal_address_map.dice_per_device = 1;
 
@@ -2199,24 +2186,27 @@ int ndhal_register_funcs_v3(void) {
 		ndhal->ndhal_address_map.nc_per_device = nc_per_dev_param;
 		ndhal->ndhal_address_map.dev_nc_map = dev_nc_map;
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3_qemu_emu;
-		ndhal->ndhal_pci.apb_bar = 0;
 		ndhal->ndhal_ndma.ndma_get_wait_for_completion_time = ndma_get_wait_for_completion_time_v3_emu;
 		ndhal->ndhal_address_map.dice_per_device = 1;
 
 		// Disable metrics on emulation
 		nmetric_log_posts = 0;
-
 	} else {
 		ndhal->ndhal_reset.nr_initiate_reset = nr_initiate_reset_v3;
 		ndhal->ndhal_reset.nr_wait_for_reset_completion = nr_wait_for_reset_completion_v3;
 		ndhal->ndhal_address_map.dma_eng_per_nd = V3_NC_PER_DEVICE * V3_DMA_ENG_PER_NC;
 		ndhal->ndhal_reg_access.reg_read32_array = reg_read32_array_v3;
-		ndhal->ndhal_pci.apb_bar = 0;
 	}
 
-	if (ndhal_instance_type_pod()) {
+	if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_ULTRASERVER) {
 		ret = npe_init();
-	}
+		if (ret) {
+			pr_err("failed to initialize pod election on V3\n");
+			return ret;
+		}
+	} else if (ndhal->ndhal_arch.platform_type == NEURON_PLATFORM_TYPE_PDS) {
+		// TODO PDS
+	}	
 
 	switch (ndhal->pci_device_id) {
 		case TRN2_DEVICE_ID0:
@@ -2225,6 +2215,10 @@ int ndhal_register_funcs_v3(void) {
 				pr_err("failed to register ndhal funcs on trn2.\n");
 				return ret;
 			}
+			break;
+		// TODO: remove once v4 dhal stops re-using v3
+		case TRN3_DEVICE_ID0:
+		case TRN3_DEVICE_ID1:
 			break;
 		default:
 			pr_err("Unknown HW architecture. Can't init neuron_dhal.\n");

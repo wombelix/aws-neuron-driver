@@ -3,7 +3,7 @@
  * Copyright 2021, Amazon.com, Inc. or its affiliates. All Rights Reserved
  */
 
-/** Each neuron device has N number of TOP_SPs. (inf1 does not have it).
+/** Each neuron device has N number of TOP_SPs. TOP_SPs are only on V2 and after.
  *
  * Engine:
  * -------

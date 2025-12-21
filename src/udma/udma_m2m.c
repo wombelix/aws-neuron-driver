@@ -126,22 +126,18 @@ static int udma_set_max_descs_and_prefetch(struct udma *udma, u8 max_descs)
 		(1 << UDMA_M2S_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT);
 	reg_write32(&udma->udma_regs_m2s->m2s_rd.desc_pref_cfg_3, value);
 
-	// likely harmless, but just in case, keep the old V1 behavior where 
-	// we did not change default for s2m.  V1 support is on the way out,
-	// once it's deprecated just remove this comment and the "if"
-	if (narch_get_arch() != NEURON_ARCH_V1) {
-		value = (pref_thr << UDMA_S2M_RD_DESC_PREF_CFG_3_PREF_THR_SHIFT) |
-			(min_burst_above_thr << UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT) |
-			(1 << UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT);
-		reg_write32(&udma->udma_regs_s2m->s2m_rd.desc_pref_cfg_3, value);
-		// configure max_burst for both m2s and s2m
-		value = (max_burst << UDMA_AXI_M2S_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT) |
-			(always_break_on_max_boundary << UDMA_AXI_M2S_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT);
-		reg_write32(&udma->udma_regs_m2s->axi_m2s.desc_rd_cfg_3, value);
-		value = (max_burst << UDMA_AXI_S2M_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT) |
-			(always_break_on_max_boundary << UDMA_AXI_S2M_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT);
-		reg_write32(&udma->udma_regs_s2m->axi_s2m.desc_rd_cfg_3, value);
-	}
+	value = (pref_thr << UDMA_S2M_RD_DESC_PREF_CFG_3_PREF_THR_SHIFT) |
+		(min_burst_above_thr << UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_ABOVE_THR_SHIFT) |
+		(1 << UDMA_S2M_RD_DESC_PREF_CFG_3_MIN_BURST_BELOW_THR_SHIFT);
+	reg_write32(&udma->udma_regs_s2m->s2m_rd.desc_pref_cfg_3, value);
+	// configure max_burst for both m2s and s2m
+	value = (max_burst << UDMA_AXI_M2S_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT) |
+		(always_break_on_max_boundary << UDMA_AXI_M2S_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT);
+	reg_write32(&udma->udma_regs_m2s->axi_m2s.desc_rd_cfg_3, value);
+	value = (max_burst << UDMA_AXI_S2M_DESC_RD_CFG_3_MAX_AXI_BEATS_SHIFT) |
+		(always_break_on_max_boundary << UDMA_AXI_S2M_DESC_RD_CFG_3_ALWAYS_BREAK_ON_MAX_BOUNDARY_SHIFT);
+	reg_write32(&udma->udma_regs_s2m->axi_s2m.desc_rd_cfg_3, value);
+
 	return 0;
 }
 
@@ -341,6 +337,9 @@ static int udma_m2m_build_descriptor(union udma_desc *rx_desc_ptr, union udma_de
 		case UDMA_M2M_BARRIER_WRITE_BARRIER:
 			sdma_m2s_set_write_barrier(&meta_ctrl);
 			break;
+		case UDMA_M2M_BARRIER_SOW:
+			rx_flags |= S2M_DESC_STRONG_ORDER_WR;
+			break;
 		case UDMA_M2M_BARRIER_NONE:
 			break;
 		default:
@@ -355,7 +354,7 @@ static int udma_m2m_build_descriptor(union udma_desc *rx_desc_ptr, union udma_de
 
 	/* if rx should generate an interrupt make it so */
 	if (unlikely(set_dst_int))
-		rx_flags = S2M_DESC_INT_EN;
+		rx_flags |= S2M_DESC_INT_EN;
 
 	return udma_m2m_build_rx_descriptor(rx_desc_ptr, rx_ring_id, d_addr, size, rx_flags);
 }

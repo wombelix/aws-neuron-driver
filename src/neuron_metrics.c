@@ -51,6 +51,7 @@ enum nmetric_cw_id {
 	NMETRIC_CW_ID_AVG_TPB_RESET_TIME_MS = 53,
 	NMETRIC_CW_ID_DEVICE_RESET_FAILURE_COUNT = 54,
 	NMETRIC_CW_ID_TPB_RESET_FAILURE_COUNT = 55,
+	NMETRIC_CW_ID_PERFORMANCE_PROFILE_ID = 56,
 
 	// Extra versions
 	// extra space for reporting multiple versions of the same type in one post
@@ -112,6 +113,7 @@ static const nmetric_def_t nmetric_defs[] = {
 	// constant metrics
 	NMETRIC_CONSTANT_DEF(0, POST_TIME_ALWAYS, NMETRIC_CW_ID_INSTANCE_ID), // instance id
 	NMETRIC_CONSTANT_DEF(1, POST_TIME_ALWAYS, NMETRIC_CW_ID_DRIVER_VERSION), // driver version
+	NMETRIC_CONSTANT_DEF(2, POST_TIME_TICK_0, NMETRIC_CW_ID_PERFORMANCE_PROFILE_ID), // performance profile id
 
 	// version metrics
 	NMETRIC_VERSION_DEF(0, POST_TIME_ALWAYS, NMETRIC_CW_ID_RT_VERSION_BASE, NDS_ND_COUNTER_RUNTIME_VERSION, 0), // rt version
@@ -178,6 +180,7 @@ static const int nmetric_count = sizeof(nmetric_defs) / sizeof(nmetric_def_t);
 // AND don't forget to increase the NMETRIC_..._COUNT in neuron_metrics.h
 #define NMETRIC_INSTANCE_ID_IDX		0
 #define NMETRIC_DRIVER_VERS_IDX 	1
+#define NMETRIC_PROFILE_ID_IDX 		2
 #define NMETRIC_FW_IO_ERR_IDX		17
 
 struct nmetric_cw_metric {
@@ -197,6 +200,7 @@ void nmetric_init_constants_metrics()
 	int driver_ver_str_len;
 	int instance_id_idx = nmetric_defs[NMETRIC_INSTANCE_ID_IDX].index;
 	int driver_vers_idx = nmetric_defs[NMETRIC_DRIVER_VERS_IDX].index;
+	int profile_id_idx = nmetric_defs[NMETRIC_PROFILE_ID_IDX].index;
 	loff_t offset = 0;
 
 	// initiate buffer to 0
@@ -215,6 +219,9 @@ void nmetric_init_constants_metrics()
 	driver_ver_str_len = strlen(driver_version);
 	BUG_ON(driver_ver_str_len > NEURON_METRICS_VERSION_STRING_MAX_LEN); // check for buffer overflow
 	memcpy(nmetric_constant_metrics[driver_vers_idx], driver_version, min(driver_ver_str_len, (int)NEURON_METRICS_VERSION_STRING_MAX_LEN));
+
+	// record performance profile
+	snprintf(nmetric_constant_metrics[profile_id_idx], NEURON_METRICS_VERSION_STRING_MAX_LEN + 1, "%d", 0);
 }
 
 /**
@@ -578,27 +585,38 @@ static inline int nmetric_post_constant_u64(const nmetric_def_t *metric, struct 
 	return nmetric_post_u64(metric, metric_value, dest, available_size);
 }
 
-static inline int nmetric_post_driver_metrics(const nmetric_def_t *metric,
-											  u64 *curr_metrics,
-											  u64 *prev_metrics,
-											  u64 *freed_metrics,
-											  struct nmetric_cw_metric *dest,
-											  u64 *driver_metrics,
-											  int available_size)
+// TODO: This function is a quick workaround to post and reset the driver metrics:
+//          1. it uses atomics to protect driver metrics from race conditions;
+//          2. it resets the driver metric and its correspondingly intermediate metrics immediately after posting.
+//       A better long term solution is needed.
+static inline int nmetric_post_and_reset_driver_metrics(const nmetric_def_t *driver_final_metric,
+                                                        struct nmetric_cw_metric *dest,
+                                                        struct nmetric_driver_metrics *driver_metrics,
+                                                        int available_size)
 {
-	u64 metric_value = driver_metrics[metric->index];
+	int metric_index = driver_final_metric->index;
+	u64 metric_value = 0;
 
-	if (metric->index == NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS
-	  || metric->index == NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS
-	  || metric->index == NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS
-	  || metric->index == NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS) {
-		return nmetric_post_u64(metric, metric_value, dest, available_size);
-	} else if (metric->index == NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT
-			|| metric->index == NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT){
-		return nmetric_post_counter(curr_metrics, prev_metrics, freed_metrics, metric, dest, available_size);		
+	if (metric_index < 0 || metric_index >= NMETRIC_FINAL_DRIVER_METRICS_COUNT) {
+		pr_err("invalid final driver metric with index %d\n", driver_final_metric->index);
+		return 0;
 	}
 
-	return 0;
+	if (metric_index == NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS) {
+		u64 total_time = atomic64_xchg(&driver_metrics->intermediate_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS], 0);
+		u64 total_count = atomic64_xchg(&driver_metrics->intermediate_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT], 0);
+
+		if (total_count != 0)
+			metric_value = total_time / total_count;
+	} else if (metric_index == NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS) {
+		u64 total_time = atomic64_xchg(&driver_metrics->intermediate_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS], 0);
+		u64 total_count = atomic64_xchg(&driver_metrics->intermediate_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT], 0);
+
+		if (total_count != 0)
+			metric_value = total_time / total_count;
+	}
+
+	return nmetric_post_u64(driver_final_metric, metric_value, dest, available_size);
 }
 
 /**
@@ -632,6 +650,9 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 		if (!nmetric_check_post_tick(tick, curr_metric))
 			continue;
 		available_size = NEURON_METRICS_MAX_POSTING_BUF_SIZE - data_size;
+		if (available_size <= 0) {
+			pr_err_once("ran out of metrics posting space for tick %d on metric %d", tick, nmetric_index);
+		}
 		dest = (struct nmetric_cw_metric *)&nd->metrics.posting_buffer[data_size];
 		switch(curr_metric->type) {
 		case NMETRIC_TYPE_CONSTANT:
@@ -652,7 +673,7 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 			data_size += nmetric_post_constant_u64(curr_metric, dest, const_u64_metrics, freed_const_u64_metrics, available_size);
 		break;
 		case NMETRIC_TYPE_DRIVER:
-			data_size += nmetric_post_driver_metrics(curr_metric, curr_metrics, prev_metrics, freed_metrics, dest, nd->metrics.driver_metrics, available_size);
+			data_size += nmetric_post_and_reset_driver_metrics(curr_metric, dest, &nd->metrics.driver_metrics, available_size);
 		break;
 		}
 	}
@@ -663,7 +684,7 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 		nmetric_mock_fw_io_post_metric(nd->metrics.posting_buffer, data_size);
 	}
 	if (data_size && (nmetric_log_posts & (1<<0))) {
-		int ret = fw_io_post_metric(nd->fw_io_ctx, nd->metrics.posting_buffer, data_size);
+		int ret = ndhal->ndhal_fw_io.fw_io_post_metric(nd->fw_io_ctx, nd->metrics.posting_buffer, data_size);
 		if (ret < 0)
 			pr_err("Metric posting failed with error code: %d\n", ret);
 	}
@@ -715,6 +736,11 @@ static void nmetric_cache_shared_bufs(struct neuron_device *nd, u64 *freed_metri
 			freed_const_u64_metrics[curr_metric->index] = nd->metrics.ds_freed_const_u64_buf[curr_metric->index];
 			nd->metrics.ds_freed_const_u64_buf[curr_metric->index] = 0;
 		break;
+		case NMETRIC_TYPE_CONSTANT:
+			if (curr_metric->cw_id == NMETRIC_CW_ID_PERFORMANCE_PROFILE_ID) {
+				snprintf(nmetric_constant_metrics[curr_metric->index], NEURON_METRICS_VERSION_STRING_MAX_LEN + 1, "%d", ndhal->ndhal_perf.current_performance_profile);
+			}
+		break;
 		}
 	}
 }
@@ -753,9 +779,6 @@ static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metric
 				const_u64_metrics[curr_metric->index] = 0;
 				freed_const_u64_metrics[curr_metric->index] = 0;
 			break;
-			case NMETRIC_TYPE_DRIVER:
-				nd->metrics.driver_metrics[curr_metric->index] = 0;
-			break;
 		}
 	}
 
@@ -774,6 +797,30 @@ static void nmetric_start_new_session(struct neuron_device *nd, u64 *curr_metric
 static void nmetric_sample_high_freq(struct neuron_device *nd)
 {
 	npower_sample_utilization(nd);
+}
+
+static void nmetric_aggregate_and_post_tick(struct neuron_device *nd, struct nmetric_versions *component_versions, u64 *curr_feature_bitmap, u64 *freed_feature_bitmap, u64 *const_u64_metrics, u64 *freed_const_u64_metrics, u8 tick)
+{
+	neuron_ds_acquire_lock(&nd->datastore);
+	nmetric_full_aggregate(nd, nd->metrics.neuron_aggregation.curr,
+					curr_feature_bitmap, const_u64_metrics, tick);
+	nmetric_cache_shared_bufs(nd, nd->metrics.neuron_aggregation.freed,
+					component_versions, freed_feature_bitmap,
+					freed_const_u64_metrics, tick);
+	neuron_ds_release_lock(&nd->datastore);
+
+	nmetric_post_metrics(nd, nd->metrics.neuron_aggregation.curr,
+					nd->metrics.neuron_aggregation.prev,
+					nd->metrics.neuron_aggregation.freed,
+					component_versions, *curr_feature_bitmap,
+					*freed_feature_bitmap, const_u64_metrics,
+					freed_const_u64_metrics, tick);
+	nmetric_start_new_session(nd, nd->metrics.neuron_aggregation.curr,
+					nd->metrics.neuron_aggregation.prev,
+					nd->metrics.neuron_aggregation.freed,
+					curr_feature_bitmap, freed_feature_bitmap,
+					const_u64_metrics, freed_const_u64_metrics,
+					tick); // reset all current metrics for this tick
 }
 
 /**
@@ -795,8 +842,8 @@ static int nmetric_thread_fn(void *arg)
 	u64 post_delay_in_jiffies;
 	u64 last_metric_post_time;
 	u64 start_jiffies = jiffies;
-	u64 last_logged_slow_tick = 0;
 	u64 current_slow_tick;
+	u8 tick_budget = 0; // how many ticks can be posted in a certain iteration of the loop
 
 	// initialize all aggregation buffers
 	memset(nd->metrics.neuron_aggregation.prev, 0, nmetric_counters_buf_size);
@@ -816,11 +863,14 @@ static int nmetric_thread_fn(void *arg)
 		sample_delay_in_jiffies, nmetric_metric_post_delay, HZ);
 
 	// metrics are only sent once at rate specified by module param, new metric data may be saved without being immediately sent
-	while (!kthread_should_stop() && nd->metrics.neuron_aggregation.running) {
-	    long wait_return;
-		wait_return = wait_event_interruptible_timeout(nd->metrics.neuron_aggregation.wait_queue, !nd->metrics.neuron_aggregation.running,sample_delay_in_jiffies);
+	while (!kthread_should_stop() && nd->metrics.neuron_aggregation.state != NMETRIC_STATE_STOPPED) {
+		long wait_return;
+		int flush_tick;
+		wait_return = wait_event_interruptible_timeout(nd->metrics.neuron_aggregation.wait_queue,
+									nd->metrics.neuron_aggregation.state == NMETRIC_STATE_STOPPED || nd->metrics.neuron_aggregation.state == NMETRIC_STATE_RESUMING,
+									sample_delay_in_jiffies);
 
-		if (kthread_should_stop() || !nd->metrics.neuron_aggregation.running || (wait_return < 0)) {
+		if (kthread_should_stop() || nd->metrics.neuron_aggregation.state == NMETRIC_STATE_STOPPED || (wait_return < 0)) {
 			break;
 		};
 
@@ -831,31 +881,29 @@ static int nmetric_thread_fn(void *arg)
 		// We track this by keeping track of the number of intervals since this thread started
 		// up so that we don't introduce drift due to the latency of other loop operations.
 		current_slow_tick = (jiffies - start_jiffies)/post_delay_in_jiffies;
-		if (current_slow_tick != last_logged_slow_tick) {
-			last_logged_slow_tick = current_slow_tick;
 
-			// aggregate and post metrics
-			neuron_ds_acquire_lock(&nd->datastore);
-			nmetric_full_aggregate(nd, nd->metrics.neuron_aggregation.curr,
-					       &curr_feature_bitmap, const_u64_metrics, tick);
-			nmetric_cache_shared_bufs(nd, nd->metrics.neuron_aggregation.freed,
-						  component_versions, &freed_feature_bitmap,
-						  freed_const_u64_metrics, tick);
-			neuron_ds_release_lock(&nd->datastore);
-
-			nmetric_post_metrics(nd, nd->metrics.neuron_aggregation.curr,
-					     nd->metrics.neuron_aggregation.prev,
-					     nd->metrics.neuron_aggregation.freed,
-					     component_versions, curr_feature_bitmap,
-					     freed_feature_bitmap, const_u64_metrics,
-					     freed_const_u64_metrics, tick);
-			nmetric_start_new_session(nd, nd->metrics.neuron_aggregation.curr,
-						  nd->metrics.neuron_aggregation.prev,
-						  nd->metrics.neuron_aggregation.freed,
-						  &curr_feature_bitmap, &freed_feature_bitmap,
-						  const_u64_metrics, freed_const_u64_metrics,
-						  tick); // reset all current metrics for this tick
-			tick = (tick + 1) % POST_TICK_COUNT;
+		// periodic metrics posting on a timer
+		if (nd->metrics.neuron_aggregation.state == NMETRIC_STATE_PAUSED) {
+			// skip metrics post when paused via metrics_ctrl ioctl
+			continue;
+		} else if (current_slow_tick != nd->metrics.neuron_aggregation.last_logged_slow_tick) {
+			// post up to tick_budget ticks of metrics
+			// in the normal case, this will post one tick per iteration of the loop
+			// if the was paused then resumed, post up to the number of ticks that would have been posted if it had not been paused
+		
+			if (nd->metrics.neuron_aggregation.state == NMETRIC_STATE_RESUMING) {
+				nd->metrics.neuron_aggregation.state = NMETRIC_STATE_RUNNING;
+				tick_budget = current_slow_tick - nd->metrics.neuron_aggregation.last_logged_slow_tick;
+			 	tick_budget = (tick_budget > POST_TICK_COUNT) ? POST_TICK_COUNT : tick_budget;
+			} else {
+				tick_budget = 1;
+			}
+			
+			for (flush_tick = 0; flush_tick < tick_budget; flush_tick++) {
+				nmetric_aggregate_and_post_tick(nd, component_versions, &curr_feature_bitmap, &freed_feature_bitmap, const_u64_metrics, freed_const_u64_metrics, tick);
+				tick = (tick + 1) % POST_TICK_COUNT;
+			}
+			nd->metrics.neuron_aggregation.last_logged_slow_tick = current_slow_tick;
 		}
 	}
 
@@ -865,7 +913,7 @@ static int nmetric_thread_fn(void *arg)
 static int nmetric_create_thread(struct neuron_device *nd)
 {
 	init_waitqueue_head(&nd->metrics.neuron_aggregation.wait_queue);
-	nd->metrics.neuron_aggregation.running = true;
+	nd->metrics.neuron_aggregation.state = NMETRIC_STATE_RUNNING;
 	nd->metrics.neuron_aggregation.thread = kthread_run(nmetric_thread_fn, nd, "nd%d metrics", nd->device_index);
 	if (IS_ERR_OR_NULL(nd->metrics.neuron_aggregation.thread)) {
 		pr_err("nd%d metrics aggregation thread creation failed\n", nd->device_index);
@@ -878,15 +926,34 @@ void nmetric_stop_thread(struct neuron_device *nd)
 {
 	if (nd->metrics.neuron_aggregation.thread == NULL)
 		return;
-	nd->metrics.neuron_aggregation.running = false;
+	nd->metrics.neuron_aggregation.state = NMETRIC_STATE_STOPPED;
 	wake_up(&nd->metrics.neuron_aggregation.wait_queue);
 	kthread_stop(nd->metrics.neuron_aggregation.thread); //blocks till the thread exits
 	nd->metrics.neuron_aggregation.thread = NULL;
 }
 
+// if periodic posting from metrics thread is paused, need to request an explicit flush
+void nmetric_set_mode(struct neuron_device *nd, enum neuron_metrics_mode mode)
+{
+	switch (mode) {
+	case NEURON_METRICS_MODE_PERIODIC_ENABLE:
+		nd->metrics.neuron_aggregation.state = NMETRIC_STATE_RESUMING;
+	break;
+	case NEURON_METRICS_MODE_PERIODIC_DISABLE:
+		nd->metrics.neuron_aggregation.state = NMETRIC_STATE_PAUSED;
+	break;
+	}
+}
+
 void nmetric_init_driver_metrics(struct neuron_device *nd)
 {
-	memset(nd->metrics.driver_metrics, 0, NMETRIC_DRIVER_METRICS_COUNT * sizeof(u64));
+	int i;
+
+	for (i = 0; i < NMETRIC_FINAL_DRIVER_METRICS_COUNT; i++)
+		atomic64_set(&nd->metrics.driver_metrics.final_metrics[i], 0);
+
+	for (i = 0; i < NMETRIC_INTERMEDIATE_DRIVER_METRICS_COUNT; i++)
+		atomic64_set(&nd->metrics.driver_metrics.intermediate_metrics[i], 0);
 }
 
 int nmetric_init(struct neuron_device *nd)
@@ -895,7 +962,8 @@ int nmetric_init(struct neuron_device *nd)
 
 	memset(nd->metrics.ds_freed_metrics_buf, 0, nmetric_counters_buf_size);
 	memset(nd->metrics.ds_freed_const_u64_buf, 0, NMETRIC_CONSTANT_U64_COUNT * sizeof(u64));
-	npower_init_stats(nd);
+	nd->metrics.neuron_aggregation.state = NMETRIC_STATE_STOPPED;
+	nd->metrics.neuron_aggregation.last_logged_slow_tick = 0;
 
 	// initiate metric aggregator thread
 	ret = nmetric_create_thread(nd);
@@ -903,37 +971,55 @@ int nmetric_init(struct neuron_device *nd)
 	return ret;
 }
 
-void nmetric_set_reset_time_metrics(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset) {
+void nmetric_set_reset_time_metrics(struct neuron_device *nd, s64 cur_reset_time_ms, bool is_device_reset) {
+	struct nmetric_driver_metrics *driver_metrics = &nd->metrics.driver_metrics;
+	atomic64_t *max_time_metric;
+	atomic64_t *total_time_metric;
+	atomic64_t *total_count_metric;
+	s64 max_time;
+	int max_time_index;
+	int total_time_index;
+	int total_count_index;
+
 	if (cur_reset_time_ms <= 0) {
 		return;
 	}
 
 	if (is_device_reset) {
-		if (nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS] < cur_reset_time_ms) {
-			nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS] = cur_reset_time_ms;
-		}
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS] += cur_reset_time_ms;
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT]++;
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS] = 
-		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS] / 
-		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT];
+		max_time_index = NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS;
+		total_time_index = NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS;
+		total_count_index = NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT;
 	} else {
-		if (nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS] < cur_reset_time_ms) {
-			nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS] = cur_reset_time_ms;
-		}
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS] += cur_reset_time_ms;
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT]++;
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS] = 
-		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS] / 
-		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT];
+		max_time_index = NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS;
+		total_time_index = NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS;
+		total_count_index = NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT;
 	}
+
+	max_time_metric = &driver_metrics->final_metrics[max_time_index];
+	total_time_metric = &driver_metrics->intermediate_metrics[total_time_index];
+	total_count_metric = &driver_metrics->intermediate_metrics[total_count_index];
+
+	max_time = atomic64_read(max_time_metric);
+
+	while (max_time < cur_reset_time_ms &&
+		   !atomic64_try_cmpxchg(max_time_metric, &max_time, cur_reset_time_ms));
+
+	atomic64_add(cur_reset_time_ms, total_time_metric);
+	atomic64_inc(total_count_metric);
 }
 
 void nmetric_increment_reset_failure_count(struct neuron_device *nd, bool is_device_reset)
 {
+	struct nmetric_driver_metrics *driver_metrics = &nd->metrics.driver_metrics;
+
 	if (is_device_reset) {
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT]++;
+		atomic64_inc(&driver_metrics->final_metrics[NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT]);
 	} else {
-		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT]++;
+		atomic64_inc(&driver_metrics->final_metrics[NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT]);
 	}
+}
+
+void nmetric_set_performance_profile(struct neuron_device *nd, int profile)
+{
+	snprintf(nmetric_constant_metrics[NMETRIC_PROFILE_ID_IDX], NEURON_METRICS_VERSION_STRING_MAX_LEN + 1, "%d", ndhal->ndhal_perf.current_performance_profile);
 }

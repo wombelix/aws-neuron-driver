@@ -19,7 +19,6 @@
 #include "neuron_ds.h"
 #include "neuron_reg_access.h"
 #include "neuron_metrics.h"
-#include "v1/fw_io.h"
 #include "neuron_dma.h"
 #include "neuron_dhal.h"
 #include "neuron_nq.h"
@@ -29,13 +28,11 @@
 
 
 static struct pci_device_id neuron_pci_dev_ids[] = {
-	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID0) },
-	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID1) },
-	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID2) },
-	{ PCI_DEVICE(AMZN_VENDOR_ID, INF1_DEVICE_ID3) },
 	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN1_DEVICE_ID0) },
 	{ PCI_DEVICE(AMZN_VENDOR_ID, INF2_DEVICE_ID0) },
 	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN2_DEVICE_ID0) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN3_DEVICE_ID0) },
+	{ PCI_DEVICE(AMZN_VENDOR_ID, TRN3_DEVICE_ID1) },
 	{
 		0,
 	},
@@ -101,7 +98,7 @@ static int neuron_pci_device_init(struct neuron_device *nd)
 
 	// Initialize the mc handle map
 	ret = nmch_handle_init(nd);
-	if (ret) 
+	if (ret)
 		goto fail_mch;
 
 	// Initialize the device mpset
@@ -166,7 +163,7 @@ static int neuron_pci_device_close(struct neuron_device *nd)
 static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 {
 	unsigned short device = nd->pdev->device;
-	enum neuron_arch arch;
+	enum neuron_arch arch = NEURON_ARCH_INVALID;
 	u8 revision;
 	pci_read_config_byte(nd->pdev, PCI_REVISION_ID, &revision);
 
@@ -178,8 +175,12 @@ static void neuron_pci_set_device_architecture(struct neuron_device *nd)
 		case TRN2_DEVICE_ID0:
 			arch = NEURON_ARCH_V3;
 			break;
+		case TRN3_DEVICE_ID0:
+		case TRN3_DEVICE_ID1:
+			arch = NEURON_ARCH_V4;
+			break;
 		default:
-			arch = NEURON_ARCH_V1;
+			return;
 	}
 	narch_init(arch, revision);
 }
@@ -196,7 +197,7 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	}
 
     nmetric_init_driver_metrics(nd);
-	
+
 	if (neuron_log_init(nd)) {
 		pci_warn(dev, "Warning: Can't allocate memory for neuron log\n");
 	}
@@ -256,7 +257,7 @@ static int neuron_pci_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	nd->device_index = atomic_fetch_add(1, &device_count);
 #else
 	nd->device_index = atomic_add_return(1, &device_count) - 1;
-#endif 
+#endif
 	nd->fw_io_ctx = fw_io_setup(nd->npdev.bar0, nd->npdev.bar0_size,
 				    nd->npdev.bar2, nd->npdev.bar2_size);
 	if (nd->fw_io_ctx == NULL) {

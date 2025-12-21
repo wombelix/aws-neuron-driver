@@ -3,7 +3,7 @@
  * Copyright 2020, Amazon.com, Inc. or its affiliates. All Rights Reserved
  */
 
-/** Each neuron device has N number of neuron cores. (v1 has 4 neuron cores; v2 has 2 neuron cores).
+/** Each neuron device has N number of neuron cores.
  *
  * Engines:
  * -------

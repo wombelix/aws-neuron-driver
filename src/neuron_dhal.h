@@ -12,8 +12,21 @@
 #define dhal_sysfs_emit(buf, ...) sysfs_emit((buf), __VA_ARGS__)
 #endif
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
+#define dhal_atomic_fetch_add(v,a)  atomic_fetch_add(v, (a))
+#else
+#define dhal_atomic_fetch_add(v,a)  (atomic_add_return(v, (a)) -1)
+#endif
+
+
+
 extern int force_die_flip;
 
+struct ndhal_arch {
+    int arch;
+    enum neuron_platform_type platform_type;
+    u32 server_id;
+};
 struct ndhal_address_map {
 	// addresses
 	uint64_t pci_host_base;
@@ -44,7 +57,6 @@ struct ndhal_address_map {
 struct ndhal_reset {
     uint64_t reset_poll_interval;
     uint64_t reset_tpb_initial_poll_delay;
-    uint64_t reset_device_initial_poll_delay;
 	uint64_t initiate_max_wait_time;
     uint32_t retry_count;
     int (*nr_initiate_reset) (struct neuron_device *nd, uint32_t nc_map);
@@ -82,8 +94,8 @@ struct ndhal_mpset {
 
 struct ndhal_ndmar {
     uint32_t (*ndmar_get_h2t_eng_id) (struct neuron_device *nd, uint32_t nc_id);
-    int (*ndmar_get_h2t_qid) (uint32_t nc_id);
-    bool (*ndmar_is_h2t_q) (struct neuron_device *nd, uint32_t eng_id, uint32_t q_id);
+    int (*ndmar_get_h2t_def_qid) (uint32_t nc_id);
+    bool (*ndmar_is_h2t_def_q) (struct neuron_device *nd, uint32_t eng_id, uint32_t q_id);
     bool (*nr_init_h2t_eng) ( int nc_idx, uint32_t nc_map); 
     bool (*ndmar_is_nx_ring) (uint32_t eng_id, uint32_t q_id);
     int (*ndmar_quiesce_queues) (struct neuron_device *nd, u32 nc_id, u32 engine_count, u32 *queue_mask);
@@ -94,6 +106,8 @@ struct ndhal_fw_io {
     int (*fw_io_topology) (struct fw_io_ctx *ctx, int pdev_index, int device_id, u32 *connected_device_ids, int *count);
     int (*fw_io_register_readless_read_region) (struct fw_io_ctx *ctx, void __iomem *bar0, u64 bar0_size, void __iomem *bar2, u64 bar2_size);
     int (*fw_io_read_csr_array) (void **addrs, u32 *values, u32 num_csrs, bool operational);
+    int (*fw_io_execute_request) (struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size, u8 *resp, u32 resp_size);
+    int (*fw_io_post_metric) (struct fw_io_ctx *ctx, u8 *data, u32 size);
 };
 
 struct ndhal_reg_access {
@@ -153,15 +167,12 @@ struct ndhal_cdev {
 
     void (*ncdev_compatible_version) (struct neuron_ioctl_compatible_version *arg);
     void (*ncdev_quiesce_exec_on_proc_exit) (void);
-    int (*ncdev_bar_write_data) (struct neuron_device *nd, u8 bar, u64 *reg_addresses, u32 *data, u32 data_count);
     int (*ncdev_logical_to_physical_nc_map)(struct neuron_ioctl_nc_map *map, uint32_t max_num_entries, enum neuron_ioctl_nc_mapping_type mapping_type);
     void (*ncdev_get_default_tpbs_for_hbm) (u32 hbm_index, u32 tpbs[MAX_NC_PER_DEVICE], u32 *tpb_count);
 };
 
 struct ndhal_udma {
 	unsigned int num_beats;
-    void (*udma_m2s_data_rd_cfg_boundaries_set) (struct udma *udma);
-    void (*udma_q_config) (struct udma_q *udma_q);
 };
 
 struct ndhal_ndma {
@@ -183,6 +194,7 @@ struct ndhal_npe {
 	ssize_t (*npe_class_node_id_show_data)(char *buf, u32 sz);
 	ssize_t (*npe_class_server_id_show_data)(char *buf, u32 sz);
 	ssize_t (*npe_class_ultraserver_mode_show_data)(char *buf);
+	u32 (*npe_neighbor_eng_ids)[2];
 };
 
 struct ndhal_tpb {
@@ -201,10 +213,15 @@ struct ndhal_tpb {
     int (*pe_format_activity_stats)(struct neuron_device *nd, int nc_id, char buffer[], unsigned int bufflen);
 };
 
+struct ndhal_perf {
+    int current_performance_profile;
+    int (*perf_set_profile) (struct neuron_device *nd, uint32_t profile);
+};
+
 struct neuron_dhal {
-    int arch;
     unsigned int pci_device_id;
 
+    struct ndhal_arch ndhal_arch;
     struct ndhal_address_map ndhal_address_map;
     struct ndhal_reset ndhal_reset;
     struct ndhal_topsp ndhal_topsp;
@@ -222,6 +239,7 @@ struct neuron_dhal {
     struct ndhal_ndma ndhal_ndma;
 	struct ndhal_npe ndhal_npe;
     struct ndhal_tpb ndhal_tpb;
+    struct ndhal_perf ndhal_perf;
     void (*ndhal_ext_cleanup) (void);
 };
 
@@ -253,13 +271,13 @@ void neuron_dhal_cleanup(void);
 void neuron_dhal_free(void);
 
 /**
- * ndhal_register_funcs() - Register functions v1 (or inf1) v2 (or trn1 inf2) to the ndhal
+ * ndhal_register_funcs() - Register functions based on hardward arch to the ndhal
  * 
  * @return int 0 on success, negative for failures
  */
 int ndhal_register_funcs_vc(void);
-int ndhal_register_funcs_v1(void);
 int ndhal_register_funcs_v2(void);
 int ndhal_register_funcs_v3(void);
+int ndhal_register_funcs_v4(void);
 
 #endif

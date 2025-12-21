@@ -11,10 +11,17 @@
 
 enum neuron_arch {
 	NEURON_ARCH_INVALID,
-	NEURON_ARCH_V1 = 1,
 	NEURON_ARCH_V2 = 2,
 	NEURON_ARCH_V3 = 3,
+	NEURON_ARCH_V4 = 4,
 	NEURON_ARCH_NUM
+};
+
+enum neuron_platform_type {
+	NEURON_PLATFORM_TYPE_STD = 0,
+	NEURON_PLATFORM_TYPE_ULTRASERVER = 1,
+	NEURON_PLATFORM_TYPE_PDS = 2,
+	NEURON_PLATFORM_TYPE_INVALID,
 };
 
 /**
@@ -54,5 +61,21 @@ bool narch_is_qemu(void);
  * Return: True if running on emulator.
  */
 bool narch_is_emu(void);
+
+/**
+ * narch_get_instance_type_name() - Reads instance type name from device DMI data.
+ *
+ * @instance_type_name: Buffer to store the instance type name string.
+ * @instance_type_name_size: Size of the instance_type_name buffer.
+ *
+ * Note: This function is only available on kernel versions 5.10.0 and above.
+ *
+ * Return:
+ * * 0 if read succeeds,
+ * * -ENOMEM - Failed to allocate temporary buffer for reading.
+ * * -EIO    - Failed to read the DMI product_name file.
+ * * -ENOSYS - Kernel version is below 5.10.0, function not supported.
+ */
+int narch_get_instance_type_name(char *instance_type_name, size_t instance_type_name_size);
 
 #endif

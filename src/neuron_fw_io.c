@@ -25,7 +25,6 @@
 #include "neuron_reg_access.h"
 #include "neuron_device.h"
 #include "neuron_arch.h"
-#include "v1/fw_io.h"
 #include "neuron_fw_io.h"
 #include "neuron_dhal.h"
 
@@ -46,7 +45,7 @@ int fw_io_ecc_read(void *bar0, uint64_t ecc_offset, uint32_t *ecc_err_count)
 	}
 
 	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + ecc_offset;
-	int ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, ecc_err_count, 1, false);
+	int ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, ecc_err_count, 1, true);
 	if (ret) {
 		pr_err("failed to get ecc error count from the device for ecc_offset=%llu\n", ecc_offset);
 		return -EIO;
@@ -60,7 +59,7 @@ int fw_io_hbm_uecc_repair_state_read(void *bar0, uint32_t *hbm_repair_state)
 	int ret;
 	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_HBM_REPAIR_STATE_OFFSET;
 
-	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, hbm_repair_state, 1, false);
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, hbm_repair_state, 1, true);
 	if (ret) {
 		pr_err("failed to get hbm reapirable state\n");
 		return -EIO;
@@ -82,7 +81,7 @@ int fw_io_serial_number_read(void *bar0, uint64_t *serial_number)
 
 	uint32_t serial_number_lo = 0;
 	void *addr_lo = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_SERIAL_NUMBER_LO_OFFSET;
-	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr_lo, &serial_number_lo, 1, false);
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr_lo, &serial_number_lo, 1, true);
 	if (ret) {
 		pr_err("failed to get the lower 32 bits of the serial number from the device\n");
 		return -EIO;
@@ -90,7 +89,7 @@ int fw_io_serial_number_read(void *bar0, uint64_t *serial_number)
 
 	uint32_t serial_number_hi = 0;
 	void *addr_hi = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_SERIAL_NUMBER_HI_OFFSET;
-	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr_hi, &serial_number_hi, 1, false);
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr_hi, &serial_number_hi, 1, true);
 	if (ret) {
 		pr_err("failed to get the higher 32 bits of the serial number from the device\n");
 		return -EIO;
@@ -113,7 +112,7 @@ int fw_io_device_power_read(void *bar0, u32 *power, unsigned die)
     // Read power utilization from MiscRAM.  The power utilization for each die are set up in contiguous 32 bit
     // miscram registers, so we can treat it like an array of uint32s for our purposes.
 	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_POWER_UTIL_D0_OFFSET + 4*die;
-	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, power, 1, false);
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, power, 1, true);
 	if (ret) {
 		pr_err("failed to get device power from the device, ret = %d\n", ret);
 	}
@@ -126,9 +125,22 @@ int fw_io_api_version_read(void * bar0, u32 *version)
 	int ret;
 
 	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_API_VERSION_OFFSET;
-	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, version, 1, false);
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, version, 1, true);
 	if (ret) {
 		pr_err("failed to get api version from the device, ret = %d\n", ret);
+	}
+
+	return ret;
+}
+
+int fw_io_server_info_read(void *bar0, u32 *server_info)
+{
+	int ret;
+
+	void *addr = bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_SERVER_RACK_ID_OFFSET;
+	ret = ndhal->ndhal_fw_io.fw_io_read_csr_array(&addr, server_info, 1, true);
+	if (ret) {
+		pr_err("failed to get server info from the device, ret = %d\n", ret);
 	}
 
 	return ret;
@@ -217,14 +229,30 @@ static void dx_crc32c_add(const u8 *data, size_t len, u32 *csum)
 	}
 }
 
-static u32 crc32c(const u8 *data, size_t len)
+static const u32 fw_io_cmd_timeout_tbl[FW_IO_CMD_MAX] = {
+	0,                   // cmd 0
+	(1000 * 1000 * 1),   // cmd 1 (FW_IO_CMD_READ)
+	(1000 * 1000 * 1),   // cmd 2 (FW_IO_CMD_POST_TO_CW)
+	(1000 * 1000 * 60)   // cmd 3 (FW_IO_CMD_SET_POWER_PROFILE)
+};
+
+static const u32 fw_io_cmd_retry_tbl[FW_IO_CMD_MAX] = {
+	0,   // cmd 0
+	15,  // cmd 1 (FW_IO_CMD_READ)
+	15,  // cmd 2 (FW_IO_CMD_POST_TO_CW)
+	3    // cmd 3 (FW_IO_CMD_SET_POWER_PROFILE)
+};
+
+static u32 crc32c(const u8 *hdr, const u8 *data, size_t len) 
 {
 	u32 csum = 0xffffffff;
+	if (hdr != NULL)
+		dx_crc32c_add(hdr, 8, &csum);
 	dx_crc32c_add(data, len, &csum);
 	return csum ^ 0xffffffff;
 }
 
-static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size,
+int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size,
 			  u8 *resp, u32 resp_size)
 {
 	int ret;
@@ -240,7 +268,11 @@ static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 
 		return -EINVAL;
 	}
 
-	mutex_lock(&ctx->lock);
+	// HACK: Skip mutex lock for POST_TO_CW commands as fw_io_post_metric() already holds the lock
+	// TODO: Remove this hack implementation when legacy API is deprecated
+	if (command_id != FW_IO_CMD_POST_TO_CW) {
+		mutex_lock(&ctx->lock);
+	}
 
 	int i;
 	for (i=0; i < FW_IO_RD_RETRY; i++){
@@ -250,26 +282,27 @@ static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 
 			ctx->next_seq_num = 1;
 
 		memcpy(ctx->request->data, req, req_size);
-		ctx->request->sequence_number = ctx->next_seq_num;
-		ctx->request->command_id = command_id;
-		ctx->request->size = req_size + sizeof(struct fw_io_request);
-		ctx->request->crc32 = 0;
-		ctx->request->crc32 = crc32c((const u8 *)ctx->request, ctx->request->size);
+		ctx->request->request_hdr.hdr.sequence_number = ctx->next_seq_num;
+		ctx->request->request_hdr.hdr.command_id = command_id;
+		ctx->request->request_hdr.hdr.size = req_size + sizeof(struct fw_io_request);
+		ctx->request->request_hdr.hdr.crc32 = 0;
+		ctx->request->request_hdr.hdr.crc32 = crc32c((const u8 *)&ctx->request->request_hdr, ctx->request->data, ctx->request->request_hdr.hdr.size - sizeof(ctx->request->request_hdr.hdr));
 		// make sure the sequence number we will wait on is not the same
-		ctx->response->sequence_number = 0;
+		ctx->response->response_hdr.hdr.sequence_number = 0;
 		dma_rmb();
 		fw_io_trigger(ctx->bar0);
 		// now wait for resp->seq == req->seq which indicates that request has been completed and
 		// we have a response
 		ktime_t start_time = ktime_get();
 
-		volatile u8 *fwio_seq = (volatile u8 *)&ctx->response->sequence_number;
+		volatile u8 *fwio_seq = (volatile u8 *)&ctx->response->response_hdr.hdr.sequence_number;
+
 		do {
 			resp_seq = READ_ONCE(*fwio_seq);
 			if (resp_seq == ctx->next_seq_num)
 				break;
 			msleep(1);
-		} while ( ktime_to_us(ktime_sub(ktime_get(), start_time)) <  FW_IO_RD_TIMEOUT);
+		} while ( ktime_to_us(ktime_sub(ktime_get(), start_time)) < FW_IO_RD_TIMEOUT);
 
 		ret = -1;
 		if (resp_seq != ctx->next_seq_num) {
@@ -277,28 +310,130 @@ static int fw_io_execute_request(struct fw_io_ctx *ctx, u8 command_id, const u8 
 				pr_err("seq: %u, cmd: %u timed out\n", ctx->next_seq_num, command_id);
 			continue;
 		}
-		if (ctx->response->error_code == FW_IO_SUCCESS) {
-			if ((ctx->response->size - sizeof(struct fw_io_response)) > resp_size) {
+		if (ctx->response->response_hdr.hdr.error_code == FW_IO_SUCCESS) {
+			if ((ctx->response->response_hdr.hdr.size - sizeof(struct fw_io_response)) > resp_size) {
 				// this is probably not possible
 				pr_err("seq: %u, cmd: %u response too large (%u)\n", ctx->next_seq_num,
-			       	command_id, ctx->response->size);
+			       	command_id, ctx->response->response_hdr.hdr.size);
 				goto done;
 			}
 			memcpy(resp, ctx->response->data,
-		       	ctx->response->size - sizeof(struct fw_io_response));
+		       	ctx->response->response_hdr.hdr.size - sizeof(struct fw_io_response));
 			ret = 0;
 			goto done;
 		}
 		ctx->fw_io_err_count++;
 		pr_err(KERN_ERR "seq: %u, cmd: %u failed %u\n", ctx->next_seq_num, command_id,
-	       	ctx->response->error_code);
+	       	ctx->response->response_hdr.hdr.error_code);
 		// if we get an unsupported command response, don't retry
-		if (ctx->response->error_code == FW_IO_UNKNOWN_COMMAND) {
+		if (ctx->response->response_hdr.hdr.error_code == FW_IO_UNKNOWN_COMMAND) {
 			ret = -1;
 			goto done;
 		}
 	}
 done:
+
+	// HACK: Only unlock if we locked (not FW_IO_CMD_POST_TO_CW)
+	// TODO: Remove this hack implementation when legacy API is deprecated
+	if (command_id != FW_IO_CMD_POST_TO_CW) {
+		mutex_unlock(&ctx->lock);
+	}
+	return ret;
+}
+
+int fw_io_execute_request_new(struct fw_io_ctx *ctx, u8 command_id, const u8 *req, u32 req_size, u8 *resp, u32 resp_size)
+{
+	int ret;
+	int i, j;
+	union fw_io_request_hdr req_header;
+
+	u32 api_version_num = 0;
+
+	ret = fw_io_api_version_read(ctx->bar0, &api_version_num);
+
+	if ((ret != 0) || (api_version_num < FW_IO_NEW_READLESS_READ_MIN_API_VERSION)) {
+		pr_info_once("Pacific version %d, using legacy Pacific/Runtime comm framework", api_version_num);
+		return -ENOTSUPP;
+	}
+
+	mutex_lock(&ctx->lock);
+
+	u32 retry_count = (command_id < FW_IO_CMD_MAX) ? fw_io_cmd_retry_tbl[command_id] : FW_IO_RD_RETRY;
+	for (i=0; i < retry_count; i++){
+		if (++ctx->next_seq_num == 0)
+			ctx->next_seq_num = 1;
+
+		req_header.hdr.sequence_number = ctx->next_seq_num;
+		req_header.hdr.command_id = command_id;
+		req_header.hdr.size = req_size + sizeof(req_header);
+		req_header.hdr.crc32 = 0;
+		req_header.hdr.crc32 = crc32c((const u8 *)&req_header, req, req_size);
+
+		// Write data
+		if (req_size > 0) {
+			u32 *data = (u32*)req;
+			for (j=0; j < (req_size + 3) / 4; j++) {
+				reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_DATA_OFFSET + j*4, data[j]);
+			}
+		}
+
+		// Write header
+		reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET, req_header.reg.dw0);
+		reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_REQUEST_BASE_ADDR_LOW_OFFSET, req_header.reg.dw1);
+
+		// Zero response header
+		reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESPONSE_BASE_ADDR_HIGH_OFFSET, 0);
+		reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_RESPONSE_BASE_ADDR_LOW_OFFSET, 0);
+
+		// Set ack and trigger
+		reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_ACK_OFFSET, 1);
+		reg_write32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET, 1);
+
+		// Poll for completion
+		ktime_t start_time = ktime_get();
+		u32 trigger;
+		u32 timeout = (command_id < FW_IO_CMD_MAX) ? fw_io_cmd_timeout_tbl[command_id] : FW_IO_RD_TIMEOUT;
+		do {
+			reg_read32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_TRIGGER_INT_NOSEC_OFFSET, &trigger);
+			if (!trigger) break;
+			msleep(1);
+		} while (ktime_to_us(ktime_sub(ktime_get(), start_time)) < timeout);
+		if (trigger) {
+			if (command_id != FW_IO_CMD_POST_TO_CW)
+				pr_err("seq: %u, cmd: %u timed out\n", ctx->next_seq_num, command_id);
+			continue;
+		}
+		
+		// Read response header
+		union fw_io_response_hdr resp_header;
+		reg_read32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_REQUEST_BASE_ADDR_HIG_OFFSET, &resp_header.reg.dw0);
+
+		if (resp_header.hdr.sequence_number != ctx->next_seq_num) {
+			if (command_id != FW_IO_CMD_POST_TO_CW)
+				pr_err("seq: %u, cmd: %u seq mismatch\n", ctx->next_seq_num, command_id);
+			continue;
+		}
+
+		if (resp_header.hdr.error_code == FW_IO_SUCCESS) {
+			u32 data_size = resp_header.hdr.size - sizeof(resp_header);
+			if (data_size > 0 && resp != NULL) {
+				u32 copy_size = min(resp_size, data_size);
+				u32 *resp_data = (u32*)resp;
+				for (j = 0; j < (copy_size + 3) / 4; j++) {
+					reg_read32(ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_DATA_OFFSET + j*4, &resp_data[j]);
+				}
+			}
+			ret = 0;
+			break;
+		}
+
+		ctx->fw_io_err_count++;
+		pr_err(KERN_ERR "seq: %u, cmd: %u failed %u\n", ctx->next_seq_num, command_id, resp_header.hdr.error_code);
+		if (resp_header.hdr.error_code == FW_IO_UNKNOWN_COMMAND) {
+			ret = -1;
+			break;
+		}
+	}
 
 	mutex_unlock(&ctx->lock);
 	return ret;
@@ -319,7 +454,7 @@ int fw_io_read(struct fw_io_ctx *ctx, u64 addr_in[], u32 val_out[], u32 num_req)
 	if (should_fail(&neuron_fail_fwio_read, 1))
 		return -ETIMEDOUT;
 #endif
-	return fw_io_execute_request(ctx, FW_IO_CMD_READ, (u8 *)addr_in, sizeof(u64) * num_req,
+	return ndhal->ndhal_fw_io.fw_io_execute_request(ctx, FW_IO_CMD_READ, (u8 *)addr_in, sizeof(u64) * num_req,
 			     	(u8 *)val_out, sizeof(u32) * num_req);
 }
 
@@ -453,6 +588,7 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size)
 	u32 padded_u32 = 0;
 	u32 *m = (u32 *)data;
 	int i;
+	int ret;
 
 #ifdef CONFIG_FAULT_INJECTION
 	if (should_fail(&neuron_fail_fwio_post_metric, 1))
@@ -462,8 +598,11 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size)
 		return -E2BIG;
 	}
 
+	// Lock mutex to prevent race condition with new interface
+	mutex_lock(&ctx->lock);
+
 	// Write the data in the misc ram first
-	void * offset = (void *) (ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_METRIC_OFFSET);
+	void * offset = (void *) (ctx->bar0 + ndhal->ndhal_address_map.bar0_misc_ram_offset + FW_IO_REG_DATA_OFFSET);
 	for (i = 0; i < (size / 4); i++) {
 		reg_write32(offset + (i * 4), m[i]);
 	}
@@ -474,9 +613,19 @@ int fw_io_post_metric(struct fw_io_ctx *ctx, u8 *data, u32 size)
 		reg_write32(offset + size_aligned, padded_u32);
 	}
 
-	return fw_io_execute_request(ctx, FW_IO_CMD_POST_TO_CW, data, size, data, size);
+	ret = ndhal->ndhal_fw_io.fw_io_execute_request(ctx, FW_IO_CMD_POST_TO_CW, data, size, data, size);
+
+	mutex_unlock(&ctx->lock);
+	return ret;
 }
 
+int fw_io_post_metric_new(struct fw_io_ctx *ctx, u8 *data, u32 size)
+{
+    if (size > FW_IO_REG_METRIC_BUF_SZ) {
+        return -E2BIG;
+    }
+    return fw_io_execute_request_new(ctx, FW_IO_CMD_POST_TO_CW, data, size, NULL, 0);
+}
 
 int fw_io_read_counters(struct fw_io_ctx *ctx, uint64_t addr_in[], uint32_t val_out[],
 			uint32_t num_counters)
@@ -574,4 +723,19 @@ uint32_t fw_io_get_total_uecc_err_count(void *bar0) {
 		}
 	}
 	return total_uncorrected_ecc_err_count;
+}
+
+int fw_io_set_power_profile(struct fw_io_ctx *ctx, uint32_t profile)
+{
+	union fw_io_req_perfprofile_data data = {0};
+	data.rec.profile = (uint8_t)profile;
+	data.rec.voltage_margin = 0;
+	data.rec.frequency_index = 0;
+	data.rec.ocw_index = 0;
+
+	if (!ctx) {
+		return -EINVAL;
+	}
+
+	return fw_io_execute_request_new(ctx, FW_IO_CMD_SET_POWER_PROFILE, (u8 *)&data, sizeof(data), NULL, 0);
 }
