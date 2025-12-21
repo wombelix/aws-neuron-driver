@@ -1372,13 +1372,19 @@ neuron_pci_device_id_to_rid_map_v3(uint32_t * count, uint32_t * did_to_rid_map)
 {
 	int i;
 
-	for (i = 0; i < total_neuron_devices; i++) {
-		if (ndhal->pci_device_id == TRN2_DEVICE_ID0) {
-			did_to_rid_map[neuron_pci_routing_id_to_user_id(i)] = i;
-		} else {
-			did_to_rid_map[i] = i;
-		}
+	switch (ndhal->pci_device_id) {
+		case TRN2_DEVICE_ID0:
+			for (i = 0; i < total_neuron_devices; i++) {
+				did_to_rid_map[neuron_pci_routing_id_to_user_id(i)] = i;
+			}
+			break;
+
+		default:
+			for (i = 0; i < total_neuron_devices; i++) {
+				did_to_rid_map[i] = i;
+			}
 	}
+
 	*count = total_neuron_devices;
 	return 0;
 }

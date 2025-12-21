@@ -140,11 +140,6 @@ int neuron_p2p_unregister_va(struct neuron_p2p_va_info *vainfo)
                 return -1;
         }
 
-        if ((vainfo->device_index < 0) || (vainfo->device_index >= MAX_NEURON_DEVICE_COUNT)) {
-                pr_err("Invalid device index: %d", vainfo->device_index);
-                return -EINVAL;
-        }
-
         // pci call will catch out of bounds index, but we still want to check for null nd because not all systems have same number of neuron devices
         nd = neuron_pci_get_device(vainfo->device_index);
         if (nd == NULL) {
@@ -154,6 +149,12 @@ int neuron_p2p_unregister_va(struct neuron_p2p_va_info *vainfo)
         }
 
         write_lock(&nd->mpset.rbmmaplock);
+
+        if (vainfo->device_index >= MAX_NEURON_DEVICE_COUNT) {
+                write_unlock(&nd->mpset.rbmmaplock);
+                pr_err("Invalid device index: %d", vainfo->device_index);
+                return -EINVAL;
+        }
 
         struct nmmap_node *mmap = nmmap_search_va(nd, vainfo->virtual_address);
         if (mmap != NULL) {
@@ -168,8 +169,6 @@ int neuron_p2p_unregister_va(struct neuron_p2p_va_info *vainfo)
                 mmap->data = NULL;
         } else {
                 write_unlock(&nd->mpset.rbmmaplock);
-                pr_debug("Could not find va:0x%p, pid:%d", vainfo->virtual_address,
-                         task_tgid_nr(current));
                 return -EINVAL;
         }
         vainfo->device_index = -1;

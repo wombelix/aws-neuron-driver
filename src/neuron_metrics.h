@@ -33,7 +33,20 @@
 enum driver_metrics_idx {
 	NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS = 0,
 	NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS = 1,
-	NMETRIC_DRIVER_METRICS_IDX_COUNT = 2,
+
+	NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS = 2,
+	NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS = 3,
+
+	// Intermediate metrics. do not post to CW directly.
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS = 4,
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS = 5,
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT = 6,
+	NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT = 7,
+
+	NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT = 8,
+	NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT = 9,
+
+	NMETRIC_DRIVER_METRICS_IDX_COUNT = 10,
 };
 
 // Sadly, the 3 #defines below need to be updated when adding new metrics to nmetric_defs
@@ -140,11 +153,19 @@ void nmetric_init_driver_metrics(struct neuron_device *nd);
 int nmetric_init(struct neuron_device *nd);
 
 /**
- * nmetric_set_max_reset_time_ms() - Set the max TPB or device reset time seen so far.
+ * nmetric_set_reset_time_metrics() - Set the max TPB or device reset time seen so far.
  * 
  * @param cur_reset_time_ms: the current TPB or device reset time in milliseconds.
  * @param is_device_reset: whether it is TPB or device reset.
  */
-void nmetric_set_max_reset_time_ms(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset);
+void nmetric_set_reset_time_metrics(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset);
+
+/**
+ * nmetric_increment_reset_failure_count() - Increment the reset failure count by 1 for a device or TPB reset failure.
+ * 
+ * @param nd: neuron device
+ * @param is_device_reset: whether it is TPB or device reset.
+ */
+void nmetric_increment_reset_failure_count(struct neuron_device *nd, bool is_device_reset);
 
 #endif

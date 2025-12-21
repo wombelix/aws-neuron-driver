@@ -270,10 +270,22 @@ static struct mem_chunk *nmmap_get_mc(struct neuron_device *nd, struct vm_area_s
 		pr_err("nd%d: unaligned address %llx for mmap()\n", nd->device_index, mc->pa);
 		return NULL;
 	}
-	if (mc->size != size) {
+
+	/* Contiguous scratchpad is a special kind of region that grows from the end of the main
+	 * genpool in multiple chunks/pages which are allocated contiguous to each other
+	 * A scratchpad var can span multiple contiguous scratchpad pages, so we must allow mmap across
+	 * memchunk boundaries.
+	*/
+	if (mc->size != size && mc->alloc_type != NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE) {
 		pr_err("nd%d: partial mmap of mc not supported(%llx != %llx)\n", nd->device_index,
 		       mc->size, size);
 		return NULL;
+	} else if (mc->alloc_type == NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE) {
+		if (mc->pa + size > mc->mp->main_pool_end_addr) {
+			pr_err("nd%d: mmap of %lld bytes beginning at 0x%llx exceeds end of genpool (0x%llx)",
+				nd->device_index, size, mc->pa, mc->mp->main_pool_end_addr);
+			return NULL;
+		}
 	}
 	return mc;
 }

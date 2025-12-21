@@ -247,7 +247,7 @@ static int ncdev_dma_copy_descriptors(struct neuron_device *nd, unsigned int cmd
 	if (!mc)
 		return -EINVAL;
 	// check access is within the range.
-	if (offset + (num_descs * sizeof(union udma_desc)) > mc->size) {
+	if (!mc_access_is_within_bounds(mc, offset, num_descs * sizeof(union udma_desc))) {
 		return -EINVAL;
 	}
 
@@ -743,7 +743,7 @@ static int ncdev_memset(struct neuron_device *nd, unsigned int cmd, void *param)
 	}
 
 	// check access is within the range.
-	if (offset + size > mc->size) {
+	if (!mc_access_is_within_bounds(mc, offset, size)) {
 		pr_err("offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
@@ -799,13 +799,13 @@ static int ncdev_mem_copy(struct neuron_device *nd, unsigned int cmd, void *para
 		return -EINVAL;
 
 	// check access is within the range.
-	if (src_offset + size > src_mc->size) {
+	if (!mc_access_is_within_bounds(src_mc, src_offset, size)) {
 		pr_err("src offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 	// check access is within the range.
-	if (dst_offset + size > dst_mc->size) {
-		pr_err("src offset+size is too large for mem handle\n");
+	if (!mc_access_is_within_bounds(dst_mc, dst_offset, size)) {
+		pr_err("dst offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 	ret = ndma_memcpy_mc(nd, src_mc, dst_mc, src_offset, dst_offset, size);
@@ -874,12 +874,12 @@ static int ncdev_mem_copy_async(struct neuron_device *nd, unsigned int cmd, void
 		return -EINVAL;
 
 	// check access is within the range.
-	if (src_offset + size > src_mc->size) {
+	if (!mc_access_is_within_bounds(src_mc, src_offset, size)) {
 		pr_err("src offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
 	// check access is within the range.
-	if (dst_offset + size > dst_mc->size) {
+	if (!mc_access_is_within_bounds(dst_mc, dst_offset, size)) {
 		pr_err("dst offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
@@ -1079,7 +1079,7 @@ static int ncdev_mem_buf_copy(struct neuron_device *nd, unsigned int cmd, void *
 	if (!mc)
 		return -EINVAL;
 	// check access is within the range.
-	if (offset + size > mc->size) {
+	if (!mc_access_is_within_bounds(mc, offset, size)) {
 		pr_err("offset+size is too large for mem handle\n");
 		return -EINVAL;
 	}
@@ -1141,6 +1141,38 @@ static int ncdev_mem_buf_copy(struct neuron_device *nd, unsigned int cmd, void *
 		}
 		return ret;
 	}
+}
+
+static int ncdev_mem_buf_zerocopy64(struct neuron_device *nd, void *param)
+{
+	void *buffer;
+	struct mem_chunk *mc;
+	u64 mem_handle;
+	u32 copy_to_mem_handle;
+	u64 offset;
+	u64 size;
+	int ret;
+
+	struct neuron_ioctl_mem_buf_copy64 arg;
+	ret = neuron_copy_from_user(__func__, &arg, (struct neuron_ioctl_mem_buf_copy64 *)param, sizeof(arg));
+	if (ret)
+		return ret;
+	mem_handle = arg.mem_handle;
+	buffer = arg.buffer;
+	copy_to_mem_handle = arg.copy_to_mem_handle;
+	offset = arg.offset;
+	size = arg.size;
+
+    mc = ncdev_mem_handle_to_mem_chunk(nd, mem_handle);
+    if (!mc)
+        return -EINVAL;
+
+    if (!mc_access_is_within_bounds(mc, offset, size)) {
+        pr_err("dev  size is too large for mem handle\n");
+        return -EINVAL;
+    }
+
+	return ndma_memcpy_zero_copy_mc(nd, buffer, mc, offset, size, copy_to_mem_handle ? true : false);
 }
 
 static long ncdev_semaphore_ioctl(struct neuron_device *nd, unsigned int cmd, void *param)
@@ -1551,7 +1583,7 @@ static long ncdev_driver_info(unsigned int cmd, void *param)
 			driver_info.feature_flags1 = NEURON_DRIVER_FEATURE_DMABUF | NEURON_DRIVER_FEATURE_ASYNC_DMA |
 										 NEURON_DRIVER_FEATURE_BATCH_DMAQ_INIT | NEURON_DRIVER_FEATURE_BIG_CORE_MAPS |
 										 NEURON_DRIVER_FEATURE_MEM_ALLOC_TYPE | NEURON_DRIVER_FEATURE_HBM_SCRUB |
-										 NEURON_DRIVER_FEATURE_MEM_ALLOC64;
+										 NEURON_DRIVER_FEATURE_MEM_ALLOC64 | NEURON_DRIVER_FEATURE_CONTIGUOUS_SCRATCHPAD;
 
 			return copy_to_user(param, &driver_info, sizeof(driver_info));
 		}
@@ -2708,6 +2740,8 @@ static long ncdev_ioctl(struct file *filep, unsigned int cmd, unsigned long para
 		return ncdev_mem_copy_async_wait(nd, (void *)param);
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_BUF_COPY)) {
 		return ncdev_mem_buf_copy(nd, cmd, (void *)param);
+	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_MEM_BUF_ZEROCOPY64)) {
+		return ncdev_mem_buf_zerocopy64(nd, (void *)param);
 	} else if (cmd == NEURON_IOCTL_PROGRAM_ENGINE) {
 		return ncdev_program_engine(nd, (void *)param);
 	} else if (_IOC_NR(cmd) == _IOC_NR(NEURON_IOCTL_PROGRAM_ENGINE_NC)) {

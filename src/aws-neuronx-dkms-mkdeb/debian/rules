@@ -16,7 +16,7 @@ configure-stamp:
 
 build: build-stamp
 
-build-stamp: configure-stamp 
+build-stamp: configure-stamp
 	dh_testdir
 	$(MAKE)
 	touch $@
@@ -48,7 +48,7 @@ binary-indep: build install
 	dh_shlibdeps
 	dh_gencontrol
 	dh_md5sums
-	dh_builddeb
+	dh_builddeb -- -Zxz
 
 binary: binary-indep binary-arch
 .PHONY: build clean binary-indep binary-arch binary install configure

@@ -173,4 +173,19 @@ int ndma_memcpy_add_completion_desc( struct ndma_eng *eng, struct ndma_ring *rin
  */
 int ndma_memcpy_wait_for_completion(struct ndma_eng *eng, struct ndma_ring *ring, u32 count, void * ptr, bool async, bool is_d2d);
 
+/**
+ * ndma_memcpy_zero_copy_mc()
+ *
+ *   Wrapper around ndma_memcpyzero_copy() that pulls nc_id and device phyical address from
+ *   the mem chunk.
+ *
+ *   Todo:
+ *     Range check the device address here.  
+ *
+ *   Assumptions:
+ *     caller has done access_ok() check on the host address 
+ *     if (!access_ok(blah) return -EFAULT;
+ *     or check_copy_size()
+ */
+int ndma_memcpy_zero_copy_mc( struct neuron_device *nd,  void * host_addr, struct mem_chunk *dev_mc, u64 dev_offset, u64 size, bool direction);
 #endif

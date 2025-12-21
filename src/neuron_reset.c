@@ -416,7 +416,7 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
 			// Reset is done. Record the time to metrics.
 			reset_time = ktime_ms_delta(ktime_get(), start_time);
 			if (reset_time > 0) {
-				nmetric_set_max_reset_time_ms(nd, (uint64_t)reset_time, is_device_reset);
+				nmetric_set_reset_time_metrics(nd, (uint64_t)reset_time, is_device_reset);
 			} else {
 				return -1;
 			}
@@ -436,5 +436,6 @@ int nr_initiate_reset_via_fw(struct neuron_device *nd, uint32_t nc_map, uint32_t
 	} while (ktime_before(ktime_get(), ktime_add_ms(start_time, ndhal->ndhal_reset.initiate_max_wait_time)));
 
 	/* Timeout reached - reset failed */
+	nmetric_increment_reset_failure_count(nd, is_device_reset); // Record the reset failure in metrics
 	return -1;
 }

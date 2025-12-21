@@ -47,6 +47,10 @@ enum nmetric_cw_id {
     // Driver internal metics
 	NMETRIC_CW_ID_MAX_DEVICE_RESET_TIME_MS = 50,
 	NMETRIC_CW_ID_MAX_TPB_RESET_TIME_MS = 51,
+	NMETRIC_CW_ID_AVG_DEVICE_RESET_TIME_MS = 52,
+	NMETRIC_CW_ID_AVG_TPB_RESET_TIME_MS = 53,
+	NMETRIC_CW_ID_DEVICE_RESET_FAILURE_COUNT = 54,
+	NMETRIC_CW_ID_TPB_RESET_FAILURE_COUNT = 55,
 
 	// Extra versions
 	// extra space for reporting multiple versions of the same type in one post
@@ -162,6 +166,10 @@ static const nmetric_def_t nmetric_defs[] = {
 	// driver metrics. not in datastore
 	NMETRIC_DRIVER_DEF(NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS, POST_TIME_TICK_1, NMETRIC_CW_ID_MAX_DEVICE_RESET_TIME_MS),
 	NMETRIC_DRIVER_DEF(NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS, POST_TIME_TICK_1, NMETRIC_CW_ID_MAX_TPB_RESET_TIME_MS),
+	NMETRIC_DRIVER_DEF(NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS, POST_TIME_TICK_1, NMETRIC_CW_ID_AVG_DEVICE_RESET_TIME_MS),
+	NMETRIC_DRIVER_DEF(NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS, POST_TIME_TICK_1, NMETRIC_CW_ID_AVG_TPB_RESET_TIME_MS),
+	NMETRIC_DRIVER_DEF(NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT, POST_TIME_TICK_1, NMETRIC_CW_ID_DEVICE_RESET_FAILURE_COUNT),
+	NMETRIC_DRIVER_DEF(NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT, POST_TIME_TICK_1, NMETRIC_CW_ID_TPB_RESET_FAILURE_COUNT),
 };
 static const int nmetric_count = sizeof(nmetric_defs) / sizeof(nmetric_def_t);
 
@@ -570,11 +578,27 @@ static inline int nmetric_post_constant_u64(const nmetric_def_t *metric, struct 
 	return nmetric_post_u64(metric, metric_value, dest, available_size);
 }
 
-static inline int nmetric_post_driver_metrics(const nmetric_def_t *metric, struct nmetric_cw_metric *dest, u64 *driver_metrics, int available_size)
+static inline int nmetric_post_driver_metrics(const nmetric_def_t *metric,
+											  u64 *curr_metrics,
+											  u64 *prev_metrics,
+											  u64 *freed_metrics,
+											  struct nmetric_cw_metric *dest,
+											  u64 *driver_metrics,
+											  int available_size)
 {
 	u64 metric_value = driver_metrics[metric->index];
 
-	return nmetric_post_u64(metric, metric_value, dest, available_size);
+	if (metric->index == NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS
+	  || metric->index == NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS
+	  || metric->index == NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS
+	  || metric->index == NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS) {
+		return nmetric_post_u64(metric, metric_value, dest, available_size);
+	} else if (metric->index == NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT
+			|| metric->index == NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT){
+		return nmetric_post_counter(curr_metrics, prev_metrics, freed_metrics, metric, dest, available_size);		
+	}
+
+	return 0;
 }
 
 /**
@@ -628,7 +652,7 @@ static void nmetric_post_metrics(struct neuron_device *nd, u64 *curr_metrics, u6
 			data_size += nmetric_post_constant_u64(curr_metric, dest, const_u64_metrics, freed_const_u64_metrics, available_size);
 		break;
 		case NMETRIC_TYPE_DRIVER:
-			data_size += nmetric_post_driver_metrics(curr_metric, dest, nd->metrics.driver_metrics, available_size);
+			data_size += nmetric_post_driver_metrics(curr_metric, curr_metrics, prev_metrics, freed_metrics, dest, nd->metrics.driver_metrics, available_size);
 		break;
 		}
 	}
@@ -879,7 +903,7 @@ int nmetric_init(struct neuron_device *nd)
 	return ret;
 }
 
-void nmetric_set_max_reset_time_ms(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset) {
+void nmetric_set_reset_time_metrics(struct neuron_device *nd, uint64_t cur_reset_time_ms, bool is_device_reset) {
 	if (cur_reset_time_ms <= 0) {
 		return;
 	}
@@ -888,9 +912,28 @@ void nmetric_set_max_reset_time_ms(struct neuron_device *nd, uint64_t cur_reset_
 		if (nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS] < cur_reset_time_ms) {
 			nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_DEVICE_RESET_TIME_MS] = cur_reset_time_ms;
 		}
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS] += cur_reset_time_ms;
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT]++;
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_AVG_DEVICE_RESET_TIME_MS] = 
+		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_TIME_MS] / 
+		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_DEVICE_RESET_COUNT];
 	} else {
 		if (nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS] < cur_reset_time_ms) {
 			nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_MAX_TPB_RESET_TIME_MS] = cur_reset_time_ms;
 		}
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS] += cur_reset_time_ms;
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT]++;
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_AVG_TPB_RESET_TIME_MS] = 
+		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_TIME_MS] / 
+		  nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TOTAL_TPB_RESET_COUNT];
+	}
+}
+
+void nmetric_increment_reset_failure_count(struct neuron_device *nd, bool is_device_reset)
+{
+	if (is_device_reset) {
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_DEVICE_RESET_FAILURE_COUNT]++;
+	} else {
+		nd->metrics.driver_metrics[NMETRIC_DRIVER_METRICS_IDX_TPB_RESET_FAILURE_COUNT]++;
 	}
 }

@@ -880,3 +880,400 @@ int ndma_bar0_blocked_one_engine(u64 base, u64 off)
 	}
 	return 0;
 }
+
+/*
+ * Zero copy impementation.
+ *
+ *
+ *
+ */
+
+struct ndma_h2t_zcdma_context {
+	struct ndma_eng  *eng;                // engine 
+	struct ndma_ring *ring;               //
+	void             *host_addr;          // host address
+	dma_addr_t        dev_addr;           // device address
+	u64               size;               // size for this transfer
+	bool              direction;          // direction. true = to device
+	u64               start_time;         // start time for this transfer
+	int               nr_pages;           // number of pages for this transfer
+	int               nr_desc;            // number of descriptors which is equal to pending transfers -1
+	void             *completion_ptr;     // completion buffer pointer (host memory buffer we poll on for completions)
+	struct page     **page_list;          // page structures tracking our pinned pages
+};
+
+
+#define NDMA_ZC_PAGES_PER_XFER  64        // number of pages in each zero copy dma transfer.  This is somewhat, but not 
+										  // totally arbitrary.  We don't want to pin a lot of pages. We just want to
+										  // pin enough where (approximately):  
+										  //       dma time > (pin time + setup time + completion update + initial poll wait)
+										  // That's the simple explanation. It's a tad more complicated in trading off smaller
+										  // transfers where even if that equation doesn't hold, the overlap can be beneficial.
+										  // Right now the sweet spot looks to be ~ 32 pages
+
+/**
+ * ndma_build_n_issue_zc_descs() 
+ *
+ *   build descriptors for a zero copy operation consisting of non-continuous
+ *   physical host memory pages.  
+ *
+ *   explain how alignment is handled.
+ *
+ *   Todo:
+ *     go i=0 to nr_pages
+ *     Think about using some permanent location in HBM as source for completion descriptor update.  Like
+ *     why are we reading across the PCIe bus to fetch completion data.
+ */
+static int ndma_build_n_issue_zc_descs( struct ndma_h2t_zcdma_context * dma_ctx)
+{
+	int            ret;
+	unsigned long  offset        = (unsigned long)(dma_ctx->host_addr) & (PAGE_SIZE-1);
+	dma_addr_t     dev_addr      = dma_ctx->dev_addr;
+	dma_addr_t     pci_host_base = ndhal->ndhal_address_map.pci_host_base;
+	u64            remaining     = dma_ctx->size;
+	int            i = 0;
+	u64            chunk_size;
+	int            pending_transfers = 0;
+
+	while (i < dma_ctx->nr_pages) {
+		dma_addr_t src_addr;
+		dma_addr_t dst_addr;
+
+		// find the largest contiguous set of pages
+		u64 contig_size = PAGE_SIZE - offset; // we might be starting from the middle of the first page
+		dma_addr_t contig_start = page_to_phys(dma_ctx->page_list[i++]);
+		dma_addr_t tmp = contig_start;
+		for (; i < dma_ctx->nr_pages; i++) {
+			dma_addr_t next = page_to_phys(dma_ctx->page_list[i]);
+			if ((tmp + PAGE_SIZE) != next) { // done, not contiguous
+				break;
+			}
+			contig_size += PAGE_SIZE;
+		}
+
+		if (dma_ctx->direction) {
+			src_addr = (contig_start + offset) | pci_host_base;
+			dst_addr = dev_addr;
+		} else {
+			src_addr = dev_addr;
+			dst_addr = (contig_start + offset) | pci_host_base;
+		}
+		// after the first page the offset is always 0
+		offset     = 0;
+
+		// contiguous memory can be larger than a descriptor size, loop until we are done with this chunk of contiguous memory
+		while ((contig_size > 0) && (remaining > 0)) { // if the end is less then a full page contig_size could be > remaining
+			chunk_size = (remaining < contig_size) ? remaining : contig_size;
+			if (chunk_size > MAX_DMA_DESC_SIZE)
+				chunk_size = MAX_DMA_DESC_SIZE;
+
+			ret = udma_m2m_copy_prepare_one(&dma_ctx->eng->udma, dma_ctx->ring->qid, src_addr, dst_addr, chunk_size, remaining == chunk_size, false); // set the barrier if the last descriptor
+			if (ret) {
+				pr_err("failed to prepare DMA descriptor for %s q%d\n", dma_ctx->eng->udma.name, dma_ctx->ring->qid);
+				goto error;
+			}
+			dev_addr  += chunk_size;
+			src_addr  += chunk_size;
+			dst_addr  += chunk_size;
+			remaining -= chunk_size;
+			contig_size -= chunk_size;
+			pending_transfers++;
+		}
+	}
+	
+	dma_ctx->nr_desc = pending_transfers;
+
+	ret = ndma_memcpy_add_completion_desc( dma_ctx->eng, dma_ctx->ring, dma_ctx->completion_ptr);
+	if (ret) {
+		goto error;
+	}
+
+	pending_transfers++;
+
+	ret = udma_m2m_copy_start(&dma_ctx->eng->udma, dma_ctx->ring->qid, pending_transfers, pending_transfers);
+
+	if (ret) {
+		pr_info("copy start failed %d\n", ret);
+	}
+
+error:
+	return ret;
+}
+
+/**
+ * ndma_zero_copy_wait_for_completion()
+ *
+ *
+ *
+ */
+static int ndma_zero_copy_wait_for_completion( struct neuron_device *nd, u32 nc_id, struct ndma_eng   *eng, struct ndma_ring  *ring,
+											   struct ndma_h2t_zcdma_context * dma_ctx, struct ndma_h2t_zcdma_context * ndma_ctx)
+{
+	int  ret;
+	bool async = true;
+
+	while(true) {
+		ret = ndma_memcpy_wait_for_completion(eng, ring, dma_ctx->nr_desc+1, dma_ctx->completion_ptr, async, false);  // FIXM we shouldn't even be waiting 1usec here
+
+		if (ret == 0) {
+			if (dma_ctx->direction)
+				unpin_user_pages( dma_ctx->page_list, dma_ctx->nr_pages);
+			else
+				unpin_user_pages_dirty_lock( dma_ctx->page_list, dma_ctx->nr_pages, true);
+			return ret;
+		}
+
+		// if the memcpy starts within a NeuronCore reset window,
+		// the timeout is possible due to DMA hanging caused by hardware issue.
+		// if so, restart DMA and retry the memcpy
+		if (narch_get_arch() != NEURON_ARCH_V2) {    // FIXME - this should be if (!ndhal.tpb_reset_dma_retry) or part of dma_ctx
+			break;
+		}
+
+		if (!nr_op_in_reset_wnd(dma_ctx->start_time, nd)) {
+			break;
+		}
+
+		pr_info( "Failed to copy memory during a NeuronCore reset: nd %d, host %#llx, dev  %#llx, size %llu. Retrying the copy.\n",
+				nd->device_index, (dma_addr_t)dma_ctx->host_addr, dma_ctx->dev_addr, dma_ctx->size);
+
+		dma_ctx->start_time = get_jiffies_64();
+		if (ndma_ctx != NULL)
+			ndma_ctx->start_time = get_jiffies_64();
+
+		ret = ndmar_h2t_ring_init(eng, ring->qid);
+
+		if (ret) {
+			pr_err("H2T ring init failed on nd %d: ret %d\n", nd->device_index, ret);
+			break;
+		}
+
+		// restart dmas
+		//
+		ret = ndma_build_n_issue_zc_descs( dma_ctx);
+		if (ret)
+			break;
+
+		if (ndma_ctx != NULL) {
+			ret = ndma_build_n_issue_zc_descs( ndma_ctx);
+			if (ret) {
+				ndma_memcpy_wait_for_completion(eng, ring, dma_ctx->nr_desc+1, dma_ctx->completion_ptr, false, false);
+				break;
+			}
+		}
+
+		async = false;
+	}
+
+	// If we are exiting here, we've failed so unpin pages associated with the DMA.  If the next DMA
+	// context is valid, do an obligatory wait for the DMA operation so we don't splat data on someone 
+	// else's memory just in case the physical pages are reassigned after unpinning.
+	//
+	unpin_user_pages( dma_ctx->page_list, dma_ctx->nr_pages);
+
+	// blindly wait - 
+	if (ndma_ctx != NULL) {
+		ndma_memcpy_wait_for_completion(eng, ring, ndma_ctx->nr_desc+1, ndma_ctx->completion_ptr, false, false);
+		unpin_user_pages( ndma_ctx->page_list, ndma_ctx->nr_pages);
+	}
+
+	return ret;
+}
+
+/**
+ * ndma_memcpy_zero_copy()
+ *
+ *   dma data between a user space virtual address range and a contiguous location in device memory.
+ *   In order to do this, we need to know the physical pages are associated with
+ *   the user virtual address range and we need to make sure those physical pages stay
+ *   associated with the user virtual address range while the DMA is happening.
+ *   
+ *   How do we do this?  By asking the kernel to pin the physical pages in memory until we are 
+ *   done with them.  But our transaction could be large, the physical pages won't be contiguous,
+ *   and pinning takes CPU cycles, so we break the dma transfer up into a series of smaller transfers
+ *   where we pipeline the pinning of physical pages with dma transfers.
+ *
+ *   We use pin_user_pages_fast() to reduce pinning overhead because we know the process can't go 
+ *   away while we are down here doing our thing in the kernel within a single IOCTL call. 
+ *   
+ *   We ping pong back and forth between two dma contexts. So while dma for context A is in progress, 
+ *   we are pinning pages and starting dmas for context B. 
+ *
+ *   Algorithm goes like this:
+ *      initial a pair of dma contexts 
+ *      prev dma ctx = null
+ *      lock()
+ *      while still more data remaining
+ *         current dma ctx = next available context
+ *         init current dma context
+ *         calc size of the transfer for this dma context.  We want to transfer up to page boundaries
+ *         calc number of pages that need to be pinned for this dma
+ *         pin host pages in memory
+ *         generate descriptors for 
+ *         if prev dma ctx != NULL, wait for the prev dma to complete
+ *         update host address, device address and ammount remaining
+ *      wait for the last dma ctx to complete
+ *      unlock()
+ *      free resources
+ *
+ *  Notes:
+ *    unpinning responsibilities. Up until a dma is successfully launched, this routine is responsible for unpinning
+ *    host memory.  After that ndma_zero_copy_wait_for_completion() owns responsibility for unpinning pages.
+ *
+ *    We don't do this here, but pinning user pages across system (IOCTL) calls has a number of additional requirements.
+ *    We would have to cleanup any pinned pages when the process goes away, so any pinned pages have to get tracked in 
+ *    process context.
+ *    
+ * direction == true means write from host to device
+ *
+ */
+
+static int ndma_memcpy_zero_copy(struct neuron_device *nd, u32 nc_id, void * host_addr, dma_addr_t dev_addr, u64 size, bool direction)
+{
+	int ret = 0;
+
+	const int eng_id = ndhal->ndhal_ndmar.ndmar_get_h2t_eng_id(nd, nc_id);
+	const int qid = ndhal->ndhal_ndmar.ndmar_get_h2t_qid(nc_id);   // TODO - this needs direction or transfer type to select qid
+	struct ndma_eng   *eng   = &nd->ndma_engine[eng_id];
+	struct ndma_queue *queue = &eng->queues[qid];
+	struct ndma_ring  *ring  = &queue->ring_info;
+	struct ndma_h2t_zcdma_context   dma_ctx_tbl[2] = {0};
+	struct ndma_h2t_zcdma_context * dma_ctx;
+	struct ndma_h2t_zcdma_context * pdma_ctx = NULL;
+	int    next_dma_idx = 0;
+	int    i;
+	u64    remaining  = size;
+	u64    cpy_size = (NDMA_ZC_PAGES_PER_XFER*PAGE_SIZE < size) ? NDMA_ZC_PAGES_PER_XFER*PAGE_SIZE : size;
+	int nr_pinned;
+
+	// initialize the static fields in the dma contexts that are the same for every operation
+	//
+	for (i=0;i< 2;i++) {
+		dma_ctx_tbl[i].eng            = eng;
+		dma_ctx_tbl[i].ring           = ring;
+		dma_ctx_tbl[i].direction      = direction;
+		dma_ctx_tbl[i].page_list      = kcalloc( NDMA_ZC_PAGES_PER_XFER, sizeof(struct page *), GFP_KERNEL);
+		dma_ctx_tbl[i].completion_ptr = kmalloc(DMA_COMPLETION_MARKER_SIZE * 2, GFP_KERNEL);
+
+		if ((dma_ctx_tbl[i].page_list == NULL) || (dma_ctx_tbl[i].completion_ptr == NULL)) {
+			pr_err("could not allocate memory for dma contexts on nd %d\n", nd->device_index);
+			goto fail;
+		}
+	}
+	pdma_ctx = NULL;
+
+	mutex_lock(&eng->h2t_ring_lock);
+
+	while (remaining) {
+		unsigned long offset = (unsigned long)(host_addr) & (PAGE_SIZE-1);
+		dma_ctx = &dma_ctx_tbl[next_dma_idx];
+		dma_ctx->start_time = get_jiffies_64();
+		dma_ctx->host_addr  = host_addr;
+		dma_ctx->dev_addr   = dev_addr;
+		dma_ctx->size       = (cpy_size == remaining) ? cpy_size : cpy_size - offset; // slightly non-obvious, we are setting up xfer size
+		                                                                              // that only the first xfer has its starting address
+																					  // not aligned to the page boundary.  First time around
+																					  // offset >= 0 and cpy_size <= xfer size.  Other times
+																					  // host_addr is aligned, offset = 0 and cpy_size = xfer_size
+		dma_ctx->nr_pages   = DIV_ROUND_UP(offset + dma_ctx->size, PAGE_SIZE);
+
+		//__GFP_SKIP_ZERO
+		nr_pinned = pin_user_pages_fast((unsigned long)dma_ctx->host_addr & PAGE_MASK, dma_ctx->nr_pages, direction ? 0 : FOLL_WRITE, dma_ctx->page_list);
+		if (nr_pinned != dma_ctx->nr_pages) {
+			// if failed pin_fast because of page fault, do the regular pinning
+			if (nr_pinned > 0)
+				unpin_user_pages( dma_ctx->page_list, nr_pinned);
+
+#if (!defined(RHEL_RELEASE_CODE) && (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 5, 0))) || (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 6)))
+			nr_pinned = pin_user_pages((unsigned long)dma_ctx->host_addr & PAGE_MASK, dma_ctx->nr_pages, direction ? 0 : FOLL_WRITE, dma_ctx->page_list);
+#else
+			nr_pinned = pin_user_pages((unsigned long)dma_ctx->host_addr & PAGE_MASK, dma_ctx->nr_pages, direction ? 0 : FOLL_WRITE, dma_ctx->page_list, NULL);
+#endif
+			if (nr_pinned != dma_ctx->nr_pages) {
+				ret = -ENOMEM; // could use -EBUSY instead
+				pr_err("could not pin host pages for zero copy dma on nd %d: nr_pinned %d\n", nd->device_index, nr_pinned);
+
+				if (nr_pinned > 0)
+					unpin_user_pages( dma_ctx->page_list, nr_pinned);
+				// cleanup: wait for prev dma to complete (which also unpins pages)
+				if (pdma_ctx != NULL)
+					ndma_zero_copy_wait_for_completion( nd, nc_id, eng, ring, pdma_ctx, NULL);
+				goto fail;
+			}
+		}
+
+		// TODO need to have this for other architectures
+		// for (i=0; i < dma_ctx->nr_pages; i++) {
+		//     struct device
+		// 	    dma_ctx->addr[i] = dma_map_page( nd->pdev->dev, dma_ctx_page_list[i], 0, PAGE_SIZE, DMA_TO_DEVICE/DMA_FROM_DEVICE);
+		// 	    ret = dma_mapping_error(dev->dev, dma_ctx->addr[i]);
+		//		if (ret) { }
+		// }
+		// flush_cache_range(vma,  
+		//
+		// TODO - may need a callback here to check descriptors
+
+		ret = ndma_build_n_issue_zc_descs( dma_ctx);
+		if (ret) {
+			unpin_user_pages( dma_ctx->page_list, dma_ctx->nr_pages);
+			// cleanup: wait for prev dma to complete (which also unpins pages)
+			if (pdma_ctx != NULL) ndma_zero_copy_wait_for_completion( nd, nc_id, eng, ring, pdma_ctx, NULL);
+			goto fail;
+		}
+
+		if (pdma_ctx != NULL) {
+			ret = ndma_zero_copy_wait_for_completion( nd, nc_id, eng, ring, pdma_ctx, dma_ctx); 
+			if (ret)
+				goto fail;
+		}
+		pdma_ctx     = dma_ctx;
+		next_dma_idx = (next_dma_idx+1) % 2;
+
+		remaining -= dma_ctx->size;
+		host_addr += dma_ctx->size;
+		dev_addr  += dma_ctx->size;
+		cpy_size   = (remaining < cpy_size) ? remaining : cpy_size;
+	}
+
+	ret = ndma_zero_copy_wait_for_completion( nd, nc_id, eng, ring, pdma_ctx, NULL);
+
+fail:
+
+	// release resources
+	//
+	for (i=0;i< 2;i++) {
+		if (dma_ctx_tbl[i].page_list != NULL)
+			kfree(dma_ctx_tbl[i].page_list);
+		if (dma_ctx_tbl[i].completion_ptr != NULL) {
+			kfree(dma_ctx_tbl[i].completion_ptr);
+		}
+	}
+	mutex_unlock(&eng->h2t_ring_lock);
+
+	return ret;
+}
+
+/**
+ * ndma_memcpy_zero_copy_mc()
+ *
+ *   Wrapper around ndma_memcpy_zero_copy() that pulls nc_id and device phyical address from
+ *   the mem chunk.
+ *
+ *   Todo:
+ *     Range check the device address here.  
+ *
+ *   Assumptions:
+ *     caller has done access_ok() check on the host address 
+ *     if (!access_ok(blah) return -EFAULT;
+ *     or check_copy_size()
+ */
+int ndma_memcpy_zero_copy_mc( struct neuron_device *nd,  void * host_addr, struct mem_chunk *dev_mc, u64 dev_offset, u64 size, bool direction)
+{
+	dma_addr_t dev_addr;
+	u32 nc_id;
+
+	nc_id    = ndma_mc_pair_to_nc( dev_mc, dev_mc);
+	dev_addr = ndma_mc_to_pa( dev_mc) + dev_offset;   // range has been checked by the caller
+
+	return ndma_memcpy_zero_copy(nd, nc_id, host_addr, dev_addr, size, direction);
+}

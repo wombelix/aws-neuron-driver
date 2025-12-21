@@ -53,7 +53,9 @@ static u32 mem_alloc_type_to_sysfs_counter[] = {
 	NON_NDS_NC_COUNTER_MEM_USAGE_NOTIFICATION_DEVICE,    // NEURON_MEMALLOC_TYPE_NOTIFICATION_DEVICE
 
 	NON_NDS_ND_COUNTER_MEM_USAGE_DMA_RINGS_HOST,  // NEURON_MEMALLOC_TYPE_DMA_RINGS_HOST
-	NON_NDS_NC_COUNTER_MEM_USAGE_DMA_RINGS_DEVICE // NEURON_MEMALLOC_TYPE_DMA_RINGS_DEVICE
+	NON_NDS_NC_COUNTER_MEM_USAGE_DMA_RINGS_DEVICE, // NEURON_MEMALLOC_TYPE_DMA_RINGS_DEVICE
+
+	NON_NDS_NC_COUNTER_MEM_USAGE_SCRATCHPAD_DEVICE // NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE
 };
 
 int mempool_min_alloc_size = PAGE_SIZE; // always allocate on mmap() boundary
@@ -162,6 +164,8 @@ static int mp_init_device_mem(struct mempool *mp, struct mempool_set *mpset,
 	mp->mem_location = MEM_LOC_DEVICE;
 	mp->dram_channel = dram_channel;
 	mp->dram_region = dram_region;
+	mp->main_pool_end_addr = start_addr + main_pool_size;
+	mp->small_pool_size = small_pool_size;
 
 	mp->gen_pool = gen_pool_create(ilog2(ndhal->ndhal_mpset.mp_min_alloc_size), -1);
 	if (mp->gen_pool == NULL)
@@ -558,6 +562,20 @@ void mpset_free_expired_mc(struct mempool_set *mpset, enum mc_lifespan lifespan)
 	mpset_free_lifespan_list(head, next_head);
 }
 
+static inline u64 get_offset_for_scratchpad_alloc(const struct mempool *mp, u64 alloc_size)
+{
+	/*
+	Contiguous scratchpad grows backwards from the end of the main genpool
+	mp->region_size - mp->small_pool_size gives us the end of the main genpool
+
+	mp->scratchpad_size is the size of the scratchpad currently and this alloc needs to be
+	adjacent to any previous scratchpad page allocations, so subtracting
+	(mp->scratchpad_size + size of this alloc) gives us the offset in main genpool
+	*/
+
+	return mp->region_size - mp->small_pool_size - mp->scratchpad_size - alloc_size;
+}
+
 static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan, u64 size, u64 align,
 	     enum mem_location location, u32 channel, u32 region, u32 nc_id, mem_alloc_category_t mem_type,
 	     struct mem_chunk **result)
@@ -653,7 +671,21 @@ static int mc_alloc_internal(struct neuron_device *nd, enum mc_lifespan lifespan
 			alt_pool = mp->gen_pool_small;
 		}
 
-		if (align > PAGE_SIZE) {
+		if (mem_type == NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE) {
+			pool = mp->gen_pool;
+			alt_pool = NULL;
+			struct genpool_data_fixed offset_data = { .offset = get_offset_for_scratchpad_alloc(mp, size) };
+			mc->va = (void *)gen_pool_alloc_algo(pool, size,
+						     gen_pool_fixed_alloc, &offset_data);
+			if (mc->va == NULL) {
+				pr_err("nd %d HBM %d: Could not allocate %lld bytes at offset %ld for contiguous scratchpad\n", nd->device_index, channel, size, offset_data.offset);
+				ret = -ENOMEM;
+				goto exit;
+			}
+			mc->pa = gen_pool_virt_to_phys(pool, (unsigned long)mc->va);
+			mc->gen_pool = pool;
+			mp->scratchpad_size += size;
+		} else if (align > PAGE_SIZE) {
 
 			if (align > INT_MAX) {
 				pr_err("alignment value not supported %llu\n", align);
@@ -823,6 +855,18 @@ void mc_free(struct mem_chunk **mcp)
 		BUG();
 	}
 
+	if (mc->alloc_type == NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE) {
+		if (mc->pa + mc->mp->scratchpad_size != mc->mp->main_pool_end_addr) {
+			// Freeing in the middle of the contiguous scratchpad, which is wrong
+			// However, we can't return errors in this function, so just log an error
+
+			pr_err("nd%d: contiguous scratchpad: freeing page with pa %lld, expected page with pa %lld to be freed first",
+				mc->mpset->nd->device_index, mc->pa, mc->mp->main_pool_end_addr - mc->mp->scratchpad_size);
+		}
+
+		mc->mp->scratchpad_size -= mc->size;
+	}
+
 	npid_dec_allocated_memory(mpset->nd, mc->mem_location, mc->size);
 	*mcp = NULL;
 	mc_remove_from_lifespan_list(mc);
@@ -855,4 +899,3 @@ int mc_dump_all_chunks(struct neuron_device *nd, u32 channel, u32 num_entries_in
 	*num_entries_out = cnt;
 	return 0;
 }
-

@@ -775,7 +775,9 @@ struct neuron_ioctl_pod_ctrl_v2 {
 #define NEURON_IOCTL_POD_CTRL _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl)
 #define NEURON_IOCTL_POD_CTRL_V2 _IOWR(NEURON_IOCTL_BASE, 123, struct neuron_ioctl_pod_ctrl_v2)
 
+#define NEURON_IOCTL_MEM_BUF_ZEROCOPY64 _IOWR(NEURON_IOCTL_BASE, 124, struct neuron_ioctl_mem_buf_copy64)
+
 // Note: 133 is taken by NEURON_IOCTL_DMA_QUEUE_INIT_BATCH
-#define NEURON_IOCTL_MAX 124
+#define NEURON_IOCTL_MAX 125
 
 #endif

@@ -51,6 +51,8 @@ struct mempool {
 
 	struct gen_pool *gen_pool; // main gen pool
 	struct gen_pool *gen_pool_small; // small gen pool for small allocations to avoid fragmentation, may be NULL
+	u64 main_pool_end_addr; // also the start addr of small genpool when enabled
+	size_t small_pool_size;
 
 	size_t region_size; // size of the initial region
 	size_t allocated_size; // total allocated memory size in bytes
@@ -60,6 +62,8 @@ struct mempool {
 	u32 page_count; // number pages allocated successfully
 	void **page_va_array; // array of allocated page's kva
 	dma_addr_t *page_pa_array; // array of allocated page's pa
+
+	u64 scratchpad_size; // only used for allocations of type NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE
 };
 
 // DRAM region is split into multiple regions.
@@ -217,5 +221,13 @@ void mc_inc_refcount(struct mem_chunk *mc);
 
 //int mc_dump_all_chunks(struct neuron_device *nd, u32 channel);
 int mc_dump_all_chunks(struct neuron_device *nd, u32 channel, u32 num_entries_in, struct neuron_ioctl_mem_chunk_info *data, u32 *num_entries_out);
+
+static inline bool mc_access_is_within_bounds(const struct mem_chunk *mc, u64 access_offset, u64 access_size)
+{
+	if (mc->alloc_type == NEURON_MEMALLOC_TYPE_CONTIGUOUS_SCRATCHPAD_DEVICE) {
+		return (mc->pa + access_offset + access_size <= mc->mp->main_pool_end_addr);
+	}
+	return access_offset + access_size <= mc->size;
+}
 
 #endif
