@@ -17,34 +17,18 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Download latest release notes
-      run: |
-        curl -o /tmp/latest-release-notes.rst https://raw.githubusercontent.com/aws-neuron/aws-neuron-sdk/refs/heads/master/release-notes/runtime/aws-neuronx-dkms/index.rst
-
-    - name: Compare release notes
-      id: compare
-      run: |
-        if ! diff -q archive/release-notes-runtime-aws-neuronx-dkms.rst /tmp/latest-release-notes.rst > /dev/null; then
-          echo "files_differ=true" >> $GITHUB_OUTPUT
-        else
-          echo "files_differ=false" >> $GITHUB_OUTPUT
-        fi
-
     - name: Setup Go
-      if: steps.compare.outputs.files_differ == 'true'
       uses: actions/setup-go@v4
       with:
         go-version: '1.23.0'
 
     - name: Build hut CLI
-      if: steps.compare.outputs.files_differ == 'true'
       run: |
         git clone https://git.sr.ht/~xenrox/hut /tmp/hut
         cd /tmp/hut
         make hut
 
     - name: Configure hut
-      if: steps.compare.outputs.files_differ == 'true'
       env:
         HUT_CONFIG: ${{ secrets.HUT_CLI_CONFIG }}
       run: |
@@ -52,6 +36,5 @@ jobs:
         echo "$HUT_CONFIG" | base64 -d > ~/.config/hut/config
 
     - name: Trigger sr.ht build
-      if: steps.compare.outputs.files_differ == 'true'
       run: |
         /tmp/hut/hut builds submit .build.yaml -f -n "GitHub Action triggered sr.ht build to publish aws-neuron-driver source" -t "aws-neuron-driver/publish-source" -v public

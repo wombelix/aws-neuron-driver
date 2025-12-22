@@ -21,33 +21,27 @@ environment:
 
 tasks:
   - publish: |
-      curl -o /tmp/latest-release-notes.rst https://raw.githubusercontent.com/aws-neuron/aws-neuron-sdk/refs/heads/master/release-notes/runtime/aws-neuronx-dkms/index.rst
+      curl -sSfLO https://go.dev/dl/go1.23.10.linux-amd64.tar.gz
+      sudo rm -rf /usr/local/go && sudo tar -C /usr/local/ -xzf go1.23.10.linux-amd64.tar.gz
+      sudo ln -s /usr/local/go/bin/go /usr/local/bin/go
+      go version
+      go env
 
-      if ! diff -q aws-neuron-driver/archive/release-notes-runtime-aws-neuronx-dkms.rst /tmp/latest-release-notes.rst > /dev/null; then
+      git clone https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source
 
-        curl -sSfLO https://go.dev/dl/go1.23.10.linux-amd64.tar.gz
-        sudo rm -rf /usr/local/go && sudo tar -C /usr/local/ -xzf go1.23.10.linux-amd64.tar.gz
-        sudo ln -s /usr/local/go/bin/go /usr/local/bin/go
-        go version
-        go env
+      cd aws-neuron-driver-publish-source
 
-        git clone https://git.sr.ht/~wombelix/aws-neuron-driver-publish-source
+      git config --global user.name "Dominik Wombacher"
+      git config --global user.email "dominik@wombacher.cc"
 
-        cd aws-neuron-driver-publish-source
+      make build
 
-        git config --global user.name "Dominik Wombacher"
-        git config --global user.email "dominik@wombacher.cc"
+      ./aws-neuron-driver-publish-source -repopath ../aws-neuron-driver
 
-        make build
-
-        ./aws-neuron-driver-publish-source -repopath ../aws-neuron-driver
-
-        cd ../build-helper-scripts
-        source git-push-ssh.sh
-        cd ../aws-neuron-driver
-        git_push_ssh "${SRHT_GIT_SSH_KEY}" "git@git.sr.ht:~wombelix/aws-neuron-driver" "-o skip-ci" "--tags"
-
-      fi
+      cd ../build-helper-scripts
+      source git-push-ssh.sh
+      cd ../aws-neuron-driver
+      git_push_ssh "${SRHT_GIT_SSH_KEY}" "git@git.sr.ht:~wombelix/aws-neuron-driver" "-o skip-ci" "--tags"
 
   - mirror: |
       cd build-helper-scripts
