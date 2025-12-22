@@ -36,8 +36,8 @@ It is basically a mirror of the source code as it is released by AWS.
 ## Why
 
 The [official repository](https://github.com/aws-neuron/aws-neuron-driver)
-didn't have commits since
-[October 2020](https://github.com/aws-neuron/aws-neuron-driver/commits/master/).
+had no new commit since
+[October 2020](https://github.com/aws-neuron/aws-neuron-driver/commit/cad466aa978944bc8ef51f2228c2ca80618d3103).
 The driver, which is open source under the `GPL-2.0-only` license, was only
 distributed as rpm package with a DKMS wrapper. And not available as archive
 or in a public git repository.
