@@ -25,6 +25,7 @@ It is basically a mirror of the source code as it is released by AWS.
 ## Table of Contents
 
 * [Why?](#why)
+* [Why continue?](#why-continue)
 * [How?](#how)
 * [When?](#when)
 * [Usage](#usage)
@@ -35,11 +36,40 @@ It is basically a mirror of the source code as it is released by AWS.
 ## Why
 
 The [official repository](https://github.com/aws-neuron/aws-neuron-driver)
-doesn't contain recent versions of the driver source code. The driver is still
-open source (`GPL-2.0-only` license), but only distributed as rpm package
-with a DKMS wrapper. Releases since
-[October 2020](https://github.com/aws-neuron/aws-neuron-driver/commits/master/)
-are not available as archive or in a public git repository.
+didn't have commits since
+[October 2020](https://github.com/aws-neuron/aws-neuron-driver/commits/master/).
+The driver, which is open source under the `GPL-2.0-only` license, was only
+distributed as rpm package with a DKMS wrapper. And not available as archive
+or in a public git repository.
+
+In February 2025 I started to publish the code in this repository.
+1/ for consumption in a project I worked on at that time and
+2/ it felt like the right thing to do from an open source community perspective.
+
+Since end of September 2025, AWS published the version
+[2.24.7.0](https://github.com/aws-neuron/aws-neuron-driver/commit/7c0d02c11a34ac464c785d584e8289ae00be0adc)
+and
+[2.25.4.0](https://github.com/aws-neuron/aws-neuron-driver/commit/ec131bf4749024b05470f6bb72f5273366b2f2c7)
+source code their official repository. And it looks like
+they continue to do that with upcoming releases too.
+
+So, either a coincidence or someone saw what I was doing and liked it.
+Either way, It's great that AWS continued to publish the code!
+
+For now, I decided to continue publishing the code through my own process.
+
+## Why continue
+
+There are slight differences the in the way AWS publishes the code and
+[how](#how) I do it.
+
+It looks like that AWS has a bot running externally that triggers a new Pull Request
+And this PR gets auto-approved by a
+[GitHub Action workflow](https://github.com/aws-neuron/aws-neuron-driver/blob/master/.github/workflows/enable_automerge.yml).
+There isn't visibility where the code is exactly coming from.
+
+At this point my approach provides validation mechanisms
+and more transparency. That's why see value in continuing with this repo.
 
 ## How
 
